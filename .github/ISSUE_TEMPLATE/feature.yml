@@ -1,0 +1,28 @@
+name: 기능 구현
+description: AI 구현과 PR 검토에 사용할 기능 요청
+title: "[기능] "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 원하는 결과
+      description: 사용자가 어떤 동작을 할 수 있어야 하나요?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건
+      description: 확인 가능한 동작과 예외 상태를 적어주세요.
+      placeholder: "- [ ] 올바른 초대 코드로 참여할 수 있다."
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: 화면·API 참고
+      description: 와이어프레임, 기준 문서, 미합의 API 등을 연결합니다.
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 유지할 동작·제외 범위
