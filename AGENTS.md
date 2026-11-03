@@ -23,11 +23,14 @@
 
 ## 에이전트
 - 복합 구현은 implement-feature 스킬과 docs/orchestration.md를 따른다.
-- root는 설계·분리·통합·최종 검증을 맡는다. 명확한 구현은 Luna worker에 위임한다.
+- 여러 파일에 걸친 기능·실질적 동작 변경·설계가 필요한 버그 수정은 root의 현재 모델과 무관하게 별도 planner(Astra medium)에게 먼저 설계를 위임하고 결과를 기다린다. root가 Astra여도 이 절차를 따른다.
+- root는 현재 세션 모델로 요구사항 전달·작업 배정·통합·최종 검증·GitHub 전달을 맡는다. planner의 파일별 작업 범위·의존 순서·완료 기준을 확인한 뒤 Luna high worker에 구현을 위임한다.
+- planner는 .codex/agents/planner.toml의 모델·지침을 적용한다. 역할 호출을 지원하지 않으면 같은 지침과 Astra medium을 명시한 별도 하위 에이전트로 실행하고 그 방식을 보고한다. root 모델이나 기본 Luna 모델을 그대로 상속하지 않는다.
+- 위임 흐름은 root만 시작한다. planner·worker·tester·reviewer는 맡은 역할만 수행하고 root 전용 설계·PR 절차를 재귀 실행하지 않는다. 설계 수정이 필요하면 root에 보고한다.
 - 작은 문구·토큰 수정과 단순 질문은 root가 처리할 수 있다.
 - 파일별 작성자를 지정한다. 공통 theme·Button·API 타입을 동시에 수정하지 않는다.
 - 사용자가 지정한 작업 범위와 모델 선택을 우선한다.
-- 요청한 모델을 사용할 수 없으면 대체 실행을 숨기지 않는다.
+- 명명된 planner 역할 호출과 동일 지침의 명시적 Astra medium 실행이 모두 불가능하면 원인과 미실행을 보고한다. 독립적인 읽기 전용 탐색은 계속할 수 있지만 설계에 의존하는 구현은 사용자가 진행 방식을 변경할 때까지 시작하지 않는다. 요청한 모델을 몰래 대체하거나 실행하지 않은 역할을 수행했다고 하지 않는다.
 
 ## 검증·보고
 - package.json에 등록된 typecheck·lint·build와 관련 검사를 실행한다.

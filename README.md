@@ -52,7 +52,7 @@ src/
 
 - [AGENTS.md](AGENTS.md): 항상 적용할 작업 규칙
 - [GitHub 작업 절차](docs/github-workflow.md): 이슈·브랜치·검증·PR 보고서
-- [에이전트 역할](docs/orchestration.md): Astra medium 설계·통합·검토, Luna high 탐색·구현·검증, 동시 하위 에이전트 최대 2개
+- [에이전트 역할](docs/orchestration.md): 비단순 작업은 Astra medium planner가 선행 계획, 세션 선택 모델의 root가 조정·통합·최종 검사·Git 작업, Luna high가 구현·검증; 동시 하위 에이전트 최대 2개
 - [팀 스킬](docs/skills.md): implement-feature, review-ui, deliver-pr
 - [UI 기준](docs/ui-guide.md): 색상·공통 컴포넌트·상태
 - [API 계약](docs/api-contract.md): 백엔드와 합의할 항목
@@ -62,6 +62,8 @@ src/
 
 GitHub에서 이슈가 생성될 때 자동으로 Codex를 시작하는 별도 자동화는 포함하지 않습니다.
 프로젝트 설정이 현재 채팅의 모델을 즉시 변경하지는 않습니다. 새 세션에서 지침·스킬·모델 접근과 실제 역할 실행을 확인합니다.
+
+첫 요청 예시: “여행 일정 편집 중 날짜를 바꾸면 항목이 사라지는 문제를 고쳐 주세요.” 비단순 버그는 먼저 별도 Astra medium planner가 파일 범위·상태·작업 분리·검사 기준을 정리하고, root가 그 계획을 확인한 뒤 구현을 배정합니다. 완료 보고에는 실제로 실행된 planner·worker·reviewer 모델을 구분해 적습니다. 역할 설정만으로 실행을 주장하지 않습니다.
 
 ## 최초 참여자가 확인할 것
 
