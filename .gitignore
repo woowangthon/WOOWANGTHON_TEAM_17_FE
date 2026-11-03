@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+.env
+.env.*
+!.env.example
+*.local
+*.log
+.DS_Store
+.agent-work/
+*.tsbuildinfo
+.vite/
+.vscode/
+.idea/
+
+# Shared AGENTS.md, .agents/skills, and .codex agent settings are tracked.
