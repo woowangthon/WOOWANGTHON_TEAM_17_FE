@@ -1,7 +1,7 @@
 # 우왕톤 · 충북 단체여행 프론트엔드
 
 React + TypeScript + Vite + Tailwind 기반의 프론트엔드 레포지토리입니다.
-현재는 공통 UI 확인 화면과 개발·에이전트 작업 환경을 구성한 초기 단계입니다.
+현재는 공통 조건·참여 상태·일정 카드와 입력·비동기 상태를 조작해 볼 수 있는 공통 UI 미리보기 및 개발·에이전트 작업 환경을 제공합니다.
 여행방 생성, 사용자 인증, AI 일정 생성과 서버 저장은 아직 연결하지 않았습니다.
 
 ## 시작하기
@@ -30,6 +30,7 @@ npm run dev
 | `npm run build` | 타입 검사 후 배포용 `dist/` 생성 |
 | `npm run preview` | 빌드 결과 로컬 확인 |
 | `npm run check` | 타입·lint·빌드 순서대로 실행 |
+| `npm test` | 비동기 mock의 성공·실패·재시도·취소 검사 |
 
 GitHub CI는 추가하지 않습니다. Codex가 로컬 검사와 변경에 필요한 기능·브라우저 검증을 실행하고 PR에 결과를 기록합니다.
 빌드 통과와 브라우저 검증은 별개입니다.
@@ -41,6 +42,8 @@ src/
   app/             앱 진입과 화면 조립
   pages/           화면
   components/ui/   공통 버튼·입력·모달
+  components/trip/ 조건·참여 상태·일정 카드와 상세
+  features/ui-preview/ 미리보기 전용 상태·비동기 mock
   styles/          디자인 토큰·전역 스타일
 ```
 
@@ -55,6 +58,7 @@ src/
 - [에이전트 역할](docs/orchestration.md): 비단순 작업은 Astra medium planner가 선행 계획, 세션 선택 모델의 root가 조정·통합·최종 검사·Git 작업, Luna high가 구현·검증; 동시 하위 에이전트 최대 2개
 - [팀 스킬](docs/skills.md): implement-feature, review-ui, deliver-pr
 - [UI 기준](docs/ui-guide.md): 색상·공통 컴포넌트·상태
+- [공통 UI 사용법](docs/common-ui.md): 컴포넌트 적용·테마 수정·미리보기 동작
 - [API 계약](docs/api-contract.md): 백엔드와 합의할 항목
 - [초기 구성](docs/bootstrap.md): 구성 방법과 검증
 - [결정 기록](docs/decisions.md): 초기 구성 선택과 근거
