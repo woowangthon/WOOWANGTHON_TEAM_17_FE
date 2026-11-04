@@ -27,6 +27,9 @@
   --font-size-body: 16px;
   --font-size-secondary: 14px;
   --font-size-small: 12px;
+  --font-size-caption: 13px;
+  --font-size-label: 15px;
+  --font-size-icon: 19px;
   --space-1: 8px;
   --space-2: 12px;
   --space-3: 16px;
@@ -34,5 +37,14 @@
   --space-5: 32px;
   --radius-control: 8px;
   --radius-card: 16px;
+  --entry-brand-size: 29px;
+  --entry-brand-size-small: 24px;
+  --entry-hero-size: 46px;
+  --entry-hero-size-small: 30px;
+  --entry-lead-size: 21px;
+  --entry-section-title-size: 25px;
+  --entry-section-title-size-small: 22px;
+  --entry-recent-title-size: 20px;
+  --entry-control-height: 48px;
   --shadow-card: 0 14px 40px rgb(35 45 23 / 7%);
 }

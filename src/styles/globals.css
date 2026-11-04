@@ -2,6 +2,7 @@
 @import "./theme.css";
 @import "./components.css";
 @import "./preview.css";
+@import "./entry.css";
 
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; min-width: 0; min-height: 100vh; background: var(--color-page); color: var(--color-text); font-size: 16px; line-height: 1.5; }
