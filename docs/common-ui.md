@@ -14,7 +14,7 @@
 | src/features/ui-preview/ | 예시 데이터·비동기 mock·미리보기 상태 처리 |
 | src/pages/UiPreviewPage.tsx | 컴포넌트 조립과 로컬 동작 예제 |
 
-스타일 진입점은 src/styles/globals.css이며 main.tsx에서 한 번 import한다. 공통 색 변경은 theme.css, 전체 버튼 모양 변경은 components.css, 특정 화면 배치는 그 화면 스타일에서 관리한다. 새 디자인 값은 기존 토큰을 우선 재사용한다.
+스타일 진입점은 src/styles/globals.css이며 index.html의 head에서 직접 불러온다. 이 경로로 앱 초기 렌더링 전부터 전역 스타일이 적용된다. 공통 색 변경은 theme.css, 전체 버튼 모양 변경은 components.css, 특정 화면 배치는 그 화면 스타일에서 관리한다. 새 디자인 값은 기존 토큰을 우선 재사용한다.
 
 ## 참여자 상태
 
