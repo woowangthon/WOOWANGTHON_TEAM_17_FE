@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Button from '../../components/ui/Button';
 import Dialog from '../../components/ui/Dialog';
 import Input from '../../components/ui/Input';
-import { submitEntry, type EntryMode, type EntryResult } from './mockRequests';
+import { submitEntry, validateEntryInput, type EntryField, type EntryMode, type EntryResult } from './mockRequests';
 
 type FormValues = { tripName: string; nickname: string; inviteCode: string };
-type FormState = { values: FormValues; error: string; errorField: keyof FormValues | null; status: 'idle' | 'loading' | 'error' };
+type FormState = { values: FormValues; error: string; errorField: EntryField | null; status: 'idle' | 'loading' | 'error' };
 const blank: FormValues = { tripName: '', nickname: '', inviteCode: '' };
 const initial: Record<EntryMode, FormState> = {
   create: { values: { ...blank }, error: '', errorField: null, status: 'idle' },
@@ -33,33 +33,18 @@ export default function EntryPage() {
   }, []);
 
   function update(mode: EntryMode, key: keyof FormValues, value: string) {
-    setForms((current) => ({ ...current, [mode]: { ...current[mode], values: { ...current[mode].values, [key]: value }, error: '', status: 'idle' } }));
+    setForms((current) => ({ ...current, [mode]: { ...current[mode], values: { ...current[mode].values, [key]: value }, error: '', errorField: null, status: 'idle' } }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>, mode: EntryMode) {
     event.preventDefault();
     if (requestLocks.current[mode]) return;
     const state = forms[mode];
-    const nickname = state.values.nickname.trim();
-    if (mode === 'create' && !state.values.tripName.trim()) {
-      setForms((current) => ({ ...current, create: { ...current.create, error: '여행 이름을 입력해 주세요.', errorField: 'tripName' } }));
-      document.getElementById('entry-trip-name')?.focus();
-      return;
-    }
-    if (!nickname) {
-      setForms((current) => ({ ...current, [mode]: { ...current[mode], error: '닉네임을 입력해 주세요.', errorField: 'nickname' } }));
-      document.getElementById(mode === 'create' ? 'entry-create-nickname' : 'entry-join-nickname')?.focus();
-      return;
-    }
-    if (mode === 'join' && !state.values.inviteCode.trim()) {
-      setForms((current) => ({ ...current, join: { ...current.join, error: '초대 코드를 입력해 주세요.', errorField: 'inviteCode' } }));
-      document.getElementById('entry-invite-code')?.focus();
-      return;
-    }
-    const tooLong = mode === 'create' ? state.values.tripName.trim().length > 40 || nickname.length > 20 : state.values.inviteCode.trim().length > 24 || nickname.length > 20;
-    if (tooLong) {
-      setForms((current) => ({ ...current, [mode]: { ...current[mode], error: '입력 길이를 확인해 주세요. 여행 이름은 40자, 닉네임은 20자, 초대 코드는 24자 이내예요.', errorField: mode === 'create' ? (state.values.tripName.trim().length > 40 ? 'tripName' : 'nickname') : (state.values.inviteCode.trim().length > 24 ? 'inviteCode' : 'nickname') } }));
-      document.getElementById(mode === 'create' ? (state.values.tripName.trim().length > 40 ? 'entry-trip-name' : 'entry-create-nickname') : (state.values.inviteCode.trim().length > 24 ? 'entry-invite-code' : 'entry-join-nickname'))?.focus();
+    const validation = validateEntryInput(mode, state.values);
+    if ('field' in validation) {
+      setForms((current) => ({ ...current, [mode]: { ...current[mode], error: validation.error, errorField: validation.field } }));
+      const inputId: Record<EntryField, string> = { tripName: 'entry-trip-name', nickname: mode === 'create' ? 'entry-create-nickname' : 'entry-join-nickname', inviteCode: 'entry-invite-code' };
+      document.getElementById(inputId[validation.field])?.focus();
       return;
     }
 
@@ -68,7 +53,7 @@ export default function EntryPage() {
     controllers.current[mode] = controller;
     setForms((current) => ({ ...current, [mode]: { ...current[mode], status: 'loading', error: '' } }));
     try {
-      const next = await submitEntry(mode, { tripName: state.values.tripName, inviteCode: state.values.inviteCode, nickname }, controller.signal);
+      const next = await submitEntry(mode, validation.values, controller.signal);
       if (!mounted.current || controller.signal.aborted) return;
       setResult(next);
       setRecent((items) => [next, ...items.filter((item) => !(item.mode === next.mode && item.tripName === next.tripName && item.nickname === next.nickname && item.code === next.code))].slice(0, 3));
@@ -96,17 +81,19 @@ export default function EntryPage() {
       <section className="entry-options" aria-label="여행 시작 방법">
         <article className="entry-card"><span className="entry-card-label">처음 계획하는 사람</span><h2>새 여행 만들기</h2><p className="entry-card-description">친구를 초대할 여행방을 먼저 만들어 주세요.</p>
           <form onSubmit={(event) => void handleSubmit(event, 'create')} noValidate>
-            <Input id="entry-trip-name" label="여행방 이름" value={create.values.tripName} onChange={(event) => update('create', 'tripName', event.target.value)} placeholder="예: 단양 주말 여행" hint="최대 40자까지 입력할 수 있어요." error={create.errorField === 'tripName' ? create.error : ''} maxLength={80} autoComplete="off" readOnly={create.status === 'loading'} required />
-            <Input id="entry-create-nickname" label="내 닉네임" value={create.values.nickname} onChange={(event) => update('create', 'nickname', event.target.value)} placeholder="예: 여행자 A" hint="여행에서 사용할 이름이에요. (최대 20자)" error={create.errorField === 'nickname' ? create.error : ''} maxLength={40} autoComplete="nickname" readOnly={create.status === 'loading'} required />
+            <Input id="entry-trip-name" label="여행방 이름" value={create.values.tripName} onChange={(event) => update('create', 'tripName', event.target.value)} placeholder="예: 단양 주말 여행" hint="공백을 정리한 뒤 최대 40자까지 입력할 수 있어요." error={create.errorField === 'tripName' ? create.error : ''} maxLength={80} autoComplete="off" readOnly={create.status === 'loading'} required />
+            <Input id="entry-create-nickname" label="내 닉네임" value={create.values.nickname} onChange={(event) => update('create', 'nickname', event.target.value)} placeholder="예: 여행자 A" hint="여행에서 사용할 이름이에요. 공백을 정리한 뒤 최대 20자." error={create.errorField === 'nickname' ? create.error : ''} maxLength={40} autoComplete="nickname" readOnly={create.status === 'loading'} required />
             <p className="entry-form-note">화면 미리보기예요. 입력은 서버에 저장되지 않아요.</p>
+            {create.error && !create.errorField && <p className="field-error" role="alert">{create.error}</p>}
             <Button id="entry-create-submit" type="submit" className="entry-submit" loading={create.status === 'loading'} loadingLabel="여행방 준비 중…">여행방 만들기</Button>
           </form>
         </article>
         <article className="entry-card"><span className="entry-card-label">초대받은 사람</span><h2>초대 코드로 참여</h2><p className="entry-card-description">공유받은 코드와 여행에서 사용할 닉네임을 입력해요.</p>
           <form onSubmit={(event) => void handleSubmit(event, 'join')} noValidate>
-            <Input id="entry-invite-code" label="초대 코드" value={join.values.inviteCode} onChange={(event) => update('join', 'inviteCode', event.target.value)} placeholder="예: CB-DEMO" hint="화면 미리보기 코드는 CB-DEMO예요." error={join.errorField === 'inviteCode' ? join.error : ''} maxLength={32} autoComplete="off" readOnly={join.status === 'loading'} required />
+            <Input id="entry-invite-code" label="초대 코드" value={join.values.inviteCode} onChange={(event) => update('join', 'inviteCode', event.target.value)} placeholder="예: CB-DEMO" hint="화면 미리보기 코드는 CB-DEMO예요." error={join.errorField === 'inviteCode' ? join.error : ''} maxLength={20} autoComplete="off" readOnly={join.status === 'loading'} required />
             <Input id="entry-join-nickname" label="내 닉네임" value={join.values.nickname} onChange={(event) => update('join', 'nickname', event.target.value)} placeholder="예: 여행자 B" hint="여행에서 사용할 이름이에요. (최대 20자)" error={join.errorField === 'nickname' ? join.error : ''} maxLength={40} autoComplete="nickname" readOnly={join.status === 'loading'} required />
             <p className="entry-form-note">실제 여행방 초대 코드와 연결되지 않은 화면 미리보기예요.</p>
+            {join.error && !join.errorField && <p className="field-error" role="alert">{join.error}</p>}
             <Button id="entry-join-submit" type="submit" variant="secondary" className="entry-submit" loading={join.status === 'loading'} loadingLabel="참여 확인 중…">여행방 참여하기</Button>
           </form>
         </article>

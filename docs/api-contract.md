@@ -37,3 +37,14 @@ FE·BE는 각 레포에서 별도 이슈·브랜치·커밋·PR을 사용하고 
 - 일정·장소·이동·비용·정보 출처 형식.
 - 수정 초안·검사·적용·동시 저장 충돌·복원 계약.
 - 개인별 조회·수정 권한과 공통 오류 응답.
+
+## 시작 페이지 · 기기 세션과 여행 진입
+
+- 상태: `구현 요청` (BE 구현·런타임 검증 대기). 원본은 [Notion 공용 API 계약](https://app.notion.com/p/40ee977e49088030a073ffd13d06c144)의 시작 페이지 명세다.
+- 범위: 기기 세션을 확보하고 여행을 생성하거나 기존 여행에 참여하며, 기기의 여행 목록을 다시 조회하고 참여를 재연결한다.
+- 명세 endpoint 목록: `POST /api/v1/device-session`, `POST /api/v1/trips`, `POST /api/v1/trip-memberships`, `GET /api/v1/device-session/trips`, `POST /api/v1/trips/{tripId}/reconnect`. 요청·응답 필드, 상태코드, 공통 오류는 원본 Notion 명세를 따른다. 이 운영 문서는 상세 DTO를 복제하지 않는다.
+- 본인 식별: HttpOnly device-session cookie를 사용한다. 브라우저 JavaScript가 쿠키 값을 읽거나 개인 식별자를 직접 저장하지 않는다. 기기 내 여행 목록과 재연결은 해당 세션에 귀속한다.
+- 중복 제출: 여행 생성 및 참여 요청은 `Idempotency-Key`를 전송하고 BE는 키를 24시간 보관해 같은 요청의 중복 저장을 막는다. 이를 위해 BE의 영속 device-session, membership mapping 및 idempotency 저장소가 필요하다. 정확한 key 형식과 동시 중복 응답은 원본 명세를 따른다.
+- 입력 정규화: 여행 이름과 닉네임은 trim 후 Unicode code point 수를 세며, 이름은 40자, 닉네임은 20자 이내다. 제어문자 U+0000–U+001F 및 U+007F–U+009F 및 줄 구분자 U+2028/U+2029를 거부한다. 초대 코드는 trim 후 ASCII 대문자로 정규화하고 `^[A-Z0-9-]{1,20}$`를 만족해야 한다.
+- 코드: 실제 생성 코드는 `CB-` 접두어와 무작위 10자리 값으로 구성된다. `CB-DEMO`는 UI fixture 전용 예외이며 서버 초대 코드 형식이나 실제 참여 가능 코드가 아니다.
+- FE 상태: 현재 시작 페이지와 `src/features/entry/mockRequests.ts`는 지연·성공·실패 UI를 확인하는 로컬 fixture다. HTTP 호출, cookie session, 영속 목록, 실제 재연결을 수행하지 않는다. 실제 요청/응답과 인증 동작은 BE 구현 후 별도 통합 검증 대상이다.
