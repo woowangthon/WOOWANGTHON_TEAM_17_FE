@@ -9,6 +9,19 @@ Read root AGENTS.md and docs/github-workflow.md. Resolve paths from the reposito
 root. This skill coordinates authorized repository delivery; it does not authorize
 messages, deployments, merges, or unrelated repository changes.
 
+Respect explicit local-only scope before any issue, branch, stage, commit, push,
+or PR action. For API-related delivery, follow docs/api-contract.md: link the
+Notion API page and record the method/path, specification summary, and actual
+validation results in the PR. Quote relevant content when useful; do not require
+separate snapshot files or a version-management system. Keep FE/BE issues,
+branches, commits, and PRs separate with cross-links. FE owns specification
+content; BE updates implementation status and BE PR links. Respect read-only
+restrictions and report access/write failures truthfully. Compare meaningful
+specification changes and revalidate affected behavior. Do not impose a separate
+contract approval gate on Ready status; use the existing verification and review
+criteria, distinguishing mock checks from actual integration. OpenAPI generation
+alone does not verify runtime authorization or error behavior.
+
 Confirm the intended repository, remote, base branch, current branch, user changes,
 and authenticated GitHub access without printing credentials. Reuse the requested
 issue and existing branch/PR for the same work. Otherwise establish the feature's

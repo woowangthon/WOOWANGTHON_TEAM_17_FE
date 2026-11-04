@@ -28,6 +28,8 @@ planner 역할 호출을 지원하지 않으면 planner.toml의 지침을 적용
 
 ## 설정과 문서의 차이
 
+API 작업에서 FE root는 docs/api-contract.md에 따라 Notion 조회·규격 작성·적용 기준 판단을 맡는다. planner·worker·tester·reviewer는 root가 제공한 명세 내용과 상태를 사용하고 필요한 변경·문제를 root에 보고한다. FE는 담당이 겹치면 API별 작성자를 정하며, BE는 규격 본문을 임의 변경하지 않고 구현·검증과 상태·BE PR 링크 갱신을 맡는다. 의미 있는 명세 변경은 root가 영향을 확인하고 해당 부분의 수정·재검증을 조정한다.
+
 - 루트 AGENTS.md: 언제·어떻게 위임할지.
 - .codex/config.toml: root·기본 하위 모델·동시 실행 수.
 - .codex/agents/*.toml: 역할별 모델·추론 수준·지침.
