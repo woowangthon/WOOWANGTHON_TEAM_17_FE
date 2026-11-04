@@ -23,8 +23,8 @@ compare differences and revalidate affected behavior. Follow the documented
 single-writer and failed/uncertain-write handling without creating duplicate APIs.
 
 For a nontrivial feature, behavior change, or bug fix, the root first delegates
-planning to the separate Astra medium planner, even when the root's selected
-model is Astra. Wait for the planner's result before assigning implementation.
+planning to the separate GPT-6.1 Sol high planner, even when the root's selected
+model matches the planner. Wait for the planner's result before assigning implementation.
 The planner returns the user-visible outcome, affected files and API/mock
 constraints, UI states and accessibility risks, bounded tasks with file
 ownership and dependencies, acceptance checks, and open questions. The root
@@ -33,7 +33,7 @@ owns coordination, acceptance, integration, final checks, and Git delivery.
 Small copy, token, or single-element edits and explanation-only requests stay
 with the root. User-requested scope and model choices take precedence. If named
 planner-role invocation is unavailable, use a separate explicitly selected
-Astra medium agent with the planner instructions and report this routing. If
+GPT-6.1 Sol high agent with the planner instructions and report this routing. If
 neither that route nor the named role/model is available, report the exact
 limitation, continue only independent read-only discovery, and ask the user for
 a revised approach before dependent implementation.
@@ -42,7 +42,7 @@ After planning, delegate bounded implementation to Luna high where supported.
 Give each worker exact file ownership, relevant context, constraints, and checks.
 Parallelize only independent work. A worker, tester, or reviewer reports to the
 root and does not recursively start orchestration or repeat the PR workflow.
-Use an independent Astra medium reviewer where applicable.
+Use an independent GPT-6.1 Sol high reviewer where applicable.
 
 Keep shared tokens, primitive components, and API contracts under one writer.
 If a worker needs a shared change outside its scope, have it report the need.

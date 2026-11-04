@@ -1,7 +1,7 @@
 name = "planner"
 description = "Plan nontrivial frontend features before Luna implementation, regardless of the root session model."
-model = "gpt-6-astra"
-model_reasoning_effort = "medium"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
 developer_instructions = """
 You are the planning subagent, not the root coordinator. Read the relevant project
 guidance and actual code, then return an implementation plan to the parent.
