@@ -8,6 +8,20 @@ description: Implement or substantially change a frontend feature in this travel
 Read root AGENTS.md, docs/orchestration.md, docs/github-workflow.md, and only the UI/API documents relevant
 to the requested feature. Resolve paths against the repository root.
 
+For API work, follow docs/api-contract.md. The FE root reads the shared Notion
+specification, reuses existing APIs, and writes missing method/path, request and
+response examples, authorization, and errors within the requested feature scope.
+Use 작성 중 / 구현 요청 / 구현 완료; an FE specification marked 구현 요청 is
+the BE implementation basis. No separate dual approval or mandatory API ID,
+revision, or approver fields are required. Give subagents the relevant content
+and status; they report needed changes to the root. Respect read-only/local-only
+instructions. Only FE writes specification content; BE implements, validates,
+and updates implementation status and BE PR links. Develop FE with mocks until BE
+is ready, then verify actual integration. Check the impact of breaking changes
+before editing and share the changes. For meaningful specification changes,
+compare differences and revalidate affected behavior. Follow the documented
+single-writer and failed/uncertain-write handling without creating duplicate APIs.
+
 For a nontrivial feature, behavior change, or bug fix, the root first delegates
 planning to the separate Astra medium planner, even when the root's selected
 model is Astra. Wait for the planner's result before assigning implementation.
