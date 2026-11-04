@@ -5,26 +5,30 @@
 |역할|모델|책임|
 |---|---|---|
 |root|세션에서 선택된 모델|요구사항·조정·인수 기준·통합·최종 검사·Git 작업|
-|planner|Astra medium|비단순 기능·동작·버그 작업의 선행 계획|
+|planner|GPT-6.1 Sol high|비단순 기능·동작·버그 작업의 선행 계획|
 |explorer|Luna high|관련 코드·수정 범위 확인|
 |worker|Luna high|정해진 파일의 구현|
 |tester|Luna high|타입·빌드·기능·브라우저 검사|
-|reviewer|Astra medium|독립 검토와 문제 보고|
+|reviewer|GPT-6.1 Sol high|독립 검토와 문제 보고|
 
-비단순 기능·동작 변경·버그 수정은 root 모델이 Astra여도 별도 Astra medium planner가 먼저 계획한다. root는 결과를 받은 뒤에만 Luna 구현 작업을 배정한다. 동시 하위 에이전트는 최대 2개로 유지하고, 단계가 다른 planner와 worker는 순차 실행한다. 작은 문구·토큰·단일 요소 수정과 설명 요청에는 planner를 두지 않는다. 사용자 지정 범위와 모델을 우선한다. 별도 researcher 역할은 두지 않는다.
+비단순 기능·동작 변경·버그 수정은 root와 planner의 모델이 같아도 별도 GPT-6.1 Sol high planner가 먼저 계획한다. root는 결과를 받은 뒤에만 Luna 구현 작업을 배정한다. 동시 하위 에이전트는 최대 2개로 유지하고, 단계가 다른 planner와 worker는 순차 실행한다. 작은 문구·토큰·단일 요소 수정과 설명 요청에는 planner를 두지 않는다. 사용자 지정 범위와 모델을 우선한다. 별도 researcher 역할은 두지 않는다.
 
 ## 작업 분리
 
 - 작은 문구·토큰·단일 요소 수정, 설명 요청: root 직접 처리 가능.
-- 비단순 기능·동작 변경·버그 수정: 별도 Astra medium planner → root가 계획 확인·작업 분배 → Luna high 구현 → 필요한 검증·독립 검토 → root 통합.
+- 비단순 기능·동작 변경·버그 수정: 별도 GPT-6.1 Sol high planner → root가 계획 확인·작업 분배 → Luna high 구현 → 필요한 검증·독립 검토 → root 통합.
 - API·개인정보·확정·저장 버전 변경: 독립 검토를 추가.
 - 병렬 작업: 독립된 파일일 때만. theme.css·Button·공통 타입은 한 작성자만 수정.
 
 planner는 사용자에게 보이는 결과, 대상 파일, API/mock 제약, UI 상태와 접근성 위험, 파일 소유권·의존성이 정해진 작업, 인수 기준·검사, 열린 질문을 반환한다. root는 이 결과를 바탕으로 작업자별 목표·파일 범위·유지할 동작·데이터 계약·완료 기준을 정한다. 작업자는 결과·파일·검사·미해결 사항만 간결하게 root에 보고한다.
 
-planner·worker·tester·reviewer는 하위 에이전트를 다시 만들거나 전체 PR 절차를 반복하지 않는다. root만 오케스트레이션을 시작하고 인수·통합·최종 검사·Git 전달을 책임진다. planner 역할 TOML은 실제 Astra medium 모델을 고정한다. `.codex/config.toml`의 root 기본값은 세션에서 선택된 root 모델을 전환하지 않는다.
+planner·worker·tester·reviewer는 하위 에이전트를 다시 만들거나 전체 PR 절차를 반복하지 않는다. root만 오케스트레이션을 시작하고 인수·통합·최종 검사·Git 전달을 책임진다. planner·reviewer 역할 TOML은 gpt-6.1-sol 모델과 high 추론 수준을 고정한다. `.codex/config.toml`의 root 기본값은 세션에서 선택된 root 모델을 전환하지 않는다.
 
-planner 역할 호출을 지원하지 않으면 planner.toml의 지침을 적용해 Astra medium을 명시적으로 선택한 별도 하위 에이전트로 실행하고 해당 대체 경로를 보고한다. 명명된 역할 또는 명시적 Astra medium planner 실행이 모두 불가능하면 정확한 제한을 보고하고, 독립된 읽기 전용 탐색만 계속한다. 계획에 의존하는 구현은 시작하지 말고 사용자에게 수정된 진행 방식을 요청한다. 사용자가 명시한 모델·범위는 우선한다.
+planner 역할 호출을 지원하지 않으면 planner.toml의 지침을 적용해 GPT-6.1 Sol high를 명시적으로 선택한 별도 하위 에이전트로 실행하고 해당 대체 경로를 보고한다. 명명된 역할 또는 명시적 GPT-6.1 Sol high planner 실행이 모두 불가능하면 정확한 제한을 보고하고, 독립된 읽기 전용 탐색만 계속한다. 계획에 의존하는 구현은 시작하지 말고 사용자에게 수정된 진행 방식을 요청한다. 사용자가 명시한 모델·범위는 우선한다.
+
+명명된 역할 호출이 세션에 Astra 등 다른 모델로 고정되어 있으면 설정 파일 수정만으로 적용됐다고 보지 않는다. planner·reviewer 지침을 제공하고 gpt-6.1-sol/high를 명시한 별도 하위 에이전트로 실행한다. 두 경로 모두 불가능하면 제한을 보고하며 다른 모델로 몰래 대체하지 않는다. 실제 실행 모델과 추론 수준을 검증 결과에 기록한다.
+
+사용자 요청에 따라 계획·독립 검토 기본값을 GPT-6.1 Sol high로 변경했다. root의 세션 모델·Luna high 구현/테스트·최종 인수 책임은 유지한다. 품질 동등성·토큰 수·주간 한도 절약률은 실측 전 보장하지 않으며 검증 기준을 낮추지 않는다.
 
 ## 설정과 문서의 차이
 

@@ -1,7 +1,7 @@
 name = "reviewer"
 description = "Review frontend changes independently and return actionable findings without edits."
-model = "gpt-6-astra"
-model_reasoning_effort = "medium"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
 developer_instructions = """
 Review the actual diff against the assigned acceptance criteria and project docs.
 Do not edit files. Check behavior, accessibility, private data exposure, API contract,
