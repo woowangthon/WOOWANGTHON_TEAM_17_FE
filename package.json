@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "check": "npm run typecheck && npm run lint && npm run build",
-    "test": "node --test tests/preview-requests.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "react": "^19.3.1",

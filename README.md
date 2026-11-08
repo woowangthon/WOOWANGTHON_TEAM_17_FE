@@ -1,8 +1,8 @@
 # 우왕톤 · 충북 단체여행 프론트엔드
 
-React + TypeScript + Vite + Tailwind 기반의 프론트엔드 레포지토리입니다.
-기본 화면은 여행 시작 페이지입니다. 여행방 만들기·초대 코드 참여·최근 기록은 서버 계약에 맞추기 전 단계의 로컬 UI fixture이며 HTTP 요청, 기기 세션, 지속 재접속을 구현하지 않습니다. `?preview=ui`에서 공통 UI 미리보기를 확인할 수 있습니다. 시작 페이지 API 명세는 [공용 Notion API 계약](https://app.notion.com/p/40ee977e49088030a073ffd13d06c144)에서 `구현 요청` 상태로 BE 구현을 기다립니다.
-여행방 생성, 사용자 인증, AI 일정 생성과 서버 저장은 아직 연결하지 않았습니다.
+검수한 여행방 시작 HTML/JavaScript와 React + TypeScript 공통 UI를 Vite로 함께 빌드하는 프론트엔드입니다. 기본 `/`는 확정된 여행방 화면이며 요청된 하단 푸터만 제거했습니다. 같은 출처의 BE API로 기기 세션·방 생성·초대 참여·방 진입 화면의 재접속을 처리합니다. `?preview=ui`는 기존 React 공통 UI 확인 화면을 엽니다.
+
+서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별하며 계정 로그인·인원/여행 조건 설정·최근 여행 목록 UI·AI 일정 생성은 이번 화면에 포함하지 않습니다. 이전 `src/features/entry` mock은 보존된 예시이며 현재 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8)과 [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
 
 ## 시작하기
 
@@ -16,9 +16,9 @@ npm ci
 npm run dev
 ```
 
-터미널에 표시되는 로컬 주소에서 시작 화면을 확인합니다. `?preview=ui`를 붙이면 공통 버튼·입력·모달 미리보기를 볼 수 있습니다.
-초기 화면은 백엔드 없이 실행됩니다. API 연결이 필요한 시점에 `.env.example`을 `.env.local`로 복사하고 `VITE_API_BASE_URL`을 설정합니다.
-`VITE_` 변수는 브라우저에 공개되므로 비밀키를 넣지 않습니다.
+개발 주소는 `http://127.0.0.1:5173/`입니다. `/api` 요청은 인접 BE의 `http://127.0.0.1:8000`으로 전달됩니다. BE 개인 설정의 `ALLOWED_ORIGINS`에 `http://127.0.0.1:5173`을 포함하고 API 서버를 먼저 켭니다. 서버 없이도 화면은 보이지만 생성·참여는 완료되지 않습니다. DB/AI 비밀값을 FE에 넣지 않습니다.
+
+파이참에서 화면과 BE를 함께 확인하려면 이 FE에서 `npm run build`한 다음 인접 BE의 `run.py`를 실행하고 `http://127.0.0.1:8017/`을 엽니다. 폴더 배치와 자세한 수동 검수는 [여행방 시작 실행 안내](docs/trip-entry.md)를 따릅니다. `dist/`는 생성물이며 Git에 올리지 않습니다.
 
 ## 명령
 
@@ -27,10 +27,10 @@ npm run dev
 | `npm run dev` | 개발 서버 |
 | `npm run typecheck` | 앱·설정 TypeScript 검사 |
 | `npm run lint` | Oxlint 검사 |
-| `npm run build` | 타입 검사 후 배포용 `dist/` 생성 |
+| `npm run build` | 타입 검사 후 시작·방 진입·공통 UI 세 페이지를 `dist/`에 생성 |
 | `npm run preview` | 빌드 결과 로컬 확인 |
 | `npm run check` | 타입·lint·빌드 순서대로 실행 |
-| `npm test` | 비동기 mock의 성공·실패·재시도·취소 검사 |
+| `npm test` | 공통 UI mock 및 여행방 API adapter의 입력·세션·재시도 검사 |
 
 GitHub CI는 추가하지 않습니다. Codex가 로컬 검사와 변경에 필요한 기능·브라우저 검증을 실행하고 PR에 결과를 기록합니다.
 빌드 통과와 브라우저 검증은 별개입니다.
