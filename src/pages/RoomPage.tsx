@@ -24,6 +24,14 @@ const blankPersonal: PersonalDraft = { ...emptyPersonalDraft };
 const returnHref = '/';
 type Section = 'preparation' | 'personal';
 
+function ConditionValue({ value, placeholder }: { value: string; placeholder: string }) {
+  return (
+    <dd style={value ? undefined : { color: 'var(--color-muted)', fontWeight: 400 }}>
+      {value || placeholder}
+    </dd>
+  );
+}
+
 export default function RoomPage() {
   const tripId = new URLSearchParams(window.location.search).get('tripId');
   const [entry, setEntry] = useState<RoomEntry | null>(isPreview ? previewEntry : null);
@@ -159,14 +167,32 @@ export default function RoomPage() {
           <section className="room-invite-card" aria-labelledby="invite-title"><div><p className="room-eyebrow">친구들과 함께해요</p><h2 id="invite-title">초대 코드</h2><p>친구에게 상단의 초대 코드를 알려주면 여행방에 참여할 수 있어요.</p></div><code aria-label="여행방 초대 코드">{entry.trip.inviteCode}</code></section>
           <div className="room-dashboard-grid">
             <section className="room-card room-shared-conditions"><div className="room-card-head"><div><h2>여행의 기본 조건</h2><p>모두가 공유하는 여행 기준이에요. 바꾸면 다시 확인이 필요해요.</p></div><Button variant="secondary" onClick={openConditions}>수정</Button></div>
-              <dl className="room-condition-grid"><div><dt>여행 지역</dt><dd>{appliedConditions.region || '아직 정하지 않았어요'}</dd></div><div><dt>여행 기간</dt><dd>{formatDraftDate(appliedConditions.startDate, appliedConditions.endDate)}</dd></div><div><dt>전체 인원</dt><dd>{formatDraftPeople(appliedConditions.expectedPeople)}</dd></div><div><dt>이동수단</dt><dd>{formatDraftTransport(appliedConditions.transport)}</dd></div><div><dt>출발지</dt><dd>{appliedConditions.departure || '아직 정하지 않았어요'}</dd></div><div><dt>복귀 장소</dt><dd>{appliedConditions.returnRoute || '아직 정하지 않았어요'}</dd></div><div><dt>숙박</dt><dd>{appliedConditions.lodging || '아직 정하지 않았어요'}</dd></div><div className="room-fixed"><dt>고정 일정</dt><dd>{appliedConditions.fixedSchedule || '아직 정하지 않았어요'}</dd></div></dl>
+              <dl className="room-condition-grid">
+                <div><dt>여행 지역</dt><ConditionValue value={appliedConditions.region} placeholder="여행지를 선택해 주세요" /></div>
+                <div><dt>여행 기간</dt><ConditionValue value={appliedConditions.startDate && appliedConditions.endDate ? formatDraftDate(appliedConditions.startDate, appliedConditions.endDate) : ''} placeholder="여행 날짜를 선택해 주세요" /></div>
+                <div><dt>전체 인원</dt><ConditionValue value={appliedConditions.expectedPeople ? formatDraftPeople(appliedConditions.expectedPeople) : ''} placeholder="인원을 설정해 주세요" /></div>
+                <div><dt>이동수단</dt><ConditionValue value={appliedConditions.transport === 'undecided' ? '' : formatDraftTransport(appliedConditions.transport)} placeholder="이동수단을 선택해 주세요" /></div>
+                <div><dt>출발지</dt><ConditionValue value={appliedConditions.departure} placeholder="출발지를 입력해 주세요" /></div>
+                <div><dt>복귀 장소</dt><ConditionValue value={appliedConditions.returnRoute} placeholder="복귀 장소를 입력해 주세요" /></div>
+                <div><dt>숙박</dt><ConditionValue value={appliedConditions.lodging} placeholder="숙박 계획을 입력해 주세요" /></div>
+                <div className="room-fixed"><dt>고정 일정</dt><ConditionValue value={appliedConditions.fixedSchedule} placeholder="추가된 일정 없음" /></div>
+              </dl>
               <p className="room-local-draft">이 조건은 현재 이 기기의 초안이에요. 다른 참여자에게 공유되거나 서버에 저장되지 않아요.</p>
             </section>
             <div className="room-side-cards">
               <section className="room-card room-readiness"><h2>준비 상태</h2><p>내 조건 확인 여부를 보여줘요.</p><div className="room-readiness-person"><span className="room-person-avatar">{entry.member.nickname.slice(0, 1)}</span><span>{entry.member.nickname} <small>나</small></span><strong>{confirmed ? '확인 완료' : personalComplete ? '확인 필요' : '아직 입력 전'}</strong></div>{isPreview && <div className="room-readiness-person"><span className="room-person-avatar">B</span><span>여행자 B</span><strong>작성 중</strong></div>}{!isPreview && <p className="room-private-note">다른 참여자의 준비 상태는 불러오는 기능이 아직 없어요.</p>}</section>
               <section className="room-card room-itinerary-ready"><h2>일정 생성 준비</h2><p>각자 조건을 확인한 뒤 일정을 준비할 수 있어요.</p><ul><li className={roomConditionsStarted(appliedConditions) ? 'is-done' : ''}>공통 조건 {roomConditionsStarted(appliedConditions) ? '초안 입력됨' : '정하기'}</li><li className={confirmed ? 'is-done' : ''}>내 조건 {confirmed ? '내 화면에서 확인' : '확인 필요'}</li><li>함께 일정 준비는 다음 단계예요</li></ul><Button disabled aria-describedby="room-disabled-reason">일정 준비하기</Button><small id="room-disabled-reason">서버 저장과 일정 기능은 아직 연결되지 않았어요.</small></section>
             </div>
-            <section className="room-card room-budget"><div><h2>여행 예산</h2><p>전체 인원 기준 초안이에요.</p></div><strong>{formatDraftBudget(appliedConditions.budget)}</strong>{appliedConditions.expectedPeople && appliedConditions.budget && <p>1인 기준 약 {Math.round(Number(appliedConditions.budget) / Number(appliedConditions.expectedPeople)).toLocaleString('ko-KR')}원</p>}<small>아직 입력하지 않았거나, 이 기기에서 정리한 임시 금액이에요. 실제 예약·결제 금액과 다를 수 있어요.</small></section>
+            <section className="room-card room-budget"><div><h2>여행 예산</h2><p>전체 인원 기준 초안이에요.</p></div><strong
+                style={!appliedConditions.budget ? {
+                  color: 'var(--color-muted)',
+                  fontSize: 'clamp(16px, 2vw, 20px)',
+                  fontWeight: 400,
+                  letterSpacing: 'normal',
+                } : undefined}
+              >
+                {appliedConditions.budget ? formatDraftBudget(appliedConditions.budget) : '예산을 설정해 주세요'}
+              </strong>{appliedConditions.expectedPeople && appliedConditions.budget && <p>1인 기준 약 {Math.round(Number(appliedConditions.budget) / Number(appliedConditions.expectedPeople)).toLocaleString('ko-KR')}원</p>}<small>아직 입력하지 않았거나, 이 기기에서 정리한 임시 금액이에요. 실제 예약·결제 금액과 다를 수 있어요.</small></section>
           </div>
           {conditionMessage && <p className="room-live-message" role="status">{conditionMessage}</p>}
         </> : <>

@@ -202,6 +202,10 @@
 .room-condition-grid > div { min-width: 0; }
 .room-condition-grid dt { margin-bottom: 3px; color: var(--color-muted); font-size: 12px; }
 .room-condition-grid dd { margin: 0; color: var(--color-text); font-size: 15px; font-weight: 550; overflow-wrap: anywhere; }
+.room-condition-grid dd.is-unset {
+  color: var(--color-muted);
+  font-weight: 400;
+}
 .room-condition-grid .room-fixed { grid-column: 1 / -1; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .room-local-draft { margin: 0 !important; padding-top: 12px; border-top: 1px dashed var(--color-border); font-size: 11px; }
 .room-side-cards { display: grid; grid-row: span 2; gap: 20px; }
