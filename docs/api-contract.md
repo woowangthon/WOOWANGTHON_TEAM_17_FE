@@ -49,7 +49,7 @@ FE·BE는 각 레포에서 별도 이슈·브랜치·커밋·PR을 사용하고 
 
 ## 시작 페이지 · 기기 세션과 여행 진입
 
-후속 [여행 준비·개인 조건](https://app.notion.com/p/412e977e49088197b345d73603c6a27f)은 구현 요청 상태다. 준비 정보·공통 조건·본인 초안·AI 제안·직접 확정의 6개 API와 버전/권한/개인정보 규칙을 해당 페이지에 정의했다. 현재 FE의 두 화면은 메모리 UI 초안이며 신규 API는 아직 연결하지 않는다. BE 실행 요청은 [백엔드 인계](backend-handoff.md)를 따른다. 기존 시작 API의 규격·DTO는 유지한다.
+후속 [여행 준비·개인 조건](https://app.notion.com/p/412e977e49088197b345d73603c6a27f)의 6개 API는 [BE #11](https://github.com/woowangthon/WOOWANGTHON_TEAM_17_BE/pull/11)에서 구현됐다. FE는 그중 `GET /api/v1/trips/{tripId}/preparation`과 OWNER의 `PUT /api/v1/trips/{tripId}/conditions`를 연결해 조건 공유·전체 참여자 준비 상태를 표시한다. null/정수 변환, 편집 버전 고정과 409 처리, 준비 상태 갱신 범위는 [공통 조건·준비 상태](shared-preparation.md)에 기록한다. 개인 저장·AI 제안·직접 확정의 FE 연결은 후속 범위다. 기존 시작 API의 규격·DTO는 유지하며 공용 DB migration 적용·실제 배포 완료를 가정하지 않는다.
 
 - BE의 5개 API 구현과 격리 MySQL 검증은 [BE PR #9](https://github.com/woowangthon/WOOWANGTHON_TEAM_17_BE/pull/9)에 기록돼 있다. 현재 FE는 그중 세션·생성·참여·재접속을 연결한다. 전체 계약 상태와 실제 검증 범위는 [여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8) 및 [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)을 따른다.
 - 범위: 기기 세션을 확보하고 여행을 생성하거나 기존 여행에 참여하며, 기기의 여행 목록을 다시 조회하고 참여를 재연결한다.

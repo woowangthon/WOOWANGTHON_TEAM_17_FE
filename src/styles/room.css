@@ -202,6 +202,10 @@
 .room-condition-grid > div { min-width: 0; }
 .room-condition-grid dt { margin-bottom: 3px; color: var(--color-muted); font-size: 12px; }
 .room-condition-grid dd { margin: 0; color: var(--color-text); font-size: 15px; font-weight: 550; overflow-wrap: anywhere; }
+.room-condition-grid dd.is-unset {
+  color: var(--color-muted);
+  font-weight: 400;
+}
 .room-condition-grid .room-fixed { grid-column: 1 / -1; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .room-local-draft { margin: 0 !important; padding-top: 12px; border-top: 1px dashed var(--color-border); font-size: 11px; }
 .room-side-cards { display: grid; grid-row: span 2; gap: 20px; }
@@ -372,4 +376,33 @@
 
 @media (prefers-reduced-motion: reduce) {
   .room-app *, .room-app *::before, .room-app *::after { scroll-behavior: auto; transition-duration: .01ms; }
+}
+
+/* Shared preparation response states */
+.room-preparation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.room-preparation-heading > div:first-child { min-width: 0; }
+.room-refresh-controls { display: grid; justify-items: end; gap: 5px; flex: none; }
+.room-refresh-controls .btn { min-height: 38px; padding-inline: 13px; font-size: 12px; }
+.room-refresh-controls small { color: var(--color-muted); font-size: 10px; text-align: right; }
+.room-refresh-controls small.is-error { max-width: 280px; color: var(--color-danger); }
+.room-readonly-label { padding: 8px 0; color: var(--color-muted); font-size: 12px; }
+.room-readiness-person strong.is-writing { color: var(--color-muted); }
+.room-readiness-person strong.is-confirmed { color: var(--color-accent-ink); }
+.room-condition-conflict { display: grid; gap: 8px; padding: 13px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--room-soft); }
+.room-condition-conflict h3, .room-condition-conflict p { margin: 0; }
+.room-condition-conflict p { font-size: 12px; line-height: 1.5; }
+.room-condition-conflict dl { display: grid; gap: 6px; max-height: 190px; overflow: auto; margin: 2px 0; }
+.room-condition-conflict dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 2px 8px; padding: 7px 0; border-bottom: 1px solid var(--color-border); font-size: 11px; }
+.room-condition-conflict dt { grid-row: span 2; color: var(--color-muted); font-weight: 650; }
+.room-condition-conflict dd { margin: 0; overflow-wrap: anywhere; }
+.room-condition-conflict .btn { justify-self: start; min-height: 40px; }
+.room-rebase-accepted { color: var(--color-accent-ink) !important; font-size: 12px; font-weight: 650; }
+.room-condition-fields { display: grid; gap: 14px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.room-condition-fields:disabled { opacity: .72; }
+
+@media (max-width: 700px) {
+  .room-preparation-heading { flex-direction: column; }
+  .room-refresh-controls { width: 100%; grid-template-columns: auto minmax(0, 1fr); justify-items: start; align-items: center; }
+  .room-refresh-controls small { text-align: left; }
+  .room-refresh-controls small.is-error { grid-column: 1 / -1; }
 }
