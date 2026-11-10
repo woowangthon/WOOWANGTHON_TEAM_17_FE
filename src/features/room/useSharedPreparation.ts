@@ -37,6 +37,7 @@ export function useSharedPreparation(tripId: string | null, entry: RoomEntry | n
   const mounted = useRef(false);
   const fatalRef = useRef(false);
   const preparationRef = useRef<Preparation | null>(null);
+  const pendingPersonalRefresh = useRef(false);
 
   const refresh = useCallback(async (quiet = false): Promise<Preparation | null> => {
     if (!enabled || !tripId || !entry || fatalRef.current || saveLock.current) return null;
@@ -74,9 +75,23 @@ export function useSharedPreparation(tripId: string | null, entry: RoomEntry | n
     }
   }, [enabled, entry, tripId]);
 
+  const refreshAfterPersonalMutation = useCallback(() => {
+    if (!enabled || !tripId || !entry || fatalRef.current) return;
+    if (saveLock.current) {
+      pendingPersonalRefresh.current = true;
+      return;
+    }
+    requestId.current += 1;
+    activeGet.current?.abort();
+    activeGet.current = null;
+    setRefreshing(false);
+    void refresh(true);
+  }, [enabled, entry, refresh, tripId]);
+
   useEffect(() => {
     mounted.current = true;
     fatalRef.current = false;
+    pendingPersonalRefresh.current = false;
     generation.current += 1;
     saveLock.current = false;
     // Reset per-trip data when the route/session changes so a previous room cannot flash.
@@ -166,10 +181,13 @@ export function useSharedPreparation(tripId: string | null, entry: RoomEntry | n
       }
       if (mounted.current && ownSaveGeneration === generation.current) {
         setSaving(false);
-        if (refreshAfterSave && !fatalRef.current) void refresh(true);
+        if (pendingPersonalRefresh.current && !fatalRef.current) {
+          pendingPersonalRefresh.current = false;
+          refreshAfterPersonalMutation();
+        } else if (refreshAfterSave && !fatalRef.current) void refresh(true);
       }
     }
-  }, [enabled, refresh, tripId]);
+  }, [enabled, refresh, refreshAfterPersonalMutation, tripId]);
 
   const applyFresh = useCallback((next: Preparation) => {
     if (next.trip.id !== tripId || next.currentMember.id !== entry?.member.id || next.currentMember.role !== entry.member.role) return false;
@@ -200,6 +218,7 @@ export function useSharedPreparation(tripId: string | null, entry: RoomEntry | n
     refresh: () => refresh(true),
     save,
     applyFresh,
+    refreshAfterPersonalMutation,
     setSaveMessage,
   };
 }

@@ -1,313 +1,242 @@
 import { useEffect, useRef, useState } from 'react';
 import AsyncState from '../components/ui/AsyncState';
 import Button from '../components/ui/Button';
-import Dialog from '../components/ui/Dialog';
 import Input from '../components/ui/Input';
+import CanvasPreview from '../features/workspace/CanvasPreview';
+import { usePersonalPreparation } from '../features/personal/usePersonalPreparation';
 import { useSharedPreparation } from '../features/room/useSharedPreparation';
+import { conditionsToDraft } from '../features/room/preparationApi';
+import { withPreservedHiddenConditions } from '../features/preparation/preparationModel';
+import PreparationActionButton from '../features/preparation/PreparationActionButton';
+import InfoTip from '../features/preparation/InfoTip';
+import RegionPicker from '../features/preparation/RegionPicker';
+import { CheckIcon, MapIcon, PanelIcon } from '../features/preparation/PreparationIcons';
 import {
-  emptyPersonalDraft, emptyRoomDraft, formatDraftBudget, formatDraftDate, formatDraftPeople,
-  formatDraftTransport, loadRoomEntry, personalDraftComplete, previewPersonalDraft,
-  validateRoomDraft, type PersonalDraft, type RoomDraft, type RoomEntry,
+  emptyRoomDraft, formatDraftBudget, formatDraftDate, formatDraftPeople,
+  formatDraftTransport, loadRoomEntry, previewPersonalDraft, validateRoomDraft, type PersonalDraft, type RoomDraft, type RoomEntry,
 } from '../features/room/roomData';
+import '../styles/workspace.css';
+import '../styles/preparation.css';
 
 const isPreview = new URLSearchParams(window.location.search).get('preview') === 'room';
 const previewEntry: RoomEntry = {
   trip: { id: 'preview-room', name: '단양 주말 여행', status: 'OPEN', inviteCode: 'CB-DEMO' },
-  member: { id: 'preview-member', nickname: '여행자 A', role: 'OWNER', status: 'ACTIVE' },
-  alreadyJoined: false,
+  member: { id: 'preview-member', nickname: '여행자 A', role: 'OWNER', status: 'ACTIVE' }, alreadyJoined: false,
 };
 const previewConditions: RoomDraft = {
   ...emptyRoomDraft, region: '충북 단양', startDate: '2026-11-14', endDate: '2026-11-15',
-  expectedPeople: '3', budget: '600000', transport: 'car', departure: '청주역',
-  returnRoute: '청주역', lodging: '1박 필요', fixedSchedule: '둘째 날 18:00까지 청주역 복귀',
+  expectedPeople: '3', budget: '600000', transport: 'car', departure: '청주역', returnRoute: '청주역',
+  lodging: '1박 필요', fixedSchedule: '둘째 날 18:00까지 청주역 복귀',
 };
-const blankPersonal: PersonalDraft = { ...emptyPersonalDraft };
-const returnHref = '/';
-type Section = 'preparation' | 'personal';
-
-function ConditionValue({ value, placeholder }: { value: string; placeholder: string }) {
-  return (
-    <dd style={value ? undefined : { color: 'var(--color-muted)', fontWeight: 400 }}>
-      {value || placeholder}
-    </dd>
-  );
-}
+type View = 'preparation' | 'canvas';
 
 export default function RoomPage() {
-  const tripId = new URLSearchParams(window.location.search).get('tripId');
+  const query = new URLSearchParams(window.location.search);
+  const tripId = query.get('tripId');
   const [entry, setEntry] = useState<RoomEntry | null>(isPreview ? previewEntry : null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(isPreview ? 'ready' : tripId ? 'loading' : 'error');
   const [errorMessage, setErrorMessage] = useState('여행방 주소가 없어요. 시작 화면에서 방을 만들거나 초대 코드로 참여해 주세요.');
-  const [section, setSection] = useState<Section>('preparation');
-  const [appliedConditions, setAppliedConditions] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
+  const [view, setView] = useState<View>(query.get('view') === 'canvas' ? 'canvas' : 'preparation');
+  const [conditions, setConditions] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
   const [conditionForm, setConditionForm] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
-  const [conditionsOpen, setConditionsOpen] = useState(false);
+  const [conditionDirty, setConditionDirty] = useState(false);
   const [conditionErrors, setConditionErrors] = useState<Partial<Record<keyof RoomDraft, string>>>({});
   const [conditionMessage, setConditionMessage] = useState('');
-  const [conditionEditVersion, setConditionEditVersion] = useState<number | null>(null);
+  const [editVersion, setEditVersion] = useState<number | null>(null);
   const [rebaseRequired, setRebaseRequired] = useState(false);
   const [rebaseAccepted, setRebaseAccepted] = useState(false);
   const [rebaseVersion, setRebaseVersion] = useState<number | null>(null);
-  const shared = useSharedPreparation(tripId, entry, Boolean(!isPreview && status === 'ready' && entry));
-  const sharedVersionRef = useRef<number | null>(null);
-  const [personal, setPersonal] = useState<PersonalDraft>(isPreview ? { ...previewPersonalDraft } : { ...blankPersonal });
-  const [personalOpen, setPersonalOpen] = useState(false);
-  const [personalForm, setPersonalForm] = useState<PersonalDraft>(isPreview ? { ...previewPersonalDraft } : { ...blankPersonal });
-  const [confirmed, setConfirmed] = useState(false);
-  const [reviewed, setReviewed] = useState(false);
-  const [copyMessage, setCopyMessage] = useState('');
-  const [copyFailed, setCopyFailed] = useState(false);
+  const [previewPersonal, setPreviewPersonal] = useState<PersonalDraft>({ ...previewPersonalDraft });
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
+  const navCloseRef = useRef<HTMLButtonElement>(null);
+  const navPanelRef = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState(false);
-  const codeRef = useRef<HTMLElement>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [copyMessage, setCopyMessage] = useState('');
+  const [localPersonalMessage, setLocalPersonalMessage] = useState('');
   const requestRef = useRef(0);
-  const code = entry?.trip.inviteCode;
-  const personalComplete = personalDraftComplete(personal);
-  const fieldErrors = { ...shared.saveFieldErrors, ...conditionErrors };
-  const fieldErrorSignature = Object.entries(fieldErrors).filter(([, message]) => Boolean(message)).map(([key, message]) => `${key}:${message}`).join('\n');
-  const serverOwnMember = shared.preparation?.members.find((member) => member.id === shared.preparation?.currentMember.id);
-  const ownSharedConfirmed = isPreview ? confirmed : serverOwnMember?.preparationStatus === 'confirmed';
+  const shared = useSharedPreparation(tripId, entry, Boolean(!isPreview && status === 'ready' && entry));
   const fatalAccess = status === 'ready' && Boolean(entry) && !isPreview && shared.state === 'fatal';
-  const hideRoomDetails = status !== 'ready' || (!isPreview && shared.state !== 'ready');
+  const personalHook = usePersonalPreparation({ tripId, enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !fatalAccess), conditionsVersion: shared.preparation?.conditionsVersion ?? 0, onSaved: () => { void shared.refreshAfterPersonalMutation(); } });
 
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    navCloseRef.current?.focus();
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setMobileNavOpen(false);
+        navToggleRef.current?.focus();
+      }
+    }
+    function closeOnOutside(event: PointerEvent) {
+      if (event.target instanceof Node && !navPanelRef.current?.contains(event.target) && !navToggleRef.current?.contains(event.target)) setMobileNavOpen(false);
+    }
+    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('pointerdown', closeOnOutside);
+    return () => { document.removeEventListener('keydown', closeOnEscape); document.removeEventListener('pointerdown', closeOnOutside); };
+  }, [mobileNavOpen]);
+
+  // The inline editor follows stable server snapshots, while dirty input keeps its original CAS version.
+  /* eslint-disable react/set-state-in-effect */
   useEffect(() => {
     if (!shared.preparation || isPreview) return;
-    const nextVersion = shared.preparation.conditionsVersion;
-    if (sharedVersionRef.current === null) {
-      sharedVersionRef.current = nextVersion;
-      setAppliedConditions(shared.conditions ?? { ...emptyRoomDraft });
-      return;
-    }
-    if (sharedVersionRef.current !== nextVersion) {
-      sharedVersionRef.current = nextVersion;
-      setAppliedConditions(shared.conditions ?? { ...emptyRoomDraft });
-      setReviewed(false); setConfirmed(false);
-      setConditionMessage('공통 조건이 변경되어 개인 조건을 다시 확인해야 해요. 개인 입력 원문은 그대로 보관돼요.');
-    }
-  }, [shared.preparation, shared.conditions]);
-
+    const incoming = conditionsToDraft(shared.preparation.conditions);
+    // oxlint-disable-next-line react(set-state-in-effect)
+    setConditions(incoming);
+    // oxlint-disable-next-line react(set-state-in-effect)
+    if (!conditionDirty) { setConditionForm(incoming); setEditVersion(shared.preparation.conditionsVersion); }
+  }, [shared.preparation, conditionDirty]);
+  /* eslint-enable react/set-state-in-effect */
   useEffect(() => {
-    if (!conditionsOpen) return;
-    const first = (fieldErrorSignature ? fieldErrorSignature.split('\n')[0]?.split(':')[0] : undefined) as keyof RoomDraft | undefined;
-    if (!first) return;
-    const inputId: Partial<Record<keyof RoomDraft, string>> = { startDate: 'start-date', endDate: 'end-date', expectedPeople: 'people', returnRoute: 'return-route', fixedSchedule: 'fixed-schedule' };
-    document.getElementById(inputId[first] ?? first)?.focus();
-  }, [fieldErrorSignature, conditionsOpen]);
-
-  useEffect(() => {
-    if (fatalAccess || status === 'error') {
-      // Clear modal state after access is lost so it cannot reopen if this page recovers.
-      // oxlint-disable react(set-state-in-effect)
-      // eslint-disable-next-line react/set-state-in-effect -- Close private modal state when the room session becomes inaccessible.
-      setConditionsOpen(false); setPersonalOpen(false);
-      // oxlint-enable react(set-state-in-effect)
-    }
-  }, [fatalAccess, status]);
-
-  useEffect(() => {
-    if (isPreview) return;
-    if (!tripId) return;
+    if (isPreview || !tripId) return;
     const requestId = ++requestRef.current;
     let active = true;
-    loadRoomEntry(tripId).then((result) => {
-      if (active && requestRef.current === requestId) { setEntry(result); setStatus('ready'); }
-    }).catch((error: unknown) => {
-      if (active && requestRef.current === requestId) {
-        setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.');
-        setStatus('error');
-      }
-    });
+    loadRoomEntry(tripId).then((result) => { if (active && requestRef.current === requestId) { setEntry(result); setStatus('ready'); } })
+      .catch((error: unknown) => { if (active && requestRef.current === requestId) { setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.'); setStatus('error'); } });
     return () => { active = false; };
   }, [tripId]);
 
-  useEffect(() => {
-    headingRef.current?.focus();
-    window.scrollTo({ top: 0, behavior: 'auto' });
-  }, [section]);
-
-  function retry() {
-    if (!tripId || isPreview || status === 'loading') return;
-    const requestId = ++requestRef.current;
-    setStatus('loading'); setErrorMessage('');
-    loadRoomEntry(tripId).then((result) => {
-      if (requestRef.current === requestId) { setEntry(result); setStatus('ready'); }
-    }).catch((error: unknown) => {
-      if (requestRef.current === requestId) { setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.'); setStatus('error'); }
-    });
+  function updateCondition<K extends keyof RoomDraft>(key: K, value: RoomDraft[K]) {
+    setConditionDirty(true);
+    setConditionMessage('');
+    personalHook.setReviewed(false);
+    setConditionForm((current) => ({ ...current, [key]: value }));
+    setConditionErrors((current) => ({ ...current, [key]: undefined, ...(key === 'startDate' || key === 'endDate' ? { startDate: undefined, endDate: undefined } : {}) }));
   }
-
-  async function copyCode() {
-    if (!code) return;
-    setCopyMessage(''); setCopyFailed(false); setCopied(false);
-    try { await navigator.clipboard.writeText(code); setCopyMessage('초대 코드를 복사했어요.'); setCopied(true); }
-    catch { setCopyMessage('자동 복사가 되지 않았어요. 코드를 선택해 직접 복사해 주세요.'); setCopyFailed(true); codeRef.current?.focus(); }
-  }
-
   async function saveConditions() {
     if (shared.saving) return;
     const errors = validateRoomDraft(conditionForm);
     setConditionErrors(errors);
     if (Object.keys(errors).length) return;
-    if (isPreview) {
-      setAppliedConditions({ ...conditionForm });
-      setConditionsOpen(false);
-      setReviewed(false); setConfirmed(false);
-      setConditionMessage('미리보기 조건을 이 화면에 반영했어요.');
-      return;
-    }
-    if (!shared.preparation?.canEditConditions || conditionEditVersion === null) return;
-    if (rebaseRequired && !rebaseAccepted) {
-      setConditionErrors({});
-      document.getElementById('room-rebase-accept')?.focus();
-      return;
-    }
-    const result = await shared.save(conditionForm, conditionEditVersion);
-    if (result === 'saved') {
-      setConditionsOpen(false);
-      setRebaseRequired(false); setRebaseAccepted(false);
-      setReviewed(false); setConfirmed(false);
-      setConditionMessage('공통 조건을 저장했어요. 모두가 새 조건을 확인해야 해요.');
-      return;
-    }
+    if (isPreview) { setConditions({ ...conditionForm }); setConditionDirty(false); setConditionMessage('예시 조건을 이 화면에 반영했어요.'); return; }
+    if (!shared.preparation?.canEditConditions || editVersion === null) return;
+    if (rebaseRequired && !rebaseAccepted) { document.getElementById('room-rebase-accept')?.focus(); return; }
+    const result = await shared.save(withPreservedHiddenConditions(conditionForm, shared.conditions), editVersion);
+    if (result === 'saved') { setConditions({ ...conditionForm }); setConditionDirty(false); setRebaseRequired(false); setRebaseAccepted(false); setConditionMessage('공통 조건을 저장했어요. 참여자들은 새 조건을 확인해야 해요.'); return; }
     if (result === 'conflict' || result === 'failed') {
       setRebaseRequired(true); setRebaseAccepted(false); setRebaseVersion(null);
       const latest = await shared.refresh();
-      if (latest) { setRebaseVersion(latest.conditionsVersion); setConditionMessage('최신 공통 조건을 불러왔어요. 내 입력과 비교한 뒤 다시 적용해 주세요.'); }
-      return;
+      if (latest) { setRebaseVersion(latest.conditionsVersion); setConditionMessage('최신 조건과 내 입력을 비교한 뒤 다시 적용해 주세요.'); }
     }
-    if (result === 'fatal') setConditionsOpen(false);
   }
-
-  function savePersonal() {
-    setPersonal({ ...personalForm });
-    setPersonalOpen(false);
-    setReviewed(false); setConfirmed(false);
-    setConditionMessage('내 조건이 바뀌었어요. 다시 확인한 뒤 확정해 주세요.');
+  async function copyInvite() {
+    if (!entry) return;
+    try { await navigator.clipboard.writeText(entry.trip.inviteCode); setCopied(true); setCopyMessage('초대 코드를 복사했어요.'); }
+    catch { setCopyMessage(`초대 코드 ${entry.trip.inviteCode}를 선택해 복사해 주세요.`); }
   }
-
-  function confirmPersonal() {
-    if (!personalComplete || !reviewed) return;
-    setConfirmed(true);
-    setConditionMessage('내 조건을 이 화면에서 확인했어요. 서버에는 전송되거나 다른 사람에게 공유되지 않았어요.');
+  function changeView(next: View) {
+    setView(next);
+    const nextQuery = new URLSearchParams(window.location.search);
+    if (next === 'canvas') nextQuery.set('view', 'canvas'); else nextQuery.delete('view');
+    window.history.replaceState(null, '', `${window.location.pathname}?${nextQuery.toString()}`);
   }
+  if (view === 'canvas' && entry && status === 'ready' && (isPreview || shared.state === 'ready')) return <CanvasPreview tripId={entry.trip.id} onBack={() => changeView('preparation')} />;
 
-  function updateCondition<K extends keyof RoomDraft>(key: K, value: RoomDraft[K]) {
-    setConditionForm((current) => ({ ...current, [key]: value }));
-    setConditionErrors((current) => ({ ...current, [key]: undefined, ...(key === 'startDate' || key === 'endDate' ? { startDate: undefined, endDate: undefined } : {}) }));
-  }
+  const personal = isPreview ? previewPersonal : personalHook.draft;
+  const updatePersonal = <K extends keyof PersonalDraft>(key: K, value: PersonalDraft[K]) => {
+    if (isPreview) { setPreviewPersonal((draft) => ({ ...draft, [key]: value })); setLocalPersonalMessage('미리보기 취향을 수정했어요.'); }
+    else { personalHook.updateDraft(key, value); }
+  };
+  const people = isPreview ? [
+    { id: previewEntry.member.id, nickname: '여행자 A', role: 'OWNER' as const, preparationStatus: 'writing' as const },
+    { id: 'preview-b', nickname: '여행자 B', role: 'MEMBER' as const, preparationStatus: 'writing' as const },
+    { id: 'preview-c', nickname: '여행자 C', role: 'MEMBER' as const, preparationStatus: 'confirmed' as const },
+  ] : shared.preparation?.members ?? [];
+  const canEdit = isPreview || Boolean(shared.preparation?.canEditConditions);
+  const fieldErrors = { ...shared.saveFieldErrors, ...conditionErrors };
+  const sampleTrip = isPreview;
+  const personalReadyToReview = personalHook.state === 'ready' && personalHook.phase === 'idle' && !personalHook.dirty
+    && !conditionDirty && !shared.saving && !rebaseRequired
+    && Boolean(personalHook.savedDraft.originalText.trim()) && Boolean(personalHook.savedDraft.likes.trim())
+    && ['20', '40', 'unlimited'].includes(personalHook.savedDraft.walking);
+  const reviewHelp = conditionDirty || shared.saving || rebaseRequired ? '여행 기본조건을 먼저 저장해 주세요.'
+    : personalHook.dirty ? '수정한 취향을 먼저 저장해 주세요.'
+      : !personalHook.savedDraft.originalText.trim() ? '여행하고 싶은 내용을 적고 저장해 주세요.'
+        : !personalHook.savedDraft.likes.trim() ? '좋아하는 것을 입력하고 저장해 주세요.'
+        : !['20', '40', 'unlimited'].includes(personalHook.savedDraft.walking) ? '걷기 시간을 선택하고 저장해 주세요.'
+          : '저장한 취향을 확인하면 준비를 완료할 수 있어요.';
+  const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '저장됨', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
 
-  function updatePersonal<K extends keyof PersonalDraft>(key: K, value: PersonalDraft[K]) {
-    setPersonal((current) => ({ ...current, [key]: value }));
-    setReviewed(false); setConfirmed(false);
-    setConditionMessage('내 조건이 바뀌었어요. 다시 확인한 뒤 확정해 주세요.');
-  }
-
-  function openConditions() { setConditionForm({ ...appliedConditions }); setConditionErrors({}); shared.clearSaveFieldErrors(); setRebaseRequired(false); setRebaseAccepted(false); setRebaseVersion(null); setConditionEditVersion(shared.preparation?.conditionsVersion ?? null); shared.setSaveMessage(''); setConditionsOpen(true); }
-  function openPersonal() { setPersonalForm({ ...personal }); setPersonalOpen(true); }
-  const sidebar = <aside className="room-sidebar">
-    <p className="room-sidebar-label">여행 워크스페이스</p>
-    <nav className="room-nav" aria-label="여행방 메뉴">
-      <button type="button" className={section === 'preparation' ? 'is-selected' : ''} aria-current={section === 'preparation' ? 'page' : undefined} onClick={() => setSection('preparation')}><span aria-hidden="true">□</span> 여행 준비</button>
-      <button type="button" className={section === 'personal' ? 'is-selected' : ''} aria-current={section === 'personal' ? 'page' : undefined} onClick={() => setSection('personal')}><span aria-hidden="true">□</span> 내 취향·제약</button>
-      <span className="room-nav-disabled" aria-disabled="true"><span aria-hidden="true">□</span> 여행 일정 <small>준비 중</small></span>
-      <span className="room-nav-disabled" aria-disabled="true"><span aria-hidden="true">□</span> 변경 이력 <small>준비 중</small></span>
-    </nav>
-    <section className="room-people"><h2>함께하는 사람</h2>
-      {(isPreview ? [{ id: entry?.member.id ?? '', nickname: entry?.member.nickname ?? '나', role: entry?.member.role ?? 'MEMBER', preparationStatus: 'writing' as const }, { id: 'preview-b', nickname: '여행자 B', role: 'MEMBER' as const, preparationStatus: 'writing' as const }, { id: 'preview-c', nickname: '여행자 C', role: 'MEMBER' as const, preparationStatus: 'confirmed' as const }] : shared.preparation?.members ?? []).map((member) => <div className="room-person" key={member.id}><span className={`room-person-dot ${member.preparationStatus === 'writing' ? 'is-pending' : ''}`} /><span>{member.nickname} <small>{member.id === entry?.member.id ? `나${member.role === 'OWNER' ? ' · 방장' : ''}` : member.role === 'OWNER' ? '방장' : ''}</small></span><span className="room-person-state">{isPreview && member.id === entry?.member.id ? '나' : member.preparationStatus === 'confirmed' ? '확정 완료' : '작성중'}</span></div>)}
-      {!isPreview && shared.state === 'ready' && <p className="room-people-note">현재 참여 중인 {shared.preparation?.activeMemberCount ?? 0}명 · 개인 원문과 취향은 공유하지 않아요.</p>}
-    </section>
-    <section className="room-privacy"><strong>개인 입력은 나만 확인</strong><p>공통 화면에는 준비 상태와 종합 조건만 표시해요.</p></section>
-    <a className="room-back" href={returnHref}>← 여행 시작으로</a>
-  </aside>;
-
-  return <main className="room-app">
-    <header className="room-topbar"><a href={returnHref} className="room-brand">충북 여행 계획</a>
-      <div className="room-top-meta"><span>{hideRoomDetails ? '여행 준비' : `내 여행 / ${entry?.trip.name ?? '여행방'}`}</span>{!hideRoomDetails && <strong>{appliedConditions.startDate && appliedConditions.endDate ? formatDraftDate(appliedConditions.startDate, appliedConditions.endDate) : '여행 날짜 미정'} · {formatDraftPeople(appliedConditions.expectedPeople)} · {appliedConditions.region || '충북 지역 미정'}</strong>}</div>
-      <div className="room-top-actions">{entry && !hideRoomDetails && <div className="room-share-actions"><code ref={codeRef} tabIndex={copyFailed ? 0 : -1} aria-label="여행방 초대 코드">{entry.trip.inviteCode}</code><Button variant="secondary" onClick={copyCode}>{copied ? '복사 완료' : '초대 코드 복사'}</Button><span className={copyFailed ? 'room-copy-status is-error' : 'room-copy-status'} role="status" aria-live="polite">{copyMessage}</span></div>}{entry && !hideRoomDetails && <span className="room-top-user"><i aria-hidden="true">{entry.member.nickname.slice(0, 1)}</i>{entry.member.nickname}</span>}</div>
+  return <main className="travel-workspace prep-room-shell">
+    <header className="tw-topbar prep-topbar">
+      <a className="tw-brand" href="/">충북 여행 계획</a>
+      <div className="tw-topbar-actions">{entry && <><span className="prep-invite-code">초대 코드 <code>{entry.trip.inviteCode}</code></span><Button variant="secondary" onClick={() => void copyInvite()}>{copied ? '복사 완료' : '초대 코드 복사'}</Button><span className="tw-user">{entry.member.nickname}</span></>}</div>
     </header>
-    {isPreview && <p className="room-preview-banner" role="status">화면 미리보기 · 예시 데이터예요. 실제 여행방 정보와 다르며 서버에 저장되지 않아요.</p>}
-    {status === 'ready' && !fatalAccess && <p className="room-memory-note">개인 원문과 취향 초안은 이 페이지가 열려 있는 동안에만 유지돼요. 새로고침하면 사라져요.</p>}
-    {status === 'loading' && <section className="room-state-card"><AsyncState status="loading" title="여행방을 확인하고 있어요" description="잠시만 기다려 주세요." /></section>}
-    {status === 'error' && <section className="room-state-card">{tripId ? <AsyncState status="error" title="여행방에 들어오지 못했어요" description={errorMessage} onRetry={retry} /> : <div className="async-state async-state-error" role="alert"><h3>여행방 주소를 확인할 수 없어요</h3><p>{errorMessage}</p></div>}<a className="room-return-link" href={returnHref}>시작 화면으로 돌아가기</a></section>}
-    {status === 'ready' && entry && !isPreview && shared.state === 'loading' && <section className="room-state-card"><AsyncState status="loading" title="공통 여행 조건과 준비 상태를 불러오고 있어요" description="참여자에게 공유된 정보만 확인하고 있어요." /></section>}
-    {status === 'ready' && entry && !isPreview && shared.state === 'error' && <section className="room-state-card"><AsyncState status="error" title="여행 준비 정보를 불러오지 못했어요" description={shared.message} onRetry={() => void shared.refresh()} /><a className="room-return-link" href={returnHref}>여행 시작으로 돌아가기</a></section>}
-    {status === 'ready' && entry && !isPreview && shared.state === 'fatal' && <section className="room-state-card"><div className="async-state async-state-error" role="alert"><h3>여행방에 계속 접근할 수 없어요</h3><p>{shared.message || '참여 권한이나 여행방 상태가 바뀌었어요. 다시 참여해 주세요.'}</p></div><a className="room-return-link" href={returnHref}>여행 시작으로 돌아가기</a></section>}
-    {status === 'ready' && entry && (isPreview || shared.state === 'ready') && <div className="room-layout">
-      {sidebar}
-      <section className="room-workspace">
-        {section === 'preparation' ? <>
-          <div className="room-preparation-heading"><div><p className="room-eyebrow">01 PREPARE</p><h1 ref={headingRef} tabIndex={-1}>함께 준비하는 {appliedConditions.region ? `${appliedConditions.region} ` : ''}여행</h1><p className="room-lead">각자의 조건을 확인하면, 모두에게 맞는 일정을 만들 수 있어요.</p></div>{!isPreview && <div className="room-refresh-controls"><Button variant="secondary" onClick={() => void shared.refresh()} disabled={shared.refreshing}>{shared.refreshing ? '새로 고치는 중…' : '준비 상태 새로고침'}</Button><small>{shared.lastUpdated ? `마지막 확인 ${new Date(shared.lastUpdated).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}` : ''}</small>{shared.message && <small className="is-error" role="status">{shared.message}</small>}</div>}</div>
-          <section className="room-next-step"><div><p className="room-eyebrow">다음 할 일</p><h2>{isPreview ? (personalComplete ? confirmed ? '모두 함께 준비해요' : '내 취향을 확인해 주세요' : '내 취향을 먼저 적어 주세요') : ownSharedConfirmed ? '내 준비 상태를 확인했어요' : '내 준비 상태를 확인해 주세요'}</h2><p>{isPreview ? (confirmed ? '내 조건을 확인했어요. 다음 준비를 기다려 주세요.' : '내가 정리한 여행 조건을 확인하면 내 준비 상태에 반영돼요.') : ownSharedConfirmed ? '공유된 준비 상태에 확인 완료로 표시돼요.' : '내 취향 초안은 나만 볼 수 있어요. 준비 상태는 서버에서 확인해요.'}</p></div><Button onClick={() => setSection('personal')}>{ownSharedConfirmed ? '내 조건 보기' : '내 조건 확인하기'}</Button></section>
-          <section className="room-invite-card" aria-labelledby="invite-title"><div><p className="room-eyebrow">친구들과 함께해요</p><h2 id="invite-title">초대 코드</h2><p>친구에게 상단의 초대 코드를 알려주면 여행방에 참여할 수 있어요.</p></div><code aria-label="여행방 초대 코드">{entry.trip.inviteCode}</code></section>
-          <div className="room-dashboard-grid">
-            <section className="room-card room-shared-conditions"><div className="room-card-head"><div><h2>여행의 기본 조건</h2><p>{isPreview ? '미리보기 예시 조건이에요.' : '참여자 모두가 서버에서 함께 보는 조건이에요. 변경하면 모두 다시 확인해야 해요.'}</p></div>{(isPreview || shared.preparation?.canEditConditions) ? <Button variant="secondary" onClick={openConditions}>수정</Button> : <span className="room-readonly-label">방장만 수정할 수 있어요</span>}</div>
-              <dl className="room-condition-grid">
-                <div><dt>여행 지역</dt><ConditionValue value={appliedConditions.region} placeholder="여행지를 선택해 주세요" /></div>
-                <div><dt>여행 기간</dt><ConditionValue value={appliedConditions.startDate && appliedConditions.endDate ? formatDraftDate(appliedConditions.startDate, appliedConditions.endDate) : ''} placeholder="여행 날짜를 선택해 주세요" /></div>
-                <div><dt>전체 인원</dt><ConditionValue value={appliedConditions.expectedPeople ? formatDraftPeople(appliedConditions.expectedPeople) : ''} placeholder="인원을 설정해 주세요" /></div>
-                <div><dt>이동수단</dt><ConditionValue value={appliedConditions.transport === 'undecided' ? '' : formatDraftTransport(appliedConditions.transport)} placeholder="이동수단을 선택해 주세요" /></div>
-                <div><dt>출발지</dt><ConditionValue value={appliedConditions.departure} placeholder="출발지를 입력해 주세요" /></div>
-                <div><dt>복귀 장소</dt><ConditionValue value={appliedConditions.returnRoute} placeholder="복귀 장소를 입력해 주세요" /></div>
-                <div><dt>숙박</dt><ConditionValue value={appliedConditions.lodging} placeholder="숙박 계획을 입력해 주세요" /></div>
-                <div className="room-fixed"><dt>고정 일정</dt><ConditionValue value={appliedConditions.fixedSchedule} placeholder="추가된 일정 없음" /></div>
-              </dl>
-              <p className="room-local-draft">{isPreview ? '미리보기 예시 데이터예요.' : `공유 조건 버전 ${shared.preparation?.conditionsVersion ?? '—'} · 방장이 관리해요. 개인 입력은 공유되지 않아요.`}</p>
-            </section>
-            <div className="room-side-cards">
-              <section className="room-card room-readiness"><h2>준비 상태</h2><p>{isPreview ? '미리보기 예시예요.' : `현재 참여 중인 ${shared.preparation?.activeMemberCount ?? 0}명 · 공통 조건 확인 상태`}</p>{(isPreview ? [{ id: entry.member.id, nickname: entry.member.nickname, role: entry.member.role, preparationStatus: 'writing' as const }, { id: 'preview-b', nickname: '여행자 B', role: 'MEMBER' as const, preparationStatus: 'writing' as const }, { id: 'preview-c', nickname: '여행자 C', role: 'MEMBER' as const, preparationStatus: 'confirmed' as const }] : shared.preparation?.members ?? []).map((member) => <div className="room-readiness-person" key={member.id}><span className="room-person-avatar">{member.nickname.slice(0, 1)}</span><span>{member.nickname} {member.id === entry.member.id && <small>나</small>}</span><strong className={member.preparationStatus === 'confirmed' ? 'is-confirmed' : 'is-writing'}>{member.preparationStatus === 'confirmed' ? '확정 완료' : '작성중'}</strong></div>)}</section>
-              <section className="room-card room-itinerary-ready"><h2>일정 생성 준비</h2><p>모두가 공통 조건을 확인하면 일정을 준비할 수 있어요.</p><ul><li className={shared.preparation?.readiness.conditionsReady ? 'is-done' : ''}>공통 조건 {shared.preparation?.readiness.conditionsReady ? '입력 완료' : '확인 필요'}</li>{(shared.preparation?.readiness.reasons ?? []).map((reason, index) => <li key={`${reason.code}-${reason.memberId ?? index}`}>{reason.code === 'MEMBER_COUNT_MISMATCH' ? `예정 인원 ${appliedConditions.expectedPeople || '미정'}명 · 현재 참여 ${shared.preparation?.activeMemberCount ?? 0}명` : reason.code === 'PREFERENCES_UNCONFIRMED' ? `${shared.preparation?.members.find((member) => member.id === reason.memberId)?.nickname ?? '참여자'}의 개인 조건 확인 필요` : `공통 조건 확인 필요${reason.fields?.length ? ` · ${reason.fields.map((field) => field === 'startDate' ? '여행 시작일' : field === 'endDate' ? '여행 마지막 날' : field === 'expectedPeople' ? '예정 인원' : field === 'budget' ? '예산' : field === 'transport' ? '이동수단' : field === 'region' ? '여행 지역' : field).join(', ')}` : ''}`}</li>)}</ul><Button disabled aria-describedby="room-disabled-reason">일정 준비하기</Button><small id="room-disabled-reason">모든 준비 상태는 확인할 수 있지만 일정 생성 기능은 아직 연결되지 않았어요.</small></section>
-            </div>
-            <section className="room-card room-budget"><div><h2>여행 예산</h2><p>{isPreview ? '전체 인원 기준 예시예요.' : '모두가 공유하는 전체 예산이에요.'}</p></div><strong
-                style={!appliedConditions.budget ? {
-                  color: 'var(--color-muted)',
-                  fontSize: 'clamp(16px, 2vw, 20px)',
-                  fontWeight: 400,
-                  letterSpacing: 'normal',
-                } : undefined}
-              >
-                {appliedConditions.budget ? formatDraftBudget(appliedConditions.budget) : '예산을 설정해 주세요'}
-              </strong>{appliedConditions.expectedPeople && appliedConditions.budget && <p>1인 기준 약 {Math.round(Number(appliedConditions.budget) / Number(appliedConditions.expectedPeople)).toLocaleString('ko-KR')}원</p>}<small>{isPreview ? '미리보기 예시 금액이에요.' : '실제 예약·결제 금액과 다를 수 있어요.'}</small></section>
-          </div>
-          {conditionMessage && <p className="room-live-message" role="status">{conditionMessage}</p>}
-        </> : <>
-          <div className="room-personal-title"><div><p className="room-eyebrow">02 PERSONAL PREFERENCES</p><h1 ref={headingRef} tabIndex={-1}>내 여행 취향을 확인해 주세요</h1><p className="room-lead">내가 작성한 내용을 바탕으로 조건을 직접 정리해요. 원문과 조건은 나만 볼 수 있어요.</p></div><span className="room-private-badge">나만 보기</span></div>
-          <div className="room-personal-flow">1 자유롭게 입력 ─── 2 조건 확인 · 수정 ─── 3 내 조건 확인</div>
-          <div className="room-personal-grid">
-            <section className="room-card room-original-card"><h2>내가 작성한 내용</h2><p>원문을 고쳐도 아래 조건을 직접 확인하고 수정해 주세요.</p>{personal.originalText ? <pre>{personal.originalText}</pre> : <div className="room-empty-original">아직 적은 내용이 없어요.<br />좋아하는 것과 피하고 싶은 점을 적어 보세요.</div>}<p className="room-private-caption">원문과 내 취향은 본인만 볼 수 있어요.</p><Button variant="secondary" onClick={openPersonal}>{personal.originalText ? '원문 수정' : '내 취향 적기'}</Button><hr /><h3>개인 입력 공개 범위</h3><p>원문과 개인 조건은 공개하지 않고, 함께 보는 화면에는 준비 여부만 표시해요.</p></section>
-            <section className="room-card room-personal-fields"><div className="room-card-head"><div><h2>내가 정리한 여행 조건</h2><p>{isPreview ? '미리보기 예시예요. 실제 여행방은 이 칸이 비어 있어요.' : 'AI 해석을 불러오지 않고 내가 직접 정리하는 초안이에요.'}</p></div><span className={personalComplete ? 'room-status-badge is-ready' : 'room-status-badge'}>{confirmed ? '확인 완료' : personalComplete ? '확인 필요' : '입력 필요'}</span></div>
-              <div className="room-personal-field"><label htmlFor="likes-field">좋아하는 활동</label><input id="likes-field" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" onChange={(event) => updatePersonal('likes', event.target.value)} /></div>
-              <div className="room-personal-field"><label htmlFor="avoid-field">피하고 싶은 요소</label><div className="room-inline-fields"><input id="avoid-field" className="text-input" maxLength={500} value={personal.avoid} placeholder="예: 긴 도보 이동" onChange={(event) => updatePersonal('avoid', event.target.value)} /><select className="text-input" aria-label="피하고 싶은 요소 중요도" value={personal.avoidImportance} onChange={(event) => updatePersonal('avoidImportance', event.target.value as PersonalDraft['avoidImportance'])}><option value="required">꼭 필요한 조건</option><option value="preferred">선호 사항</option></select></div></div>
-              <div className="room-personal-field"><label htmlFor="food-field">음식 취향</label><div className="room-inline-fields"><input id="food-field" className="text-input" maxLength={500} value={personal.food} placeholder="예: 맵지 않은 음식" onChange={(event) => updatePersonal('food', event.target.value)} /><select className="text-input" aria-label="음식 취향 중요도" value={personal.foodImportance} onChange={(event) => updatePersonal('foodImportance', event.target.value as PersonalDraft['foodImportance'])}><option value="required">꼭 필요한 조건</option><option value="preferred">선호 사항</option></select></div></div>
-              <fieldset className="room-walking"><legend>한 번에 어느 정도까지 걷기 편한가요?</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '시간 제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div></fieldset>
-              {isPreview && <p className="room-preview-data-note">미리보기 예시 데이터예요. 실제 참여자의 원문이나 취향이 아니에요.</p>}
-            </section>
-          </div>
-          <section className="room-confirm-bar"><label><input type="checkbox" checked={reviewed} onChange={(event) => { setReviewed(event.target.checked); setConfirmed(false); if (!event.target.checked) setConditionMessage('확인 상태를 해제했어요. 내용을 다시 확인해 주세요.'); }} /> 내 조건과 추가 답변을 확인했어요.</label><Button variant="secondary" onClick={() => setSection('preparation')}>나중에 확인</Button><Button onClick={confirmPersonal} disabled={!personalComplete || !reviewed}>{confirmed ? '확정 완료 (이 화면)' : '내 조건 확정하기'}</Button></section>
-          {!personalComplete && <p className="room-confirm-hint">좋아하는 활동, 걷기 정도, 나만 보는 원문을 적으면 조건을 확인할 수 있어요.</p>}
-          {conditionMessage && <p className="room-live-message" role="status">{conditionMessage}</p>}
-        </>}
+    {sampleTrip && <p className="tw-preview-note">화면과 입력은 예시이며 실제 여행방에 저장되지 않아요.</p>}
+    {copyMessage && <p className="tw-copy-message" role="status">{copyMessage}</p>}
+    {status === 'loading' && <section className="tw-state"><AsyncState status="loading" title="여행방을 확인하고 있어요" description="잠시만 기다려 주세요." /></section>}
+    {status === 'error' && <section className="tw-state">{tripId ? <AsyncState status="error" title="여행방에 들어오지 못했어요" description={errorMessage} onRetry={() => { setStatus('loading'); loadRoomEntry(tripId).then((result) => { setEntry(result); setStatus('ready'); }).catch((error: unknown) => { setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.'); setStatus('error'); }); }} /> : <div role="alert"><h2>여행방 주소를 확인할 수 없어요</h2><p>{errorMessage}</p></div>}<a href="/">여행 시작으로 돌아가기</a></section>}
+    {status === 'ready' && entry && !isPreview && shared.state === 'loading' && <section className="tw-state"><AsyncState status="loading" title="공통 조건을 불러오고 있어요" description="참여자와 공유된 정보만 확인하고 있어요." /></section>}
+    {status === 'ready' && entry && !isPreview && shared.state === 'error' && <section className="tw-state"><AsyncState status="error" title="여행 준비 정보를 불러오지 못했어요" description={shared.message} onRetry={() => void shared.refresh()} /></section>}
+    {fatalAccess && <section className="tw-state" role="alert"><h2>여행방에 계속 접근할 수 없어요</h2><p>{shared.message || '참여 권한이나 여행방 상태가 바뀌었어요. 다시 참여해 주세요.'}</p><a href="/">여행 시작으로 돌아가기</a></section>}
+    {status === 'ready' && entry && (isPreview || shared.state === 'ready') && !fatalAccess && <div className="prep-workspace">
+      <aside className="prep-icon-rail" aria-label="여행 탐색">
+        <button ref={navToggleRef} type="button" className="prep-rail-button" aria-expanded={mobileNavOpen} aria-label={mobileNavOpen ? '탐색 메뉴 닫기' : '탐색 메뉴 열기'} title={mobileNavOpen ? '탐색 메뉴 닫기' : '탐색 메뉴 열기'} onClick={() => setMobileNavOpen((open) => !open)}><PanelIcon /></button>
+        <span className="prep-rail-rule" />
+        <button type="button" className="prep-rail-button is-active" aria-current="page" aria-label="여행 준비" title="여행 준비" onClick={() => changeView('preparation')}><CheckIcon /></button>
+        <button type="button" className="prep-rail-button" aria-label="일정 캔버스 미리보기" title="일정 캔버스 미리보기" onClick={() => changeView('canvas')}><MapIcon /></button>
+      </aside>
+      {mobileNavOpen && <aside ref={navPanelRef} className="prep-nav-overlay" aria-label="여행 메뉴">
+        <div className="prep-nav-heading"><strong>메뉴</strong><button ref={navCloseRef} type="button" className="prep-nav-close" aria-label="탐색 메뉴 닫기" onClick={() => { setMobileNavOpen(false); navToggleRef.current?.focus(); }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button></div>
+        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className="is-selected" type="button" aria-current="page" onClick={() => { changeView('preparation'); setMobileNavOpen(false); }}>여행 준비</button><button type="button" onClick={() => changeView('canvas')}>일정 캔버스 <small>미리보기</small></button></nav>
+        <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
+      </aside>}
+      <section className="prep-main" aria-label="여행 준비 작업 공간">
+        <header className="prep-page-heading"><div className="prep-heading-title"><h1>{entry.trip.name || '여행 준비'}</h1><section className="prep-participant-strip" aria-label="참여자 준비 상태"><h2><span>참여자</span> <small>{people.length}명</small></h2><div className="prep-participant-list">{people.map((person) => {
+          const isOwn = person.id === entry.member.id;
+          const confirmed = person.preparationStatus === 'confirmed';
+          const memberStatus = confirmed ? '준비 완료' : '준비 중';
+          return <div className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}><span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : '참여자'}</small></span><span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{memberStatus}</span></div>;
+        })}</div></section></div><div className="prep-heading-meta"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></header>
+        {!isPreview && shared.message && shared.state === 'ready' && <div className="prep-shared-refresh-error" role="alert"><span>{shared.message}</span><Button variant="secondary" disabled={shared.refreshing} onClick={() => void shared.refresh()}>{shared.refreshing ? '새로고침 중…' : '다시 불러오기'}</Button></div>}
+        <div className="prep-grid">
+          <section className="prep-condition-section" aria-labelledby="tw-condition-title">
+            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-condition-title">여행 기본조건</h2><InfoTip label="여행 기본조건 도움말" text={sampleTrip ? '편집 가능한 예시 조건이에요.' : '참여자 모두에게 공유되는 조건이에요. 바꾸면 참여자들이 새 조건을 확인해야 해요.'} /></div></header>
+            {!canEdit && <p className="prep-readonly-note">조건 입력은 방장에게 요청해 주세요.</p>}
+            <fieldset className={`prep-condition-fields ${!canEdit ? 'is-readonly' : ''}`} disabled={!canEdit || shared.saving}>
+              <RegionPicker value={conditionForm.region} error={fieldErrors.region} disabled={!canEdit || shared.saving} onChange={(value) => updateCondition('region', value)} />
+              <div className="prep-date-fields"><Input id="start-date" label="여행 시작일" type="date" value={conditionForm.startDate} error={fieldErrors.startDate} onChange={(event) => updateCondition('startDate', event.target.value)} /><Input id="end-date" label="여행 마지막 날" type="date" value={conditionForm.endDate} error={fieldErrors.endDate} onChange={(event) => updateCondition('endDate', event.target.value)} /></div>
+              <div className="prep-two-fields"><div className="prep-input-wrap"><Input id="people" label="예정 인원" type="number" min="1" max="50" value={conditionForm.expectedPeople} placeholder="인원" error={fieldErrors.expectedPeople} onChange={(event) => updateCondition('expectedPeople', event.target.value)} /><small>현재 참여 {people.length}명</small></div><Input id="budget" label="전체 여행 예산 (원)" type="number" min="1" max="1000000000" value={conditionForm.budget} placeholder="예산 입력" error={fieldErrors.budget} onChange={(event) => updateCondition('budget', event.target.value)} /></div>
+              <fieldset className="prep-transport" id="transport" aria-describedby={fieldErrors.transport ? 'transport-error' : undefined}><legend>이동수단</legend><div className="prep-transport-options">{([['car', '자가용'], ['transit', '대중교통'], ['charter', '전세버스'], ['walk', '도보'], ['undecided', '미정']] as const).map(([value, label]) => <button type="button" className={`prep-transport-option ${conditionForm.transport === value ? 'is-selected' : ''}`} key={value} aria-pressed={conditionForm.transport === value} onClick={() => updateCondition('transport', value)}>{label}</button>)}</div>{fieldErrors.transport && <p className="field-error" id="transport-error" role="alert">{fieldErrors.transport}</p>}</fieldset>
+              <div className="prep-two-fields"><Input id="departure" label="출발지" maxLength={100} value={conditionForm.departure} placeholder="예: 청주역" error={fieldErrors.departure} onChange={(event) => updateCondition('departure', event.target.value)} /><div className="field"><label htmlFor="return-route">복귀 장소 <span className="prep-optional">선택</span></label><input id="return-route" className="text-input" maxLength={100} value={conditionForm.returnRoute} placeholder="예: 청주역" onChange={(event) => updateCondition('returnRoute', event.target.value)} />{fieldErrors.returnRoute && <p className="field-error" role="alert">{fieldErrors.returnRoute}</p>}</div></div>
+            </fieldset>
+            {canEdit && <div className="prep-condition-save">{(conditionMessage || (!rebaseRequired && shared.saveMessage)) && <span className="prep-condition-status" role="status">{conditionMessage || shared.saveMessage}</span>}<PreparationActionButton label="조건 저장" loading={shared.saving} loadingLabel="조건 저장 중" onClick={() => void saveConditions()} /></div>}
+            {!canEdit && <dl className="prep-readonly-values"><div><dt>지역</dt><dd>{conditions.region || '미정'}</dd></div><div><dt>여행 기간</dt><dd>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '미정'}</dd></div><div><dt>예정 인원</dt><dd>{formatDraftPeople(conditions.expectedPeople)}</dd></div><div><dt>전체 예산</dt><dd>{formatDraftBudget(conditions.budget)}</dd></div><div><dt>이동수단</dt><dd>{formatDraftTransport(conditions.transport)}</dd></div><div><dt>출발지와 복귀</dt><dd>{conditions.departure || '미정'} / {conditions.returnRoute || '미정'}</dd></div></dl>}
+            {rebaseRequired && <section className="tw-conflict" aria-live="polite"><h3>공통 조건이 먼저 바뀌었어요</h3><p>{shared.saveMessage || '최신 조건을 확인한 뒤 내 입력을 다시 적용해 주세요.'}</p><dl>{(['region', 'startDate', 'endDate', 'expectedPeople', 'budget', 'transport', 'departure', 'returnRoute'] as const).map((key) => <div key={key}><dt>{key === 'region' ? '지역' : key === 'startDate' ? '시작일' : key === 'endDate' ? '마지막 날' : key === 'expectedPeople' ? '인원' : key === 'budget' ? '예산' : key === 'transport' ? '이동수단' : key === 'departure' ? '출발지' : '복귀 장소'}</dt><dd><span>최신: {key === 'transport' ? formatDraftTransport(shared.conditions?.transport ?? 'undecided') : shared.conditions?.[key] || '미정'}</span><span>내 입력: {key === 'transport' ? formatDraftTransport(conditionForm.transport) : conditionForm[key] || '미정'}</span></dd></div>)}</dl>{rebaseVersion === null ? <Button variant="secondary" onClick={() => { void shared.refresh().then((latest) => { if (latest) setRebaseVersion(latest.conditionsVersion); }); }} disabled={shared.refreshing}>최신 조건 불러오기</Button> : <Button id="room-rebase-accept" variant="secondary" onClick={() => { setEditVersion(rebaseVersion); setRebaseAccepted(true); }}>최신 조건 확인 후 내 변경 다시 적용</Button>}{rebaseAccepted && <p>최신 버전 {editVersion}에 내 변경을 적용할 준비가 됐어요. 저장을 눌러 주세요.</p>}</section>}
+          </section>
+
+          <section className="prep-personal-section" aria-labelledby="tw-personal-title">
+            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title">내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
+            {isPreview ? <p className="prep-personal-message">예시 입력이에요. 분석 기능은 연결되지 않았어요.</p> : personalHook.state === 'fatal' ? <p className="prep-personal-message" role="alert">접근 권한을 확인할 수 없어 개인 입력을 숨겼어요.</p> : null}
+            {(!isPreview && personalHook.state === 'fatal') ? null : <>
+              {!isPreview && personalHook.state === 'error' && <div className="prep-recovery" role="alert"><p>{personalHook.message.includes('공통 여행 조건이 바뀌었어요') ? '공통 여행 조건이 바뀌어 개인 입력과 저장 상태를 확인해야 해요.' : personalHook.message} 현재 입력은 남아 있어요. 저장본을 불러오면 미저장 입력이 대체돼요.</p><Button variant="secondary" onClick={() => void personalHook.reload()}>미저장 입력을 지우고 저장본 불러오기</Button></div>}
+              <fieldset className="prep-personal-editor" disabled={!isPreview && (personalHook.state !== 'ready' || personalHook.phase !== 'idle')}>
+                <div className={`prep-original-wrap ${!isPreview && personalHook.phase === 'analyzing' ? 'is-busy' : ''}`} aria-busy={!isPreview && personalHook.phase === 'analyzing'}>
+                  <div className="prep-original-field"><label htmlFor="tw-original">어떤 여행을 하고 싶나요?</label><textarea id="tw-original" maxLength={5000} className="text-input prep-original-input" value={personal.originalText} onChange={(event) => updatePersonal('originalText', event.target.value)} placeholder="예: 자연 풍경을 보며 여유롭게 쉬고 싶어요. 오래 걷는 일정은 어려워요." /></div>
+                  {!isPreview && personalHook.phase === 'analyzing' && <div className="prep-progress" role="status"><svg className="prep-progress-spinner" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /></svg>{personalHook.analysisStep === 'source' ? '입력 내용을 저장하고 있어요' : personalHook.analysisStep === 'interpret' ? '취향을 분석하고 있어요' : '분석 결과를 저장하고 있어요'}</div>}
+                </div>
+                <div className="prep-analysis-row"><PreparationActionButton label="취향 분석하기" loading={personalHook.phase === 'analyzing'} loadingLabel="취향 분석 중" disabled={isPreview || personalHook.state !== 'ready' || personalHook.phase !== 'idle' || !personal.originalText.trim()} onClick={() => { if (!isPreview) void personalHook.analyzeAndSave(); }} />{isPreview && <span>예시 화면에서는 분석할 수 없어요.</span>}</div>
+                {!isPreview && personalHook.state === 'ready' && personalHook.phase === 'idle' && personalHook.operationError && <p className="prep-operation-error" role="alert">{personalHook.operationError}</p>}
+                {(!isPreview && personalHook.state === 'ready' && personalHook.resultStatus === 'stale' && personalHook.phase === 'idle') && <p className="prep-stale-note" role="status">입력 내용이 바뀌었어요. 필요하면 다시 분석해 주세요.</p>}
+                {(personalHook.resultsVisible || isPreview) ? <>
+                  <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
+                  <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" onChange={(event) => updatePersonal('likes', event.target.value)} /></div>
+                    <div className="field"><label htmlFor="tw-avoid">피하고 싶은 것</label><input id="tw-avoid" className="text-input" maxLength={500} value={personal.avoid} placeholder="예: 긴 도보 이동" onChange={(event) => updatePersonal('avoid', event.target.value)} />{personal.avoid && <label className="prep-checkbox"><input type="checkbox" checked={personal.avoidImportance === 'required'} onChange={(event) => updatePersonal('avoidImportance', event.target.checked ? 'required' : 'preferred')} /><span>반드시 피해야 해요</span></label>}</div>
+                    <div className="field"><label htmlFor="tw-food">음식 취향</label><input id="tw-food" className="text-input" maxLength={500} value={personal.food} placeholder="예: 맵지 않은 음식, 유제품 제외" onChange={(event) => updatePersonal('food', event.target.value)} />{personal.food && <label className="prep-checkbox"><input type="checkbox" checked={personal.foodImportance === 'required'} onChange={(event) => updatePersonal('foodImportance', event.target.checked ? 'required' : 'preferred')} /><span>꼭 지켜야 하는 식사 조건이에요</span></label>}</div>
+                    <fieldset className="prep-walking"><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div></fieldset>
+                  </div>
+                </> : <div className="prep-parsed-empty"><h3>내 취향</h3><p>원하는 내용을 적고 분석하면 여기에 정리돼요.</p></div>}
+                {isPreview ? <div className="prep-confirm-row"><span role="status">{localPersonalMessage || '예시 입력은 실제 여행방 상태에 반영되지 않아요.'}</span></div> : <div className="prep-confirm-row prep-personal-actions">
+                  <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span><PreparationActionButton label="내 취향 저장" loading={personalHook.phase === 'saving'} loadingLabel="취향 저장 중" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || !personalHook.dirty} onClick={() => void personalHook.save()} /></div>
+                  {personalHook.resultsVisible && <div className="prep-review-row"><label className="prep-review-checkbox"><input type="checkbox" checked={personalHook.reviewed} disabled={!personalReadyToReview || personalHook.confirmation?.status === 'confirmed'} onChange={(event) => personalHook.setReviewed(event.target.checked)} /><span>여행 조건과 내 취향을 확인했어요</span></label><PreparationActionButton label="준비 완료" loading={personalHook.phase === 'confirming'} loadingLabel="준비 완료 처리 중" disabled={!personalHook.canConfirm || !personalReadyToReview} onClick={() => { if (personalReadyToReview && personalHook.canConfirm) void personalHook.confirm(); }} /></div>}
+                  {!personalReadyToReview && personalHook.resultsVisible && personalHook.state === 'ready' && personalHook.phase === 'idle' && personalHook.confirmation?.status !== 'confirmed' && <small className="prep-review-help">{reviewHelp}</small>}
+                </div>}
+              </fieldset>
+            </>}
+          </section>
+        </div>
+        <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '일정 생성 기능은 아직 연결되지 않았어요.' : shared.preparation?.readiness.conditionsReady ? '일정 생성 기능은 아직 연결되지 않았어요.' : '공통 조건과 참여자 확인 상태를 먼저 준비해 주세요.'}</p></div><PreparationActionButton label="일정 만들기" disabled ariaDescribedBy="tw-generation-note" /></section>
       </section>
     </div>}
-
-    <Dialog open={conditionsOpen && !fatalAccess && status === 'ready' && (isPreview || shared.state === 'ready')} title="여행 기본 조건" onClose={() => { if (!shared.saving) { setConditionsOpen(false); setConditionErrors({}); } }} onConfirm={saveConditions} confirmLabel={shared.saving ? '저장 중…' : isPreview ? '초안 반영' : '공통 조건 저장'} cancelLabel="취소" pending={shared.saving}>
-      <form className="room-dialog-form" onSubmit={(event) => { event.preventDefault(); saveConditions(); }}>
-        <p className="room-dialog-note">{isPreview ? '미리보기 예시 조건이에요. 서버에 저장되지 않아요.' : shared.preparation?.canEditConditions ? '저장하면 여행방 참여자 모두에게 공유되고, 모두의 확인 상태가 초기화돼요.' : '공통 조건은 방장만 수정할 수 있어요. 현재 조건은 읽기 전용이에요.'}</p>
-        {rebaseRequired && <section className="room-condition-conflict" aria-live="polite"><h3>최신 공통 조건과 비교해 주세요</h3><p>{shared.saveMessage}</p><p>현재 서버 버전 {shared.preparation?.conditionsVersion ?? '불러오는 중'} · 내 입력은 보존되어 있어요.</p><dl>{([['region', '여행 지역'], ['startDate', '여행 시작일'], ['endDate', '여행 마지막 날'], ['expectedPeople', '예정 인원'], ['budget', '전체 예산'], ['transport', '이동수단'], ['departure', '출발지'], ['returnRoute', '복귀 장소'], ['lodging', '숙박'], ['fixedSchedule', '고정 일정']] as const).map(([field, label]) => <div key={field}><dt>{label}</dt><dd>현재: {field === 'transport' ? formatDraftTransport(shared.conditions?.transport ?? 'undecided') : shared.conditions?.[field] || '아직 정하지 않았어요'}</dd><dd>내 입력: {field === 'transport' ? formatDraftTransport(conditionForm.transport) : conditionForm[field] || '아직 정하지 않았어요'}</dd></div>)}</dl>{rebaseVersion === null && <Button type="button" variant="secondary" disabled={shared.refreshing} onClick={() => { void shared.refresh().then((latest) => { if (latest) setRebaseVersion(latest.conditionsVersion); }); }}>{shared.refreshing ? '최신 조건 확인 중…' : '최신 공통 조건 새로고침'}</Button>}{!rebaseAccepted ? <Button id="room-rebase-accept" type="button" variant="secondary" disabled={rebaseVersion === null} onClick={() => { if (rebaseVersion !== null) { setConditionEditVersion(rebaseVersion); setRebaseAccepted(true); } }}>최신 조건 확인 후 내 변경 다시 적용</Button> : <p className="room-rebase-accepted">최신 버전 {conditionEditVersion}을 기준으로 다시 적용할 준비가 됐어요. 저장 버튼을 눌러 반영해 주세요.</p>}</section>}
-        {shared.saveMessage && !rebaseRequired && <p className="field-error" role="alert">{shared.saveMessage}</p>}
-        <fieldset className="room-condition-fields" disabled={shared.saving || (!isPreview && !shared.preparation?.canEditConditions)}><Input id="region" label="여행 지역" maxLength={100} value={conditionForm.region} error={fieldErrors.region} placeholder="예: 충북 단양" onChange={(event) => updateCondition('region', event.target.value)} />
-        <div className="room-date-fields"><Input id="start-date" label="여행 시작일" type="date" value={conditionForm.startDate} error={fieldErrors.startDate} onChange={(event) => updateCondition('startDate', event.target.value)} /><Input id="end-date" label="여행 마지막 날" type="date" value={conditionForm.endDate} error={fieldErrors.endDate} onChange={(event) => updateCondition('endDate', event.target.value)} /></div>
-        <Input id="people" label="예정 인원" type="number" inputMode="numeric" min="1" max="50" value={conditionForm.expectedPeople} placeholder="예: 4" error={fieldErrors.expectedPeople} onChange={(event) => updateCondition('expectedPeople', event.target.value)} />
-        <Input id="budget" label="전체 예산" type="number" inputMode="numeric" min="1" max="1000000000" value={conditionForm.budget} placeholder="예: 500000" hint="아직 정하지 않았다면 비워 둘 수 있어요." error={fieldErrors.budget} onChange={(event) => updateCondition('budget', event.target.value)} />
-        <label className="room-select-label" htmlFor="transport">이동수단</label><select id="transport" className="text-input" aria-invalid={fieldErrors.transport ? true : undefined} aria-describedby={fieldErrors.transport ? 'transport-error' : undefined} value={conditionForm.transport} onChange={(event) => updateCondition('transport', event.target.value as RoomDraft['transport'])}><option value="undecided">아직 정하지 않았어요</option><option value="car">자가용</option><option value="transit">대중교통</option><option value="charter">전세버스</option><option value="walk">도보</option></select>{fieldErrors.transport && <p className="field-error" id="transport-error" role="alert">{fieldErrors.transport}</p>}
-        <Input id="departure" label="출발지" maxLength={100} value={conditionForm.departure} error={fieldErrors.departure} placeholder="예: 청주역" onChange={(event) => updateCondition('departure', event.target.value)} />
-        <Input id="return-route" label="복귀 장소" maxLength={100} value={conditionForm.returnRoute} error={fieldErrors.returnRoute} placeholder="예: 청주역" onChange={(event) => updateCondition('returnRoute', event.target.value)} />
-        <Input id="lodging" label="숙박" maxLength={200} value={conditionForm.lodging} error={fieldErrors.lodging} placeholder="예: 1박 필요" onChange={(event) => updateCondition('lodging', event.target.value)} />
-        <Input id="fixed-schedule" label="고정 일정" maxLength={500} value={conditionForm.fixedSchedule} error={fieldErrors.fixedSchedule} placeholder="예: 둘째 날 오후 6시까지 복귀" onChange={(event) => updateCondition('fixedSchedule', event.target.value)} /></fieldset>
-      </form>
-    </Dialog>
-
-    <Dialog open={personalOpen && !fatalAccess && status === 'ready' && (isPreview || shared.state === 'ready')} title="내 취향과 여행 원문" onClose={() => setPersonalOpen(false)} onConfirm={savePersonal} confirmLabel="내 화면에 반영" cancelLabel="취소">
-      <div className="room-dialog-form"><p className="room-dialog-note">원문과 개인 조건은 본인 화면에만 보관돼요. 서버에 전송되지 않고, 이 페이지를 벗어나면 사라져요.</p><label className="room-select-label" htmlFor="original-text">좋아하는 것, 피하고 싶은 점, 음식 취향을 자유롭게 적어 주세요.</label><textarea id="original-text" maxLength={5000} className="text-input room-original-input" value={personalForm.originalText} onChange={(event) => { const originalText = event.target.value; setPersonalForm((current) => ({ ...current, originalText })); }} placeholder="예: 자연을 보고 조용히 쉬고 싶어요. 오래 걷는 건 어려워요." /><p className="field-help">실제 AI 해석은 아직 연결되지 않았어요. 아래 조건은 내가 직접 확인하고 수정해요.</p></div>
-    </Dialog>
   </main>;
 }
