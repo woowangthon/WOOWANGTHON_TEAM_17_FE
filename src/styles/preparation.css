@@ -257,8 +257,8 @@
 .prep-transport legend { margin-bottom: var(--space-1); color: var(--prep-ink); font-size: 15px; font-weight: 600; line-height: 1.4; }
 .prep-transport-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); }
 .prep-transport-option { display: flex; width: 100%; min-width: 0; min-height: 44px; align-items: center; justify-content: center; margin: 0; padding: 0 var(--space-1); border: 1px solid var(--wf-field); border-radius: 2px; background: var(--prep-paper); color: var(--prep-muted); font: inherit; font-size: 14px; font-weight: 500; line-height: 1.25; cursor: pointer; }
-.prep-transport-option:hover:not(:disabled) { border-color: var(--prep-ink); color: var(--prep-ink); }
-.prep-transport-option.is-selected { border-color: var(--prep-ink); background: var(--prep-ink); color: var(--prep-paper); font-weight: 600; }
+.prep-transport-option:hover:not(:disabled) { border-color: var(--color-accent-hover); background: var(--prep-soft); color: var(--color-accent-ink); }
+.prep-transport-option.is-selected { border-color: var(--color-accent-hover); background: var(--prep-soft); color: var(--color-accent-ink); font-weight: 600; }
 .prep-transport-option:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .prep-transport-option:disabled { background: var(--color-page); color: var(--prep-muted); cursor: not-allowed; }
 .prep-condition-fields > .prep-two-fields { align-items: start; }
@@ -277,7 +277,7 @@
 .prep-action-button:hover:not(:disabled) { border-bottom-color: var(--color-accent-hover); }
 .prep-action-button:disabled { color: var(--prep-muted); cursor: not-allowed; }
 .prep-action-label { min-width: 0; overflow-wrap: anywhere; }
-.prep-action-icon-slot { display: grid; width: 28px; height: 28px; flex: none; place-items: center; background: var(--prep-ink); color: var(--prep-paper); }
+.prep-action-icon-slot { display: grid; width: 28px; height: 28px; flex: none; place-items: center; background: var(--color-accent); color: var(--color-accent-ink); }
 .prep-action-arrow, .prep-action-spinner { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .prep-action-spinner { animation: prep-spin 1s linear infinite; }
 .prep-action-spinner circle { stroke-dasharray: 30 14; }
