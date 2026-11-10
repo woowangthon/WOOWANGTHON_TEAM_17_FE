@@ -2,7 +2,11 @@
 
 검수한 여행방 시작 HTML/JavaScript와 React + TypeScript 공통 UI를 Vite로 함께 빌드하는 프론트엔드입니다. 기본 `/`는 확정된 여행방 화면이며 요청된 하단 푸터만 제거했습니다. 같은 출처의 BE API로 기기 세션·방 생성·초대 참여·방 진입 화면의 재접속을 처리합니다. `?preview=ui`는 기존 React 공통 UI 확인 화면을 엽니다.
 
-서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별합니다. 방 생성·참여 후 `/room.html`에서 여행 준비, 내 취향·제약, 여행 일정 화면을 사용합니다. 방 정보·공통 여행 조건·전체 참여자 준비 상태는 실제 API이며, 방장이 저장한 조건을 함께 조회합니다. 실행 DB에는 BE migration 002와 generation migration 003이 명시적으로 적용되어 있어야 합니다. 개인 원문과 조건은 본인 전용 API에 저장됩니다. AI 해석 제안은 자동 반영되지 않으며 저장·직접 확정과 일정 생성 조건 검토가 별도 단계입니다. 일정 초안 생성·명시적 저장, 장소 목록과 Kakao 지도 표시가 연결되어 있습니다. 지도 키가 없거나 지도를 불러오지 못하면 목록을 사용할 수 있습니다. `VITE_KAKAO_JAVASCRIPT_KEY`는 Kakao JavaScript SDK 표시 전용 공개 설정이며 REST 키·DB·AI 비밀값을 넣지 않습니다. 서버 없이 `/room.html?preview=room`에서 방 준비 미리보기를 확인할 수 있으며, 생성 화면도 API나 지도를 호출하지 않는 미리보기 안내만 표시합니다. 자세한 연동 범위는 [공통 조건·준비 상태](docs/shared-preparation.md), 화면 구성은 [여행방 준비 화면](docs/room-dashboard.md)을 참고하세요. 이전 `src/features/entry` mock은 보존된 예시이며 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8), [여행 준비·개인 조건](https://app.notion.com/p/412e977e49088197b345d73603c6a27f), [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
+서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별합니다. 방 생성·참여 후 `/room.html`에서 여행 준비와 내 취향 화면을 사용합니다. 방 정보·공통 여행 조건·전체 참여자 준비 상태와 본인의 개인 조건 저장·AI 해석·준비 완료는 기존 BE API에 연결합니다. 방장만 공통 조건을 수정하며, 개인 원문·취향은 본인 전용입니다. 취향 분석은 원문 저장 → AI 해석 → 결과 저장 순서이며, 준비 완료는 사용자가 현재 조건과 취향을 확인한 뒤 별도로 요청합니다. 실행 DB에는 BE migration 002의 준비 기능 테이블이 필요하고 AI 해석에는 BE의 AI 설정이 필요합니다. FE에서 migration을 실행하거나 비밀키를 관리하지 않습니다.
+
+일정 캔버스는 비개인 예시 데이터를 사용하는 로컬 미리보기입니다. 실제 일정 생성·공유 일정 저장·실시간 공동 편집·장소 검색·경로 계산은 아직 연결하지 않았습니다. 최근 여행 목록도 제공하지 않습니다. 서버 없이 `/room.html?preview=room`에서 시안을 볼 수 있으며 실제 저장과 구분합니다. 최신 동작과 검수 범위는 [준비 상태·직접 확정](docs/preparation-confirmation-review.md), [조건 변경 안내](docs/preparation-condition-notice.md), [워크스페이스 검수](docs/workspace-ui-review.md)를 참고하세요. 기존 화면·연동 문서는 당시 단계의 기록입니다. 이전 `src/features/entry` mock은 보존된 예시이며 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8), [여행 준비·개인 조건](https://app.notion.com/p/412e977e49088197b345d73603c6a27f), [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
+
+현재 브랜치는 친구의 준비·취향·일정 캔버스와 기존 실제 일정 생성 화면을 함께 보존합니다. 메뉴의 `실제 일정 생성` 또는 `/room.html?tripId=...&view=generation`에서 기존 생성·검토·저장·지도 화면을 엽니다. 캔버스와 생성 결과는 서로 연결되지 않습니다. 실제 생성에는 BE migration 003과 AI 설정이 추가로 필요하며, 지도는 공개 `VITE_KAKAO_JAVASCRIPT_KEY` 설정을 사용합니다. 자세한 조건은 [일정 생성](docs/generation.md), [일정 표시](docs/itinerary-screen.md)를 참고하세요. `preview=room&view=generation`은 API를 호출하지 않는 안내 화면입니다.
 
 ## 시작하기
 
@@ -44,11 +48,10 @@ src/
   components/ui/   공통 버튼·입력·모달
   components/trip/ 조건·참여 상태·일정 카드와 상세
   features/ui-preview/ 미리보기 전용 상태·비동기 mock
-  features/generation/ 개인 조건 검토·일정 생성·장소 검색·지도 결과
   styles/          디자인 토큰·전역 스타일
 ```
 
-개인 조건 API adapter는 `features/room`, 일정 생성 adapter와 지도 상태는 `features/generation`에서 관리합니다. Mantine 참고 예제는 앱에 포함하지 않았습니다.
+실제 기능을 구현할 때 `features/trip`, `features/profile`, `features/plan`과 공통 유틸 `lib/`를 필요에 따라 추가합니다. Mantine 참고 예제는 앱에 포함하지 않았습니다.
 
 ## 팀 작업과 에이전트
 

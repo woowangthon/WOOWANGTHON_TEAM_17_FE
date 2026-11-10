@@ -1,3 +1,5 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Wayfind brand adaptation · redesign: shared system */
+/* Critique: use the existing Korean type and lime palette with consistent rules and interaction states. */
 .entry-shell { min-height: 100vh; background: var(--color-page); color: var(--color-text); }
 .entry-topbar { min-height: 72px; display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) max(var(--space-4), calc((100vw - 1240px) / 2)); border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .entry-brand { display: inline-flex; align-items: baseline; gap: var(--space-2); color: var(--color-accent-ink); text-decoration: none; }
@@ -6,34 +8,34 @@
 .entry-topbar > p { margin: 0; }
 .entry-main { width: min(1088px, calc(100% - 48px)); margin: 0 auto; padding: var(--space-5) 0 calc(var(--space-5) + var(--space-2)); }
 .entry-hero { margin-bottom: var(--space-4); }
-.entry-eyebrow, .entry-card-label { display: inline-flex; align-items: center; min-height: 30px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-control); background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: var(--font-size-secondary); font-weight: 700; }
+.entry-eyebrow, .entry-card-label { display: inline-flex; align-items: center; min-height: 30px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-control); background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: var(--text-size-secondary); font-weight: 700; }
 .entry-hero h1 { margin: var(--space-2) 0 var(--space-1); font-size: clamp(var(--entry-hero-size-small), 4.1vw, var(--entry-hero-size)); font-weight: 800; line-height: 1.2; letter-spacing: -.045em; }
-.entry-hero > p { margin: 0; color: var(--color-muted); font-size: clamp(var(--font-size-body), 2vw, var(--entry-lead-size)); }
+.entry-hero > p { margin: 0; color: var(--color-muted); font-size: clamp(var(--text-size-body), 2vw, var(--entry-lead-size)); }
 .entry-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .entry-card, .entry-recent { min-width: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); }
 .entry-card h2 { margin: var(--space-1) 0 var(--space-1); font-size: var(--entry-section-title-size); font-weight: 750; letter-spacing: -.025em; }
 .entry-card-description { min-height: var(--entry-control-height); margin: 0 0 var(--space-3); color: var(--color-muted); }
 .entry-card .field { margin-bottom: var(--space-3); }
-.entry-card .field label { font-size: var(--font-size-label); }
+.entry-card .field label { font-size: var(--text-size-label); }
 .entry-card .text-input { min-height: var(--entry-control-height); }
-.entry-form-note { min-height: 22px; margin: calc(var(--space-1) * -1) 0 var(--space-2); color: var(--color-muted); font-size: var(--font-size-caption); }
+.entry-form-note { min-height: 22px; margin: calc(var(--space-1) * -1) 0 var(--space-2); color: var(--color-muted); font-size: var(--text-size-caption); }
 .entry-submit { width: 100%; min-height: var(--entry-control-height); }
 .entry-recent { margin-top: var(--space-3); }
 .entry-recent h2 { margin: 0; font-size: var(--entry-recent-title-size); font-weight: 700; }
-.entry-recent > p { margin: var(--space-1) 0 var(--space-2); color: var(--color-muted); font-size: var(--font-size-secondary); }
+.entry-recent > p { margin: var(--space-1) 0 var(--space-2); color: var(--color-muted); font-size: var(--text-size-secondary); }
 .entry-empty { display: grid; justify-items: center; gap: var(--space-1); padding: var(--space-2); text-align: center; }
-.entry-empty-icon { display: grid; width: 35px; height: 35px; place-items: center; border-radius: 50%; background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: var(--font-size-icon); }
+.entry-empty-icon { display: grid; width: 35px; height: 35px; place-items: center; border-radius: 0; background: transparent; color: var(--color-accent-ink); font-size: var(--text-size-icon); }
 .entry-empty p { margin: var(--space-1) 0 0; font-weight: 700; }
-.entry-empty > span:last-child { color: var(--color-muted); font-size: var(--font-size-caption); }
+.entry-empty > span:last-child { color: var(--color-muted); font-size: var(--text-size-caption); }
 .entry-recent-list { display: grid; gap: var(--space-1); padding: 0; margin: 0; list-style: none; }
 .entry-recent-list li { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--color-border); }
 .entry-recent-list li > div { display: grid; min-width: 0; gap: var(--space-1); }
 .entry-recent-list strong, .entry-recent-list li > div > span { min-width: 0; overflow-wrap: anywhere; }
-.entry-recent-list li > div > span { color: var(--color-muted); font-size: var(--font-size-caption); }
-.entry-recent-badge { justify-self: start; padding: var(--space-1); border-radius: var(--radius-control); background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: var(--font-size-small); font-weight: 700; }
-.entry-privacy { margin: var(--space-3) 0 0; color: var(--color-muted); font-size: var(--font-size-secondary); }
+.entry-recent-list li > div > span { color: var(--color-muted); font-size: var(--text-size-caption); }
+.entry-recent-badge { justify-self: start; padding: var(--space-1); border-radius: var(--radius-control); background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: var(--text-size-small); font-weight: 700; }
+.entry-privacy { margin: var(--space-3) 0 0; color: var(--color-muted); font-size: var(--text-size-secondary); }
 .entry-dialog-code { display: grid; gap: var(--space-1); margin: var(--space-3) 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-control); background: var(--color-accent-soft); }
-.entry-dialog-code span, .entry-dialog-note { color: var(--color-muted); font-size: var(--font-size-secondary); }
+.entry-dialog-code span, .entry-dialog-note { color: var(--color-muted); font-size: var(--text-size-secondary); }
 .entry-dialog-code strong { overflow-wrap: anywhere; color: var(--color-accent-ink); font-size: var(--entry-section-title-size-small); font-weight: 750; letter-spacing: .07em; }
 .entry-dialog-note { margin-bottom: 0; overflow-wrap: anywhere; }
 @media (max-width: 720px) {
@@ -45,7 +47,7 @@
   .entry-topbar { min-height: 64px; padding: var(--space-1) var(--space-3); }
   .entry-brand { gap: var(--space-1); }
   .entry-brand > span:first-child { font-size: var(--entry-brand-size-small); }
-  .entry-brand-caption, .entry-topbar > p { font-size: var(--font-size-small); }
+  .entry-brand-caption, .entry-topbar > p { font-size: var(--text-size-small); }
   .entry-main { width: calc(100% - 32px); padding-bottom: var(--space-5); }
   .entry-hero { margin-bottom: var(--space-3); }
   .entry-card, .entry-recent { padding: var(--space-3); }
@@ -53,7 +55,7 @@
   .entry-recent-list li { grid-template-columns: minmax(0, 1fr) auto; }
   .entry-recent-badge { grid-column: 1; grid-row: 2; }
   .entry-recent-list li .btn { grid-column: 2; grid-row: 1 / span 2; padding-inline: var(--space-2); }
-  .entry-privacy { font-size: var(--font-size-caption); }
+  .entry-privacy { font-size: var(--text-size-caption); }
 }
 
 .entry-result-summary { overflow-wrap: anywhere; }

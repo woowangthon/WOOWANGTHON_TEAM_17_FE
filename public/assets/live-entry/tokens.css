@@ -1,0 +1,50 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Wayfind (brand adaptation) · redesign: shared local tokens. */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, colors alone do not make the palette local; use the user's lime and Pretendard. */
+:root {
+  --color-paper: #fbfbf8;
+  --color-paper-2: #f0f2ec;
+  --color-paper-3: #fff;
+  --color-ink: #20251f;
+  --color-ink-2: #343a32;
+  --color-muted: #62685d;
+  --color-rule: #bcc3b6;
+  --color-ink-rule: #454c43;
+  --color-field: #72796b;
+  --color-accent: #dfff58;
+  --color-accent-2: #dfff58;
+  --color-accent-ink: #20251f;
+  --color-focus: #20251f;
+  --color-error: #a2392e;
+  --color-success: #456b1a;
+  --font-display: "Pretendard Local", "Malgun Gothic", system-ui, sans-serif;
+  --font-body: var(--font-display);
+  --font-outlier: var(--font-body);
+  --radius-card: 0;
+  --radius-pill: 999px;
+  --rule-hair: 1px;
+  --rule-bar: 2px;
+  --shadow-card: none;
+  --tracking-display: -.045em;
+  --display-weight: 750;
+  --text-xs: .75rem;
+  --text-sm: .875rem;
+  --text-md: 1rem;
+  --text-lg: 1.2rem;
+  --text-xl: 1.44rem;
+  --text-2xl: 1.728rem;
+  --text-3xl: 2.074rem;
+  --text-display-s: 2rem;
+  --text-display: 5rem;
+  --text-section: 1.75rem;
+  --text-title: 1rem;
+  --text-lead: 1rem;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-in: cubic-bezier(.7, 0, .84, 0);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+}
+
+:root {
+  --space-0: 4px; --space-1: 8px; --space-2: 12px; --space-3: 16px; --space-4: 24px; --space-5: 32px; --space-6: 40px; --space-7: 48px; --space-8: 64px; --space-9: 96px;
+  --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 32px; --space-2xl: 64px; --space-3xl: 96px;
+  --container: 1440px; --gutter: 56px; --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+}
