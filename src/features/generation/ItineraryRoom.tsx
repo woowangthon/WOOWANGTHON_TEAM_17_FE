@@ -22,6 +22,7 @@ type Props = {
   initiallyOpenSettings?: boolean;
   onRetry: () => void;
   onAccessLost: () => void;
+  onPrepare: () => void;
   onChangeView: (view: 'preparation' | 'canvas') => void;
 };
 
@@ -32,7 +33,7 @@ function displayDate(conditions: Conditions) {
 }
 
 export default function ItineraryRoom(props: Props) {
-  const { entry, conditions, conditionsVersion, people, tripId, isPreview, status, fatalAccess, errorMessage, sharedReady, sharedError, initiallyOpenSettings = false, onRetry, onAccessLost, onChangeView } = props;
+  const { entry, conditions, conditionsVersion, people, tripId, isPreview, status, fatalAccess, errorMessage, sharedReady, sharedError, initiallyOpenSettings = false, onRetry, onAccessLost, onPrepare, onChangeView } = props;
   const [copyMessage, setCopyMessage] = useState('');
   const [copyFailed, setCopyFailed] = useState(false);
   const usableEntry = entry && status === 'ready' && (isPreview || sharedReady) && !fatalAccess ? entry : null;
@@ -77,7 +78,7 @@ export default function ItineraryRoom(props: Props) {
         {status === 'loading' && <section className="itinerary-room-state" role="status"><h2>여행방을 확인하고 있어요</h2><p>잠시만 기다려 주세요.</p></section>}
         {status === 'error' && <section className="itinerary-room-state" role="alert"><h2>여행방에 들어오지 못했어요</h2><p>{errorMessage}</p><Button variant="secondary" onClick={onRetry}>다시 시도</Button></section>}
         {isPreview && <section className="itinerary-room-state"><h2>실제 일정 생성</h2><p>미리보기에서는 실제 일정 API를 호출하지 않아요.</p><Button variant="secondary" onClick={() => onChangeView('preparation')}>여행 준비로</Button></section>}
-        {status === 'ready' && sharedReady && usableEntry && tripId && !isPreview && <GenerationWorkspace tripId={tripId} tripName={usableEntry.trip.name} conditionsVersion={conditionsVersion} expectedPeople={conditions.expectedPeople} budget={conditions.budget} transport={conditions.transport} isOwner={usableEntry.member.role === 'OWNER'} startDate={conditions.startDate} endDate={conditions.endDate} initiallyOpenSettings={initiallyOpenSettings} onAccessLost={onAccessLost} />}
+        {status === 'ready' && sharedReady && usableEntry && tripId && !isPreview && <GenerationWorkspace tripId={tripId} tripName={usableEntry.trip.name} conditionsVersion={conditionsVersion} expectedPeople={conditions.expectedPeople} budget={conditions.budget} transport={conditions.transport} isOwner={usableEntry.member.role === 'OWNER'} startDate={conditions.startDate} endDate={conditions.endDate} initiallyOpenSettings={initiallyOpenSettings} onAccessLost={onAccessLost} onPrepare={onPrepare} />}
         {status === 'ready' && !sharedReady && !fatalAccess && <section className="itinerary-room-state" role={sharedError ? 'alert' : 'status'}><h2>{sharedError ? '공통 여행 조건을 불러오지 못했어요' : '공통 여행 조건을 불러오고 있어요'}</h2><p>{sharedError || '잠시 기다린 뒤 다시 시도해 주세요.'}</p><Button variant="secondary" onClick={onRetry}>다시 시도</Button></section>}
       </section>
     </div>

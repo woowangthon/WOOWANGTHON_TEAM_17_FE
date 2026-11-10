@@ -149,6 +149,14 @@ export default function RoomPage() {
     if (next === 'preparation') nextQuery.delete('view'); else nextQuery.set('view', next);
     window.history.replaceState(null, '', `${window.location.pathname}?${nextQuery.toString()}`);
   }
+  function goToPersonalReview() {
+    changeView('preparation');
+    requestAnimationFrame(() => {
+      const target = document.getElementById('prep-self-review') ?? document.getElementById('tw-personal-title');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target?.focus();
+    });
+  }
   if (view === 'canvas' && entry && status === 'ready' && !fatalAccess && (isPreview || shared.state === 'ready')) return <CanvasPreview tripId={entry.trip.id} onBack={() => changeView('preparation')} />;
   if (view === 'generation') return <ItineraryRoom
     entry={entry}
@@ -167,6 +175,7 @@ export default function RoomPage() {
     sharedReady={isPreview || shared.state === 'ready'}
     sharedError={shared.state === 'error' ? shared.message : undefined}
     initiallyOpenSettings={initiallyOpenSettings}
+    onPrepare={goToPersonalReview}
     onRetry={() => { if (status === 'error' && tripId) { setStatus('loading'); loadRoomEntry(tripId).then((result) => { setEntry(result); setStatus('ready'); }).catch((error: unknown) => { setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.'); setStatus('error'); }); } else void shared.refresh(); }}
     onAccessLost={onGenerationAccessLost}
     onChangeView={changeView}
@@ -254,7 +263,7 @@ export default function RoomPage() {
           </section>
 
           <section className="prep-personal-section" aria-labelledby="tw-personal-title">
-            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title">내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
+            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title" tabIndex={-1}>내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
             {!isPreview && personalHook.state !== 'fatal' && personalHook.conditionsChangedNotice && <p className="prep-conditions-changed-notice" role="status">공통 여행 조건이 바뀌었어요. 최신 조건과 내 취향을 확인한 뒤 준비 완료를 눌러 주세요.</p>}
             {isPreview ? <p className="prep-personal-message">예시 입력이에요. 분석 기능은 연결되지 않았어요.</p> : personalHook.state === 'fatal' ? <p className="prep-personal-message" role="alert">접근 권한을 확인할 수 없어 개인 입력을 숨겼어요.</p> : null}
             {(!isPreview && personalHook.state === 'fatal') ? null : <>
@@ -284,10 +293,10 @@ export default function RoomPage() {
             </>}
           </section>
         </div>
-        {personalReviewReady && tripId && <section className="prep-self-review" aria-label="내 일정 생성 조건 검토">
+        {personalReviewReady && tripId && <section className="prep-self-review" id="prep-self-review" tabIndex={-1} aria-label="내 일정 생성 조건 검토">
           <PersonalReviewPanel key={`${tripId}-${shared.preparation?.conditionsVersion ?? 0}-${personalHook.confirmation?.confirmedPreferenceVersion ?? 0}`} tripId={tripId} conditionsVersion={shared.preparation?.conditionsVersion ?? 0} onReviewed={() => { shared.refreshAfterPersonalMutation(); void generationStart.refresh(); }} onAccessLost={onGenerationAccessLost} />
         </section>}
-        <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '실제 일정 생성은 예시 화면에서 사용할 수 없어요.' : generationBlocker ?? '여행 기본조건과 참여자 취향을 확인한 뒤 실제 코스를 생성해요.'}</p></div><PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role === 'OWNER' ? '일정 만들기' : '내 검토 확인'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || fatalAccess || generationStart.busy || Boolean(generationBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); else { setInitiallyOpenSettings(true); changeView('generation'); } }} ariaDescribedBy="tw-generation-note" />
+        <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '실제 일정 생성은 예시 화면에서 사용할 수 없어요.' : generationBlocker ?? '여행 기본조건과 참여자 취향을 확인한 뒤 실제 코스를 생성해요.'}</p></div><PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role === 'OWNER' ? '일정 만들기' : '내 검토 확인'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || fatalAccess || generationStart.busy || Boolean(generationBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); else goToPersonalReview(); }} ariaDescribedBy="tw-generation-note" />
           {!isPreview && (generationStart.data?.latestJob || generationStart.data?.latestPlan) && <Button variant="secondary" disabled={Boolean(generationBlocker) || generationStart.busy} onClick={() => { setInitiallyOpenSettings(false); changeView('generation'); }}>여행 일정 보기</Button>}
           {!isPreview && (generationStart.message || generationStart.loading) && <p className="prep-generation-status" role="status">{generationStart.loading ? '참여자 확인 상태를 불러오는 중이에요.' : generationStart.message}</p>}
           {!isPreview && generationStart.data && !generationStart.data.readyForGeneration && <div className="prep-generation-readiness" aria-label="공개 준비 상태">

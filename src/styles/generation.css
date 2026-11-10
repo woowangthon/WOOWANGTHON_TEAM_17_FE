@@ -171,10 +171,17 @@
 .generation-workspace .itinerary-stop-detail p { margin: 7px 0 0; color: var(--color-muted); font-size: 13px; overflow-wrap: anywhere; }
 .generation-workspace .itinerary-stop-detail .itinerary-detail-category { margin: 0 0 3px; color: var(--color-accent-ink); font-size: 12px; font-weight: 700; }
 .generation-workspace .itinerary-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-.generation-workspace .itinerary-preparation { border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
-.generation-workspace .itinerary-preparation > summary { min-height: 48px; padding: 13px 16px; color: var(--color-accent-ink); font-weight: 700; cursor: pointer; }
-.generation-workspace .itinerary-preparation[open] { padding: 0 13px 13px; }
-.generation-workspace .itinerary-preparation > summary:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.generation-workspace .itinerary-settings-shell { display: contents; }
+.generation-workspace .itinerary-settings-shell > .dialog-backdrop { width: min(800px, calc(100% - 32px)); }
+.generation-workspace .itinerary-settings-shell .dialog-content { display: grid; gap: 14px; }
+.generation-workspace .itinerary-settings-shell .generation-card { padding: 16px; }
+@media (max-width: 620px) {
+  .generation-workspace .itinerary-settings-shell > .dialog-backdrop { width: calc(100% - 20px); max-height: calc(100dvh - 20px); }
+  .generation-workspace .itinerary-settings-shell .generation-card { padding: 12px; }
+  .generation-workspace .generation-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .generation-workspace .coordinate-inputs { grid-template-columns: minmax(0, 1fr); }
+  .generation-workspace .catalog-search-row { grid-template-columns: minmax(0, 1fr); }
+}
 .generation-workspace .itinerary-empty { padding: 28px 18px; border: 1px dashed var(--color-border); border-radius: var(--radius-control); color: var(--color-muted); text-align: center; }
 
 .generation-workspace .itinerary-map-wrap { display: grid; gap: 8px; min-width: 0; }

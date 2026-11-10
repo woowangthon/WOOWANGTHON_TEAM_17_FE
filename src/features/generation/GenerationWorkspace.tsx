@@ -11,7 +11,7 @@ import ResultMap from './ResultMap';
 import '../../styles/generation.css';
 
 declare global { interface Window { kakao?: any } }
-type Props = { tripId: string; tripName: string; conditionsVersion: number; expectedPeople: string; budget: string; transport: string; isOwner: boolean; startDate: string; endDate: string; initiallyOpenSettings?: boolean; onAccessLost?: () => void };
+type Props = { tripId: string; tripName: string; conditionsVersion: number; expectedPeople: string; budget: string; transport: string; isOwner: boolean; startDate: string; endDate: string; initiallyOpenSettings?: boolean; onAccessLost?: () => void; onPrepare?: () => void };
 type FieldKey = ReviewField;
 const fieldName = reviewFieldName;
 const defaultSettings: Settings = { activityWindow: { start: '09:00', end: '18:00' }, departureAnchor: null, returnAnchor: null, reviewedCommonFields: [] };
@@ -109,7 +109,7 @@ export function PersonalReviewPanel({ tripId, conditionsVersion, onReviewed, onA
   </section>;
 }
 
-export default function GenerationWorkspace({ tripId, tripName, conditionsVersion, expectedPeople, budget, transport, isOwner, startDate, endDate, initiallyOpenSettings = false, onAccessLost }: Props) {
+export default function GenerationWorkspace({ tripId, tripName, conditionsVersion, expectedPeople, budget, transport, isOwner, startDate, endDate, initiallyOpenSettings = false, onAccessLost, onPrepare }: Props) {
   const [data, setData] = useState<GenerationState | null>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
   const [settings, setSettings] = useState<Settings>(defaultSettings); const [settingsChanged, setSettingsChanged] = useState(false);
   const settingsChangedRef = useRef(false);
@@ -182,7 +182,7 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
     finally { if (own === actionEpoch.current) { lock.current = false; setBusy(false); } }
   };
   const startGeneration = async () => { if (!data || lock.current || !data.readyForGeneration || !isOwner) return; lock.current = true; setBusy(true); const own = ++actionEpoch.current; const ac = new AbortController(); ctrl.current?.abort(); ctrl.current = ac; jobKey.current ??= crypto.randomUUID();
-    try { const created = await createJob(tripId, data.inputToken, data.settingsVersion, jobKey.current, ac.signal); if (own !== actionEpoch.current || ac.signal.aborted) return; jobKey.current = null; setJob(created); setMessage('일정 생성을 시작했어요. 진행 상태를 확인하고 있어요.'); }
+    try { const created = await createJob(tripId, data.inputToken, data.settingsVersion, jobKey.current, ac.signal); if (own !== actionEpoch.current || ac.signal.aborted) return; jobKey.current = null; setJob(created); setMessage('일정 생성을 시작했어요. 진행 상태를 확인하고 있어요.'); setSettingsOpen(false); }
     catch (error) { if (own === actionEpoch.current && !ac.signal.aborted) { if (isAccessLost(error)) clearPrivateState(); else { setMessage(errorText(error)); if (error instanceof GenerationError && error.status >= 400 && error.status < 500) jobKey.current = null; } } }
     finally { if (own === actionEpoch.current) { lock.current = false; setBusy(false); } }
   };
@@ -201,8 +201,7 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
   const resultDateSummary = plan?.document.days.length ? `${plan.document.days[0].date.replaceAll('-', '.')} – ${plan.document.days.at(-1)!.date.replaceAll('-', '.')}` : startDate && endDate ? `${startDate.replaceAll('-', '.')} – ${endDate.replaceAll('-', '.')}` : '여행 날짜 미정';
   const titleRef = useRef<HTMLHeadingElement>(null);
   const validationButtonRef = useRef<HTMLButtonElement>(null);
-  const preparationRef = useRef<HTMLDetailsElement>(null);
-  const preparationSummaryRef = useRef<HTMLElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { titleRef.current?.focus(); window.scrollTo({ top: 0, behavior: 'auto' }); }, []);
   function changeDay(date: string) {
     const day = selectCourseDay(plan?.document.days ?? [], date);
@@ -213,10 +212,6 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
 
   function openSettings() {
     setSettingsOpen(true);
-    requestAnimationFrame(() => {
-      preparationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      preparationSummaryRef.current?.focus();
-    });
   }
 
   return <div className="generation-workspace">
@@ -225,12 +220,13 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
       <div className="itinerary-header-actions">
         {plan && <span className={`generation-status ${plan.stale ? 'is-stale' : plan.status === 'SAVED' ? 'is-ready' : ''}`}>{plan.status === 'SAVED' && plan.versionNo !== null ? `v${plan.versionNo}` : '초안'} · {plan.stale ? '재확인 필요' : plan.status === 'SAVED' ? '저장됨' : '저장 전'}</span>}
         <Button variant="secondary" disabled title="변경 이력 화면은 준비 중이에요.">변경 이력</Button>
-        <Button variant="primary" onClick={openSettings}>일정 설정</Button>
+        <button ref={settingsButtonRef} type="button" className="btn btn-primary" onClick={openSettings}>일정 설정</button>
       </div>
     </header>
     {loading && <p role="status">생성 설정과 최신 일정을 불러오고 있어요.</p>}
     {message && <p className="generation-message" role="status">{message}</p>}
     {!data && !loading && message && <Button variant="secondary" onClick={() => void reload()}>일정 정보를 다시 불러오기</Button>}
+    {plan?.stale && reasons.some((reason) => ['REVIEW_REQUIRED', 'PREFERENCES_UNCONFIRMED'].includes(reason)) && <section className="generation-card"><p>여행 준비 조건이 바뀌어 이 일정은 다시 확인해야 해요.</p>{onPrepare && <Button variant="secondary" onClick={onPrepare} disabled={busy}>여행 준비 확인</Button>}</section>}
 
     {plan && <section className="itinerary-cost-strip" aria-label="여행 예상 비용">
       <strong>{costAmount}</strong><span className={costSummary?.remainder != null && costSummary.remainder < 0 ? 'is-cost-over-budget' : costSummary?.remainder == null ? 'is-cost-unknown' : undefined}>{costRemainder}</span>
@@ -238,7 +234,7 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
       <button ref={validationButtonRef} type="button" className="btn btn-secondary" onClick={() => setValidationOpen(true)}>검사 내역</button>
     </section>}
 
-    {job && !plan && <section className="generation-card" aria-live="polite"><h2>{job.status === 'QUEUED' ? '일정 생성 대기 중' : job.status === 'RUNNING' ? '여행 코스를 만들고 있어요' : job.status === 'STALE' ? '조건이 바뀌어 다시 확인이 필요해요' : '일정 초안을 만들지 못했어요'}</h2><p>{job.status === 'FAILED' ? '일정 준비·설정에서 다시 시도해 주세요.' : '완료되면 이 화면에 여행 코스가 표시돼요.'}</p><Button variant="secondary" onClick={() => void reload()} disabled={loading}>상태 새로고침</Button></section>}
+    {job && !plan && <section className="generation-card" aria-live="polite"><h2>{job.status === 'QUEUED' ? '일정 생성 대기 중' : job.status === 'RUNNING' ? '여행 코스를 만들고 있어요' : job.status === 'STALE' ? '조건이 바뀌어 다시 확인이 필요해요' : '일정 초안을 만들지 못했어요'}</h2><p>{job.status === 'FAILED' ? '상단 일정 설정에서 다시 시도해 주세요.' : '완료되면 이 화면에 여행 코스가 표시돼요.'}</p><Button variant="secondary" onClick={() => void reload()} disabled={loading}>상태 새로고침</Button></section>}
 
     {plan && <section className="generation-card itinerary-result-card" aria-labelledby="course-heading">
       <div className="itinerary-result-header"><div><h2 id="course-heading">여행 코스</h2><p>방문할 장소를 날짜별로 확인해 보세요.</p></div><div className="generation-actions"><Button variant="secondary" disabled title="코스 직접 수정은 준비 중이에요.">일정 수정</Button>{plan.status === 'SAVED' && <span className="saved-plan-note">저장된 일정 · 버전 {plan.versionNo ?? 1}{plan.stale ? ' · 현재 조건과 달라 다시 확인해 주세요.' : ''}</span>}</div></div>
@@ -263,12 +259,15 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
       {isOwner && plan.status === 'DRAFT' && <div className="generation-actions plan-save"><label className="ack-checkbox"><input type="checkbox" checked={ackUnverified} onChange={(event) => setAckUnverified(event.target.checked)} /> 검증되지 않은 항목을 확인했고 이 초안을 저장할게요.</label><Button onClick={() => void saveCurrentPlan()} disabled={busy || !plan.canSave || (plan.document.validation.warnings.length > 0 && !ackUnverified) || plan.document.validation.violations.length > 0}>일정 저장</Button><small>{plan.stale ? '조건이 변경되어 이 일정은 오래된 상태예요.' : plan.document.validation.violations.length ? '일정 위반이 해결되어야 저장할 수 있어요.' : '방장이 확인 후 직접 저장해요.'}</small></div>}
     </section>}
 
-    <details ref={preparationRef} className="itinerary-preparation" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
-      <summary ref={preparationSummaryRef}>일정 준비·설정 {data && `· 공통 조건 v${data.conditionsVersion} / 설정 v${data.settingsVersion}`}</summary>
+    <div className="itinerary-settings-shell">
+      <Dialog open={settingsOpen} title="일정 설정" onClose={() => setSettingsOpen(false)} onConfirm={() => setSettingsOpen(false)} confirmLabel="확인" cancelLabel="닫기" pending={busy} returnFocusRef={settingsButtonRef}>
+      {loading && <p role="status">생성 설정과 최신 일정을 불러오고 있어요.</p>}
+      {!data && !loading && <div role="alert"><p>{message || '일정 정보를 불러오지 못했어요.'}</p><Button variant="secondary" onClick={() => void reload()} disabled={loading}>다시 불러오기</Button></div>}
       {data && <>
-        <section className="generation-card"><div className="generation-card-heading"><div><h2>참여자 조건 검토</h2><p>개인 원문은 본인에게만 표시돼요.</p></div><Button variant="secondary" onClick={() => void reload()} disabled={loading}>새로고침</Button></div><div className="review-members">{data.reviewMembers.map((member) => <span key={member.id} className={`review-member status-${member.status}`}>{member.nickname} · {member.status === 'reviewed' ? '조건 검토 완료' : member.status === 'stale' ? '다시 확인 필요' : '검토 필요'}</span>)}</div>{reasons.length > 0 && <ul className="generation-reasons">{reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reasonLabel(reason)}</li>)}</ul>}</section>
-        <PersonalReviewPanel tripId={tripId} conditionsVersion={conditionsVersion} onReviewed={() => void reload()} onAccessLost={onAccessLost} />
-        <section className="generation-card"><div className="generation-card-heading"><div><h2>여행 코스 생성 조건</h2><p>활동 시간과 복귀 기준, 숙박·고정 일정을 확인해 주세요.</p></div><span className="generation-setting-version">공통 조건 v{data.conditionsVersion} · 설정 v{data.settingsVersion}</span></div>
+        {reasons.some((reason) => ['REVIEW_REQUIRED', 'PREFERENCES_UNCONFIRMED'].includes(reason)) && <section className="generation-card"><h2>여행 준비 확인이 필요해요</h2><p>본인 취향 검토 또는 참여자의 준비 완료가 남아 있어요.</p>{onPrepare && <Button variant="secondary" onClick={onPrepare} disabled={busy}>여행 준비 확인</Button>}</section>}
+        {reasons.filter((reason) => !['REVIEW_REQUIRED', 'PREFERENCES_UNCONFIRMED'].includes(reason)).length > 0 && <section className="generation-card"><h2>생성 전 확인할 내용</h2><ul className="generation-reasons">{reasons.filter((reason) => !['REVIEW_REQUIRED', 'PREFERENCES_UNCONFIRMED'].includes(reason)).map((reason, index) => <li key={`${reason}-${index}`}>{reasonLabel(reason)}</li>)}</ul></section>}
+        {message && <p className="generation-message" role="status">{message}</p>}
+        <section className="generation-card"><div className="generation-card-heading"><div><h2>코스 생성 조건</h2><p>활동 시간과 복귀 기준, 숙박·고정 일정을 설정해요.</p></div></div>
           <div className="generation-settings-grid"><Input id="activity-start" label="활동 시작 시간" type="time" value={settings.activityWindow.start} onChange={(event) => { setSettings((current) => ({ ...current, activityWindow: { ...current.activityWindow, start: event.target.value } })); markSettingsChanged(); }} /><Input id="activity-end" label="활동 종료 시간" type="time" value={settings.activityWindow.end} onChange={(event) => { setSettings((current) => ({ ...current, activityWindow: { ...current.activityWindow, end: event.target.value } })); markSettingsChanged(); }} />
             <fieldset className="location-editor"><legend>복귀 위치 (생성 기준)</legend><Input id="returnAnchor-label" label="표시 이름" value={settings.returnAnchor?.label ?? ''} onChange={(event) => { updateLocation('returnAnchor', 'label', event.target.value); markSettingsChanged(); }} maxLength={100} /><div className="coordinate-inputs"><Input id="returnAnchor-lat" label="위도" type="number" min={-90} max={90} step="any" value={settings.returnAnchor?.coordinate.latitude ?? ''} onChange={(event) => { updateLocation('returnAnchor', 'latitude', event.target.value); markSettingsChanged(); }} /><Input id="returnAnchor-lng" label="경도" type="number" min={-180} max={180} step="any" value={settings.returnAnchor?.coordinate.longitude ?? ''} onChange={(event) => { updateLocation('returnAnchor', 'longitude', event.target.value); markSettingsChanged(); }} /></div></fieldset>
           </div>
@@ -279,7 +278,8 @@ export default function GenerationWorkspace({ tripId, tripName, conditionsVersio
           {isOwner && <div className="generation-actions"><Button variant="secondary" onClick={() => void saveConfig()} disabled={!settingsChanged || busy}>설정 저장</Button><Button onClick={() => void startGeneration()} disabled={!data.readyForGeneration || busy || settingsChanged}>{busy ? '처리 중…' : '여행 코스 만들기'}</Button>{settingsChanged && <small>변경한 설정을 먼저 저장해 주세요.</small>}</div>}
         </section>
       </>}
-    </details>
+      </Dialog>
+    </div>
 
     {plan && <Dialog open={validationOpen} title="여행 코스 검사 내역" onClose={() => setValidationOpen(false)} onConfirm={() => setValidationOpen(false)} confirmLabel="확인" cancelLabel="닫기" returnFocusRef={validationButtonRef}>
       <div><p>{plan.document.validation.status === 'verified' ? '경로와 일정을 확인했어요.' : plan.document.validation.status === 'violated' ? '저장 전에 해결해야 할 항목이 있어요.' : '아직 확인하지 못한 정보가 있어요.'}</p>{plan.document.validation.violations.length > 0 && <section><h3>일정 문제</h3><ul>{plan.document.validation.violations.map((item, index) => <li key={`${item.code}-${index}`}>{item.date ? `${item.date} · ` : ''}{validationLabel(item.code)}</li>)}</ul></section>}<p>전체 추정 비용: {plan.document.validation.totalCostKrw === null ? '확인 필요' : `${plan.document.validation.totalCostKrw.toLocaleString('ko-KR')}원`} · 확인된 금액 {plan.document.validation.knownCostKrw.toLocaleString('ko-KR')}원</p>{plan.document.validation.warnings.length > 0 && <ul>{plan.document.validation.warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warningLabel(warning)}</li>)}</ul>}</div>
