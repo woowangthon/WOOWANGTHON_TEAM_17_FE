@@ -186,7 +186,7 @@ export default function RoomPage() {
           const isOwn = person.id === entry.member.id;
           const confirmed = person.preparationStatus === 'confirmed';
           const memberStatus = confirmed ? '준비 완료' : '준비 중';
-          return <div className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}><span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : '참여자'}</small></span><span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{memberStatus}</span></div>;
+          return <div className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}><span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : ''}</small></span><span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{memberStatus}</span></div>;
         })}</div></section></div><div className="prep-heading-meta"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></header>
         {!isPreview && shared.message && shared.state === 'ready' && <div className="prep-shared-refresh-error" role="alert"><span>{shared.message}</span><Button variant="secondary" disabled={shared.refreshing} onClick={() => void shared.refresh()}>{shared.refreshing ? '새로고침 중…' : '다시 불러오기'}</Button></div>}
         <div className="prep-grid">

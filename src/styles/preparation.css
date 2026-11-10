@@ -47,10 +47,11 @@
 .prep-page-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
 .prep-page-heading h1 { margin: 0; font-size: clamp(30px, 3.1vw, 36px); font-weight: 650; line-height: 1.2; letter-spacing: -.035em; }
 .prep-heading-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1) var(--space-3); color: var(--prep-muted); font-size: 14px; }
-.prep-participant-strip { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); padding: 0; border: 0; }
+.prep-participant-strip { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: 0; border: 0; }
 .prep-participant-strip h2 { flex: none; margin: 0; color: var(--prep-muted); font-size: 13px; font-weight: 600; }
-.prep-participant-list { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
-.prep-participant { display: flex; min-width: 0; max-width: 100%; align-items: baseline; gap: var(--space-1); }
+.prep-participant-list { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.prep-participant { display: flex; min-width: 0; max-width: 100%; flex-direction: column; align-items: flex-start; gap: var(--space-0); padding-inline-start: var(--space-2); border-inline-start: 1px solid var(--prep-line); }
+.prep-participant:first-child { padding-inline-start: 0; border-inline-start: 0; }
 .prep-person-name { display: inline-flex; align-items: baseline; gap: var(--space-0); min-width: 0; font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
 .prep-person-name small { color: var(--prep-muted); font-size: 12px; font-weight: 400; }
 .prep-person-status { display: inline-flex; align-items: center; gap: var(--space-0); flex: none; color: var(--prep-muted); font-size: 12px; white-space: nowrap; }
@@ -191,9 +192,7 @@
 .prep-confirm-row > span { margin-right: auto; }
 .prep-recovery .btn-secondary { display: flex; width: fit-content; max-width: 100%; margin-left: auto; text-align: left; }
 @media (max-width: 700px) {
-  .prep-participant-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) 0; }
-  .prep-participant { width: auto; padding: 0 var(--space-2); }
-  .prep-participant:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .prep-participant-list { gap: var(--space-2) var(--space-3); }
   .prep-analysis-row, .prep-confirm-row { justify-content: flex-end; }
   .prep-analysis-row > span, .prep-confirm-row > span { margin-right: auto; }
   .prep-generation { grid-template-columns: minmax(0, 1fr); }
@@ -245,10 +244,10 @@
 /* Compact shared participant status and native, keyboard friendly choices. */
 .prep-heading-title { display: grid; min-width: 0; gap: var(--space-2); }
 .prep-participant-strip h2 small { color: inherit; font: inherit; }
-.prep-person-name { min-width: 0; line-height: 1.4; }
+.prep-person-name { min-width: 0; font-size: 15px; font-weight: 650; line-height: 1.4; }
 .prep-person-name small { color: var(--prep-muted); font-size: 11px; font-weight: 400; }
-.prep-person-status { flex: none; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--prep-muted); font-size: 12px; line-height: 1.4; white-space: nowrap; }
-.prep-person-status.is-confirmed { color: var(--prep-ink); }
+.prep-person-status { flex: none; padding: var(--space-0) var(--space-1); border: 0; border-radius: 0; background: transparent; color: var(--prep-muted); font-size: 12px; line-height: 1.4; white-space: nowrap; }
+.prep-person-status.is-confirmed { background: var(--color-accent); color: var(--color-accent-ink); font-weight: 650; }
 .prep-shared-refresh-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-2); padding: var(--space-2); border: 1px solid var(--prep-line); border-radius: 8px; color: var(--prep-ink); font-size: 13px; }
 .prep-shared-refresh-error .btn { min-height: 40px; }
 .prep-section-heading { align-items: center; }
