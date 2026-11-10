@@ -16,6 +16,7 @@ import {
   formatDraftTransport, loadRoomEntry, previewPersonalDraft, validateRoomDraft, type PersonalDraft, type RoomDraft, type RoomEntry,
 } from '../features/room/roomData';
 import '../styles/workspace.css';
+import '../styles/canvas-studio.css';
 import '../styles/preparation.css';
 
 const isPreview = new URLSearchParams(window.location.search).get('preview') === 'room';
@@ -244,7 +245,7 @@ export default function RoomPage() {
         <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className={view === 'preparation' ? 'is-selected' : ''} type="button" aria-current={view === 'preparation' ? 'page' : undefined} onClick={() => { changeView('preparation'); preparationRailRef.current?.focus(); }}><CheckIcon /><span>여행 준비</span></button><button className={view === 'canvas' ? 'is-selected' : ''} type="button" aria-current={view === 'canvas' ? 'page' : undefined} onClick={() => { changeView('canvas'); canvasRailRef.current?.focus(); }}><MapIcon /><span>일정 캔버스</span></button></nav>
         <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
       </aside>}
-      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
+      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} preview={isPreview} startDate={conditions.startDate} endDate={conditions.endDate} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
         <header className="prep-page-heading"><div className="prep-heading-info"><h1>{entry.trip.name || '여행 준비'}</h1><div className="prep-heading-meta" aria-label="저장된 여행 조건"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></div><div className="prep-participant-disclosure" ref={participantWrapRef}><button ref={participantTriggerRef} className="prep-participant-trigger" type="button" aria-expanded={participantsOpen} aria-controls={participantPanelId} onClick={() => setOpenParticipantRoomId(participantsOpen ? null : entry.trip.id)}><span>참여자 {people.length}명</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg></button>{participantsOpen && <section className="prep-participant-panel" id={participantPanelId} aria-label="참여자 준비 상태"><ul className="prep-participant-list">{people.map((person) => {
           const isOwn = person.id === entry.member.id;
           const confirmed = person.preparationStatus === 'confirmed';
