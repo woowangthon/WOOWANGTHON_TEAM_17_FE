@@ -5,14 +5,15 @@ import Dialog from '../../components/ui/Dialog';
 import { getPersonal, PersonalApiError } from '../room/personalApi';
 import { GenerationError, createJob, getGeneration, getJob, getPlan, getSelfReview, normalizeSelf, putSelfReview, savePlan, saveSettings, searchPlaces, type GenerationState, type Job, type Plan, type Place, type SelfDto, type Settings } from './generationApi';
 import { isValidWgs84 } from './mapUtils';
+import { emptyReviewChoices, getReviewIssues, getUnmappedReasonLabel, restoreReviewChoices, reviewFieldName, type ReviewChoices, type ReviewField } from './personalReviewModel';
 import { courseEdgesForPlaces, courseNodesForDay, resolveSelectedCourse, selectCourseDay, totalBudgetSummary } from './itineraryPresentation';
 import ResultMap from './ResultMap';
 import '../../styles/generation.css';
 
 declare global { interface Window { kakao?: any } }
 type Props = { tripId: string; tripName: string; conditionsVersion: number; expectedPeople: string; budget: string; transport: string; isOwner: boolean; startDate: string; endDate: string; initiallyOpenSettings?: boolean; onAccessLost?: () => void };
-type FieldKey = 'likes' | 'avoid' | 'food';
-const fieldName: Record<FieldKey, string> = { likes: '좋아하는 항목', avoid: '피하고 싶은 항목', food: '음식 조건' };
+type FieldKey = ReviewField;
+const fieldName = reviewFieldName;
 const defaultSettings: Settings = { activityWindow: { start: '09:00', end: '18:00' }, departureAnchor: null, returnAnchor: null, reviewedCommonFields: [] };
 function errorText(error: unknown) { return error instanceof Error ? error.message : '요청을 완료하지 못했어요. 다시 시도해 주세요.'; }
 function isAccessLost(error: unknown): boolean { return (error instanceof GenerationError || error instanceof PersonalApiError) && ([401, 403, 404].includes(error.status) || error.code === 'TRIP_CLOSED'); }
@@ -43,9 +44,7 @@ export function PersonalReviewPanel({ tripId, conditionsVersion, onReviewed, onA
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [accepted, setAccepted] = useState<string[]>([]);
-  const [fieldReview, setFieldReview] = useState<Record<FieldKey, { scope: 'all' | 'meal' | 'stay'; fully: boolean }>>({
-    likes: { scope: 'all', fully: false }, avoid: { scope: 'all', fully: false }, food: { scope: 'meal', fully: false },
-  });
+  const [fieldReview, setFieldReview] = useState<ReviewChoices>(emptyReviewChoices);
   const [loading, setLoading] = useState(true);
   const epoch = useRef(0); const ctrl = useRef<AbortController | null>(null); const lock = useRef(false);
   const onAccessLostRef = useRef<(() => void) | undefined>(undefined);
@@ -57,23 +56,29 @@ export function PersonalReviewPanel({ tripId, conditionsVersion, onReviewed, onA
   }, []);
   const refresh = useCallback(async () => {
     ctrl.current?.abort(); lock.current = false; setBusy(false); const own = ++epoch.current; const ac = new AbortController(); ctrl.current = ac; setLoading(true);
-    try { const personal = await getPersonal(tripId, ac.signal); const next = await getSelfReview(tripId, ac.signal).catch((error: unknown) => { if (error instanceof GenerationError && error.code === 'PREFERENCES_UNCONFIRMED') return { conditionsVersion: personal.conditionsVersion, preferenceVersion: personal.preferenceVersion, catalogDigest: '', normalization: null, reviewVersion: 0, review: null, stale: false } satisfies SelfDto; throw error; }); if (own !== epoch.current) return; setDto(next); setFieldReview({ likes: { scope: 'all', fully: false }, avoid: { scope: 'all', fully: false }, food: { scope: 'meal', fully: false } }); setAccepted(next.review?.acceptedTermIds ?? []); setSourceConfirmed(personal.confirmation.status === 'confirmed' && personal.confirmation.confirmedConditionsVersion === conditionsVersion && personal.confirmation.confirmedPreferenceVersion === personal.preferenceVersion); }
+    try { const personal = await getPersonal(tripId, ac.signal); const next = await getSelfReview(tripId, ac.signal).catch((error: unknown) => { if (error instanceof GenerationError && error.code === 'PREFERENCES_UNCONFIRMED') return { conditionsVersion: personal.conditionsVersion, preferenceVersion: personal.preferenceVersion, catalogDigest: '', normalization: null, reviewVersion: 0, review: null, stale: false } satisfies SelfDto; throw error; }); if (own !== epoch.current) return; setDto(next); const restored = restoreReviewChoices(next); setFieldReview(restored.fields); setAccepted(restored.accepted); setSourceConfirmed(personal.confirmation.status === 'confirmed' && personal.confirmation.confirmedConditionsVersion === conditionsVersion && personal.confirmation.confirmedPreferenceVersion === personal.preferenceVersion); }
     catch (error) { if (own === epoch.current && !ac.signal.aborted) { if (isAccessLost(error)) { clearPrivateState(); return; } setMessage(errorText(error)); } }
     finally { if (own === epoch.current) setLoading(false); }
   }, [clearPrivateState, conditionsVersion, tripId]);
   useEffect(() => { void refresh(); return () => { epoch.current += 1; ctrl.current?.abort(); ctrl.current = null; lock.current = false; setBusy(false); }; }, [refresh]);
   const normalize = async () => {
     if (lock.current || !dto) return; lock.current = true; setBusy(true); ctrl.current?.abort(); const own = ++epoch.current; const ac = new AbortController(); ctrl.current = ac;
-    try { const next = await normalizeSelf(tripId, conditionsVersion, dto.preferenceVersion, ac.signal); if (own === epoch.current) { setDto(next); setFieldReview({ likes: { scope: 'all', fully: false }, avoid: { scope: 'all', fully: false }, food: { scope: 'meal', fully: false } }); setAccepted([]); setMessage('해석을 검토해 주세요. 제안은 저장되거나 확정되지 않았어요.'); } }
+    try { const next = await normalizeSelf(tripId, conditionsVersion, dto.preferenceVersion, ac.signal); if (own === epoch.current) { setDto(next); setFieldReview(emptyReviewChoices); setAccepted([]); setMessage('해석을 검토해 주세요. 제안은 저장되거나 확정되지 않았어요.'); onReviewed?.(); } }
     catch (error) { if (own === epoch.current) { if (isAccessLost(error)) clearPrivateState(); else setMessage(errorText(error)); } }
     finally { if (own === epoch.current) { lock.current = false; setBusy(false); } }
   };
   const submitReview = async () => {
     if (!dto?.normalization || lock.current) return;
+    const issues = getReviewIssues(dto, accepted, fieldReview);
+    if (issues.length) {
+      setMessage(`아직 검토가 끝나지 않았어요. ${issues.join(' ')}`);
+      const firstField = (['likes', 'avoid', 'food'] as FieldKey[]).find((field) => issues.some((issue) => issue.startsWith(fieldName[field])));
+      (document.getElementById(firstField ? `private-review-${firstField}` : '') ?? document.getElementById('private-review-unmapped'))?.focus();
+      return;
+    }
     const reviewedFields = (['likes', 'avoid', 'food'] as FieldKey[]).filter((field) => dto.normalization?.terms.some((t) => t.field === field)).map((field) => ({ field, termIds: dto.normalization!.terms.filter((t) => t.field === field && accepted.includes(t.id)).map((t) => t.id), scope: fieldReview[field].scope, fullyReviewed: fieldReview[field].fully }));
-    if (reviewedFields.some((field) => field.termIds.length > 0 && !field.fullyReviewed)) { setMessage('선택한 각 항목의 의미 전체를 확인해 주세요.'); return; }
     lock.current = true; setBusy(true); ctrl.current?.abort(); const own = ++epoch.current; const ac = new AbortController(); ctrl.current = ac;
-    try { const next = await putSelfReview(tripId, { normalizationId: dto.normalization.id, expectedReviewVersion: dto.reviewVersion, acceptedTermIds: accepted, reviewedFields }, ac.signal); if (own === epoch.current) { setDto(next); onReviewed?.(); setMessage('내 조건 검토를 저장했어요. 일정 생성에는 본인만의 검토 상태로 반영돼요.'); } }
+    try { const next = await putSelfReview(tripId, { normalizationId: dto.normalization.id, expectedReviewVersion: dto.reviewVersion, acceptedTermIds: accepted, reviewedFields }, ac.signal); if (own === epoch.current) { setDto(next); onReviewed?.(); const saved = restoreReviewChoices(next); const remaining = getReviewIssues(next, saved.accepted, saved.fields); setMessage(remaining.length ? `검토 내용 일부가 저장됐어요. 아직 남은 항목이 있어요. ${remaining.join(' ')}` : '내 조건 검토를 저장했어요. 최신 참여자 준비 상태를 확인하고 있어요.'); } }
     catch (error) { if (own === epoch.current) { if (isAccessLost(error)) clearPrivateState(); else setMessage(errorText(error)); } }
     finally { if (own === epoch.current) { lock.current = false; setBusy(false); } }
   };
@@ -81,21 +86,21 @@ export function PersonalReviewPanel({ tripId, conditionsVersion, onReviewed, onA
   return <section className="generation-card personal-review" aria-labelledby="private-review-title">
     <div className="generation-card-heading"><div><h2 id="private-review-title">내 일정 조건 확인</h2><p>개인 조건과 해석 근거는 본인에게만 보여요.</p></div><span className="private-label">나만 보기</span></div>
     {loading ? <p role="status">개인 조건 검토 상태를 불러오고 있어요.</p> : !dto ? <div className="generation-error" role="alert"><p>{message || '개인 조건을 불러오지 못했어요.'}</p><Button variant="secondary" onClick={() => void refresh()}>다시 시도</Button></div> : <>
-      <p className="generation-private-status">{dto.stale || dto.conditionsVersion !== conditionsVersion ? '공통 조건이 바뀌어 다시 확인해야 해요.' : dto.review ? '본인 검토가 저장되어 있어요.' : '원문을 일정에 반영하기 전에 AI 해석을 검토해 주세요.'}</p>
+      <p className="generation-private-status">{dto.stale || dto.conditionsVersion !== conditionsVersion ? '공통 조건이 바뀌어 다시 확인해야 해요.' : dto.review ? (getReviewIssues(dto, restoreReviewChoices(dto).accepted, restoreReviewChoices(dto).fields).length ? '검토 내용 일부가 저장되어 있어요. 아래 남은 항목을 확인해 주세요.' : '본인 검토가 저장되어 있어요.') : '원문을 일정에 반영하기 전에 AI 해석을 검토해 주세요.'}</p>
       <Button onClick={() => void normalize()} disabled={busy || dto.conditionsVersion !== conditionsVersion || !sourceConfirmed}>{busy ? '처리 중…' : '내 확정 조건 다시 해석'}</Button>
       {!sourceConfirmed && <p className="review-prerequisite">개인 조건 탭에서 현재 조건을 먼저 저장하고 직접 확정해 주세요. 해석 결과는 별도 검토 후에만 저장됩니다.</p>}
       {normalization && <div className="generation-review-content">
-        <p>해석 결과를 검토하고 필요한 항목을 선택해 주세요. 미분류 조건은 원문을 직접 수정해야 해요.</p>
+        <p>각 항목에서 일정에 반영할 태그를 하나 이상 선택하고, 전체 의미와 적용 범위를 확인해 주세요. 태그가 없는 조건은 원문을 직접 수정한 뒤 다시 해석해야 해요.</p>
         {(['likes', 'avoid', 'food'] as FieldKey[]).map((field) => {
           const terms = normalization.terms.filter((term) => term.field === field);
           if (!terms.length) return null;
-          return <fieldset className="review-field" key={field}><legend>{fieldName[field]}</legend>
+          return <fieldset className="review-field" key={field} id={`private-review-${field}`} tabIndex={-1}><legend>{fieldName[field]}</legend>
             {terms.map((term) => <label className="review-term" key={term.id}><input type="checkbox" checked={accepted.includes(term.id)} onChange={(event) => setAccepted((value) => event.target.checked ? [...new Set([...value, term.id])] : value.filter((id) => id !== term.id))} /><span><strong>{term.tag}</strong><small>{polarityLabel(term.polarity)} · {importanceLabel(term.importance)} · 근거: {term.evidence}</small></span></label>)}
             <label className="review-scope">적용 범위 <select value={fieldReview[field].scope} onChange={(event) => setFieldReview((value) => ({ ...value, [field]: { ...value[field], scope: event.target.value as 'all' | 'meal' | 'stay' } }))}><option value="all">여행 전체</option><option value="meal">식사</option><option value="stay">숙박</option></select></label>
             <label className="review-meaning"><input type="checkbox" checked={fieldReview[field].fully} onChange={(event) => setFieldReview((value) => ({ ...value, [field]: { ...value[field], fully: event.target.checked } }))} /> 이 항목의 전체 의미와 적용 범위를 확인했어요.</label>
           </fieldset>;
         })}
-        {normalization.unmapped.some((item) => item.reason === 'uncovered') && <div className="unmapped-list"><h3>직접 다시 정리해야 하는 내용</h3><p>아래 내용은 자동으로 적용되지 않아요. 왼쪽 ‘내 취향·제약’ 화면에서 원문을 수정한 뒤 다시 확정해 주세요.</p><ul>{normalization.unmapped.filter((item) => item.reason === 'uncovered').map((item, index) => <li key={`${item.field}-${index}`}><strong>{item.field}</strong> · {item.text}</li>)}</ul></div>}
+        {normalization.unmapped.length > 0 && <div className="unmapped-list" id="private-review-unmapped" tabIndex={-1}><h3>해석 확인이 필요한 원문</h3><p>태그가 없는 항목은 ‘내 취향·제약’에서 표현을 수정하고 직접 확정한 뒤 다시 해석해 주세요. 이미 태그가 있는 같은 항목은 선택한 태그와 전체 의미를 검토하면 돼요.</p><ul>{normalization.unmapped.map((item, index) => { const hasFieldTag = normalization.terms.some((term) => term.field === item.field); const name = item.field in fieldName ? fieldName[item.field as FieldKey] : '기타 조건'; return <li key={`${item.field}-${index}`}><strong>{name}</strong> · {item.text} <small>({getUnmappedReasonLabel(item.reason)}{hasFieldTag ? ' · 태그 검토 필요' : ' · 태그 없음, 원문 수정 필요'})</small></li>; })}</ul></div>}
         {normalization.walking && <p>걷기: {normalization.walking.unlimited ? '제한 없음' : normalization.walking.maxMinutes ? `한 번에 최대 ${normalization.walking.maxMinutes}분` : '확인 필요'}</p>}
         <Button onClick={() => void submitReview()} disabled={busy || dto.stale || dto.conditionsVersion !== conditionsVersion}>검토 내용 저장</Button>
       </div>}
