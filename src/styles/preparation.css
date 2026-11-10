@@ -22,7 +22,7 @@
 @media (max-width: 480px) {
   .prep-room-shell .prep-section-heading { flex-wrap: wrap; gap: var(--space-2); }
 }
-.prep-topbar { position: relative; z-index: 5; min-height: 60px; }
+.prep-topbar { position: sticky; top: 0; z-index: 30; min-height: 60px; }
 .prep-topbar .tw-topbar-actions { gap: var(--space-2); }
 .prep-invite-code { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--prep-muted); font-size: 13px; }
 .prep-invite-code code { padding: var(--space-0) var(--space-1); border: 1px solid var(--prep-line); border-radius: 5px; color: var(--prep-ink); font: inherit; font-weight: 600; letter-spacing: .04em; }
