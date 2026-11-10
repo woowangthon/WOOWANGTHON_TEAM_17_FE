@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import AsyncState from '../components/ui/AsyncState';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -51,19 +51,62 @@ export default function RoomPage() {
   const navToggleRef = useRef<HTMLButtonElement>(null);
   const navCloseRef = useRef<HTMLButtonElement>(null);
   const navPanelRef = useRef<HTMLElement>(null);
-  const [copied, setCopied] = useState(false);
-  const [copyMessage, setCopyMessage] = useState('');
+  const preparationRailRef = useRef<HTMLButtonElement>(null);
+  const canvasRailRef = useRef<HTMLButtonElement>(null);
+  const [copyFeedback, setCopyFeedback] = useState<{ message: string; success: boolean; roomId: string; view: View } | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyAttemptRef = useRef(0);
+  const [openParticipantRoomId, setOpenParticipantRoomId] = useState<string | null>(null);
+  const participantWrapRef = useRef<HTMLDivElement>(null);
+  const participantTriggerRef = useRef<HTMLButtonElement>(null);
+  const participantPanelId = useId();
   const [localPersonalMessage, setLocalPersonalMessage] = useState('');
   const requestRef = useRef(0);
   const shared = useSharedPreparation(tripId, entry, Boolean(!isPreview && status === 'ready' && entry));
   const fatalAccess = status === 'ready' && Boolean(entry) && !isPreview && shared.state === 'fatal';
+  const participantsOpen = openParticipantRoomId === entry?.trip.id && view === 'preparation' && !fatalAccess;
   const personalHook = usePersonalPreparation({ tripId, enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !fatalAccess), conditionsVersion: shared.preparation?.conditionsVersion ?? 0, onSaved: () => { void shared.refreshAfterPersonalMutation(); } });
+
+  function invalidateCopyFeedback() {
+    copyAttemptRef.current += 1;
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = null;
+  }
+
+  /* eslint-disable react/set-state-in-effect */
+  useEffect(() => {
+    invalidateCopyFeedback();
+    // These transient controls belong to the current room, view, and access state.
+    setCopyFeedback(null);
+    setOpenParticipantRoomId(null);
+    return () => {
+      invalidateCopyFeedback();
+    };
+  }, [tripId, entry?.trip.id, view, fatalAccess]);
+  /* eslint-enable react/set-state-in-effect */
+
+  useEffect(() => {
+    if (!participantsOpen) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      const focusWasInside = participantWrapRef.current?.contains(document.activeElement) ?? false;
+      setOpenParticipantRoomId(null);
+      if (focusWasInside) participantTriggerRef.current?.focus();
+    }
+    function closeOnOutside(event: PointerEvent) {
+      if (event.target instanceof Node && !participantWrapRef.current?.contains(event.target)) setOpenParticipantRoomId(null);
+    }
+    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('pointerdown', closeOnOutside);
+    return () => { document.removeEventListener('keydown', closeOnEscape); document.removeEventListener('pointerdown', closeOnOutside); };
+  }, [participantsOpen]);
 
   useEffect(() => {
     if (!mobileNavOpen) return;
     navCloseRef.current?.focus();
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        event.preventDefault();
         setMobileNavOpen(false);
         navToggleRef.current?.focus();
       }
@@ -71,9 +114,9 @@ export default function RoomPage() {
     function closeOnOutside(event: PointerEvent) {
       if (event.target instanceof Node && !navPanelRef.current?.contains(event.target) && !navToggleRef.current?.contains(event.target)) setMobileNavOpen(false);
     }
-    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('keydown', closeOnEscape, true);
     document.addEventListener('pointerdown', closeOnOutside);
-    return () => { document.removeEventListener('keydown', closeOnEscape); document.removeEventListener('pointerdown', closeOnOutside); };
+    return () => { document.removeEventListener('keydown', closeOnEscape, true); document.removeEventListener('pointerdown', closeOnOutside); };
   }, [mobileNavOpen]);
 
   // The inline editor follows stable server snapshots, while dirty input keeps its original CAS version.
@@ -121,17 +164,38 @@ export default function RoomPage() {
   }
   async function copyInvite() {
     if (!entry) return;
-    try { await navigator.clipboard.writeText(entry.trip.inviteCode); setCopied(true); setCopyMessage('초대 코드를 복사했어요.'); }
-    catch { setCopyMessage(`초대 코드 ${entry.trip.inviteCode}를 선택해 복사해 주세요.`); }
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = null;
+    setCopyFeedback(null);
+    const attempt = ++copyAttemptRef.current;
+    const roomId = entry.trip.id;
+    const attemptView = view;
+    const copiedFeedback = (success: boolean) => {
+      if (copyAttemptRef.current !== attempt || view !== attemptView || entry?.trip.id !== roomId) return;
+      const message = success ? '초대 코드를 복사했어요.' : `초대 코드 ${entry.trip.inviteCode}를 직접 복사해 주세요.`;
+      setCopyFeedback({ message, success, roomId, view: attemptView });
+      copyTimerRef.current = setTimeout(() => {
+        if (copyAttemptRef.current === attempt) setCopyFeedback(null);
+        copyTimerRef.current = null;
+      }, success ? 2500 : 5000);
+    };
+    try { await navigator.clipboard.writeText(entry.trip.inviteCode); copiedFeedback(true); }
+    catch { copiedFeedback(false); }
   }
   function changeView(next: View) {
+    if (next !== view) {
+      setOpenParticipantRoomId(null);
+      copyAttemptRef.current += 1;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+      setCopyFeedback(null);
+    }
+    setMobileNavOpen(false);
     setView(next);
     const nextQuery = new URLSearchParams(window.location.search);
     if (next === 'canvas') nextQuery.set('view', 'canvas'); else nextQuery.delete('view');
     window.history.replaceState(null, '', `${window.location.pathname}?${nextQuery.toString()}`);
   }
-  if (view === 'canvas' && entry && status === 'ready' && (isPreview || shared.state === 'ready')) return <CanvasPreview tripId={entry.trip.id} onBack={() => changeView('preparation')} />;
-
   const personal = isPreview ? previewPersonal : personalHook.draft;
   const updatePersonal = <K extends keyof PersonalDraft>(key: K, value: PersonalDraft[K]) => {
     if (isPreview) { setPreviewPersonal((draft) => ({ ...draft, [key]: value })); setLocalPersonalMessage('미리보기 취향을 수정했어요.'); }
@@ -160,10 +224,9 @@ export default function RoomPage() {
   return <main className="travel-workspace prep-room-shell">
     <header className="tw-topbar prep-topbar">
       <a className="tw-brand" href="/">충북 여행 계획</a>
-      <div className="tw-topbar-actions">{entry && <><span className="prep-invite-code">초대 코드 <code>{entry.trip.inviteCode}</code></span><Button variant="secondary" onClick={() => void copyInvite()}>{copied ? '복사 완료' : '초대 코드 복사'}</Button><span className="tw-user">{entry.member.nickname}</span></>}</div>
+      <div className="tw-topbar-actions">{entry && <><span className="prep-invite-code">초대 코드 <code>{entry.trip.inviteCode}</code></span><span className="prep-copy-wrap"><Button variant="secondary" onClick={() => void copyInvite()}>초대 코드 복사</Button>{!fatalAccess && copyFeedback && copyFeedback.roomId === entry.trip.id && copyFeedback.view === view && <span className={`prep-copy-feedback ${copyFeedback.success ? 'is-success' : 'is-error'}`} role="status">{copyFeedback.message}</span>}</span><span className="tw-user">{entry.member.nickname}</span></>}</div>
     </header>
     {sampleTrip && <p className="tw-preview-note">화면과 입력은 예시이며 실제 여행방에 저장되지 않아요.</p>}
-    {copyMessage && <p className="tw-copy-message" role="status">{copyMessage}</p>}
     {status === 'loading' && <section className="tw-state"><AsyncState status="loading" title="여행방을 확인하고 있어요" description="잠시만 기다려 주세요." /></section>}
     {status === 'error' && <section className="tw-state">{tripId ? <AsyncState status="error" title="여행방에 들어오지 못했어요" description={errorMessage} onRetry={() => { setStatus('loading'); loadRoomEntry(tripId).then((result) => { setEntry(result); setStatus('ready'); }).catch((error: unknown) => { setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.'); setStatus('error'); }); }} /> : <div role="alert"><h2>여행방 주소를 확인할 수 없어요</h2><p>{errorMessage}</p></div>}<a href="/">여행 시작으로 돌아가기</a></section>}
     {status === 'ready' && entry && !isPreview && shared.state === 'loading' && <section className="tw-state"><AsyncState status="loading" title="공통 조건을 불러오고 있어요" description="참여자와 공유된 정보만 확인하고 있어요." /></section>}
@@ -173,21 +236,21 @@ export default function RoomPage() {
       <aside className="prep-icon-rail" aria-label="여행 탐색">
         <button ref={navToggleRef} type="button" className="prep-rail-button" aria-expanded={mobileNavOpen} aria-label={mobileNavOpen ? '탐색 메뉴 닫기' : '탐색 메뉴 열기'} title={mobileNavOpen ? '탐색 메뉴 닫기' : '탐색 메뉴 열기'} onClick={() => setMobileNavOpen((open) => !open)}><PanelIcon /></button>
         <span className="prep-rail-rule" />
-        <button type="button" className="prep-rail-button is-active" aria-current="page" aria-label="여행 준비" title="여행 준비" onClick={() => changeView('preparation')}><CheckIcon /></button>
-        <button type="button" className="prep-rail-button" aria-label="일정 캔버스 미리보기" title="일정 캔버스 미리보기" onClick={() => changeView('canvas')}><MapIcon /></button>
+        <button ref={preparationRailRef} type="button" className={`prep-rail-button ${view === 'preparation' ? 'is-active' : ''}`} aria-current={view === 'preparation' ? 'page' : undefined} aria-label="여행 준비" title="여행 준비" onClick={() => changeView('preparation')}><CheckIcon /></button>
+        <button ref={canvasRailRef} type="button" className={`prep-rail-button ${view === 'canvas' ? 'is-active' : ''}`} aria-current={view === 'canvas' ? 'page' : undefined} aria-label="일정 캔버스 미리보기" title="일정 캔버스 미리보기" onClick={() => changeView('canvas')}><MapIcon /></button>
       </aside>
       {mobileNavOpen && <aside ref={navPanelRef} className="prep-nav-overlay" aria-label="여행 메뉴">
         <div className="prep-nav-heading"><strong>메뉴</strong><button ref={navCloseRef} type="button" className="prep-nav-close" aria-label="탐색 메뉴 닫기" onClick={() => { setMobileNavOpen(false); navToggleRef.current?.focus(); }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button></div>
-        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className="is-selected" type="button" aria-current="page" onClick={() => { changeView('preparation'); setMobileNavOpen(false); }}>여행 준비</button><button type="button" onClick={() => changeView('canvas')}>일정 캔버스 <small>미리보기</small></button></nav>
+        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className={view === 'preparation' ? 'is-selected' : ''} type="button" aria-current={view === 'preparation' ? 'page' : undefined} onClick={() => { changeView('preparation'); preparationRailRef.current?.focus(); }}>여행 준비</button><button className={view === 'canvas' ? 'is-selected' : ''} type="button" aria-current={view === 'canvas' ? 'page' : undefined} onClick={() => { changeView('canvas'); canvasRailRef.current?.focus(); }}>일정 캔버스 <small>미리보기</small></button></nav>
         <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
       </aside>}
-      <section className="prep-main" aria-label="여행 준비 작업 공간">
-        <header className="prep-page-heading"><div className="prep-heading-title"><h1>{entry.trip.name || '여행 준비'}</h1><section className="prep-participant-strip" aria-label="참여자 준비 상태"><h2><span>참여자</span> <small>{people.length}명</small></h2><div className="prep-participant-list">{people.map((person) => {
+      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
+        <header className="prep-page-heading"><div className="prep-heading-info"><h1>{entry.trip.name || '여행 준비'}</h1><div className="prep-heading-meta" aria-label="저장된 여행 조건"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></div><div className="prep-participant-disclosure" ref={participantWrapRef}><button ref={participantTriggerRef} className="prep-participant-trigger" type="button" aria-expanded={participantsOpen} aria-controls={participantPanelId} onClick={() => setOpenParticipantRoomId(participantsOpen ? null : entry.trip.id)}><span>참여자 {people.length}명</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg></button>{participantsOpen && <section className="prep-participant-panel" id={participantPanelId} aria-label="참여자 준비 상태"><ul className="prep-participant-list">{people.map((person) => {
           const isOwn = person.id === entry.member.id;
           const confirmed = person.preparationStatus === 'confirmed';
           const memberStatus = confirmed ? '준비 완료' : '준비 중';
-          return <div className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}><span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : ''}</small></span><span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{memberStatus}</span></div>;
-        })}</div></section></div><div className="prep-heading-meta"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></header>
+          return <li className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}><span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : ''}</small></span><span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{memberStatus}</span></li>;
+        })}</ul></section>}</div></header>
         {!isPreview && shared.message && shared.state === 'ready' && <div className="prep-shared-refresh-error" role="alert"><span>{shared.message}</span><Button variant="secondary" disabled={shared.refreshing} onClick={() => void shared.refresh()}>{shared.refreshing ? '새로고침 중…' : '다시 불러오기'}</Button></div>}
         <div className="prep-grid">
           <section className="prep-condition-section" aria-labelledby="tw-condition-title">
@@ -237,7 +300,7 @@ export default function RoomPage() {
           </section>
         </div>
         <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '일정 생성 기능은 아직 연결되지 않았어요.' : shared.preparation?.readiness.conditionsReady ? '일정 생성 기능은 아직 연결되지 않았어요.' : '공통 조건과 참여자 확인 상태를 먼저 준비해 주세요.'}</p></div><PreparationActionButton label="일정 만들기" disabled ariaDescribedBy="tw-generation-note" /></section>
-      </section>
+      </section>}
     </div>}
   </main>;
 }

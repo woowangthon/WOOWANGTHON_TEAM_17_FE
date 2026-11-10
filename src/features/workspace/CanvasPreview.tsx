@@ -45,7 +45,7 @@ function documentOf(board: Board, dayCount: number): CanvasDocument {
   return { schemaVersion: 2, dayCount, nodes: board.nodes.map(({ id, position, data }) => ({ id, position: { ...position }, data: { place: { ...data.place }, intent: data.intent } })), edges: board.edges.map(({ id, source, target }) => ({ id, source, target })) };
 }
 
-export default function CanvasPreview({ tripId, onBack }: { tripId: string; onBack: () => void }) {
+export default function CanvasPreview({ tripId }: { tripId: string }) {
   const [initial] = useState(() => restore(tripId));
   const [board, setBoard] = useState(() => boardOf(initial));
   const [dayCount, setDayCount] = useState(initial.dayCount);
@@ -75,7 +75,7 @@ export default function CanvasPreview({ tripId, onBack }: { tripId: string; onBa
   const disconnected = routeNodes.length > 1 && visibleEdges.length !== routeNodes.length - 1;
   useEffect(() => {
     const closePanel = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.defaultPrevented || event.key !== 'Escape') return;
       setDrawerOpen(false);
       setBoard((current) => ({ nodes: current.nodes.map((node) => ({ ...node, selected: false })), edges: current.edges.map((edge) => ({ ...edge, selected: false })) }));
       document.querySelector<HTMLButtonElement>('[aria-controls="tw-place-panel"]')?.focus();
@@ -113,8 +113,7 @@ export default function CanvasPreview({ tripId, onBack }: { tripId: string; onBa
   useEffect(() => () => { try { localStorage.setItem(storageKey(tripId), lastDocument.current); } catch { /* Keep the in-memory board when storage is unavailable. */ } }, [tripId]);
   useEffect(() => { const timer = window.setTimeout(() => { try { localStorage.setItem(storageKey(tripId), serialized); } catch { setMessage('이 기기에 저장하지 못했어요. 페이지를 닫기 전에 편집 내용을 확인해 주세요.'); } }, 150); return () => window.clearTimeout(timer); }, [serialized, tripId]);
 
-  return <main className="travel-workspace travel-canvas-page" onKeyDown={keyboard} tabIndex={-1}>
-    <header className="tw-topbar"><a className="tw-brand" href="/">충북 여행 계획</a><span className="tw-topbar-title">일정 캔버스</span><Button variant="secondary" onClick={onBack}>여행 준비로</Button></header>
+  return <section className="tw-canvas-embedded" aria-label="일정 캔버스" onKeyDown={keyboard} tabIndex={-1}>
     <div className="tw-canvas-header"><div><h1>일정 캔버스</h1><p>카드는 자유롭게, 방문 순서는 연결선으로.</p></div><div className="tw-canvas-actions"><Button variant="secondary" onClick={undo} disabled={!undoStack.length}>실행 취소</Button><Button variant="secondary" onClick={redo} disabled={!redoStack.length}>다시 실행</Button><Button variant="secondary" onClick={() => setDrawerOpen((open) => !open)} aria-expanded={drawerOpen} aria-controls="tw-place-panel">{drawerOpen ? '장소 목록 닫기' : '장소 목록 열기'}</Button></div></div>
     <p className="tw-sample-note">예시 장소로 편집을 시험해 보세요. 이 기기에만 저장되며 다른 참여자에게 공유되지 않아요.</p>
     <div className={`tw-canvas-shell ${drawerOpen ? '' : 'is-drawer-closed'}`}>
@@ -143,5 +142,5 @@ export default function CanvasPreview({ tripId, onBack }: { tripId: string; onBa
         <Button disabled aria-describedby="tw-ai-note">AI 추천</Button><small id="tw-ai-note">추천 API 연결 전이에요. 현재는 직접 장소를 고를 수 있어요.</small>
       </aside>}
     </div>
-  </main>;
+  </section>;
 }
