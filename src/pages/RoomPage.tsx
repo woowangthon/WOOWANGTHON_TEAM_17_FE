@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncState from '../components/ui/AsyncState';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import CanvasPreview from '../features/workspace/CanvasPreview';
 import { usePersonalPreparation } from '../features/personal/usePersonalPreparation';
 import { useSharedPreparation } from '../features/room/useSharedPreparation';
+import ItineraryRoom from '../features/generation/ItineraryRoom';
+import { PersonalReviewPanel } from '../features/generation/GenerationWorkspace';
+import { useGenerationStart } from '../features/generation/useGenerationStart';
 import { conditionsToDraft } from '../features/room/preparationApi';
 import { withPreservedHiddenConditions } from '../features/preparation/preparationModel';
 import PreparationActionButton from '../features/preparation/PreparationActionButton';
@@ -28,7 +31,7 @@ const previewConditions: RoomDraft = {
   expectedPeople: '3', budget: '600000', transport: 'car', departure: '청주역', returnRoute: '청주역',
   lodging: '1박 필요', fixedSchedule: '둘째 날 18:00까지 청주역 복귀',
 };
-type View = 'preparation' | 'canvas';
+type View = 'preparation' | 'canvas' | 'generation';
 
 export default function RoomPage() {
   const query = new URLSearchParams(window.location.search);
@@ -36,7 +39,9 @@ export default function RoomPage() {
   const [entry, setEntry] = useState<RoomEntry | null>(isPreview ? previewEntry : null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(isPreview ? 'ready' : tripId ? 'loading' : 'error');
   const [errorMessage, setErrorMessage] = useState('여행방 주소가 없어요. 시작 화면에서 방을 만들거나 초대 코드로 참여해 주세요.');
-  const [view, setView] = useState<View>(query.get('view') === 'canvas' ? 'canvas' : 'preparation');
+  const [view, setView] = useState<View>(query.get('view') === 'canvas' || query.get('view') === 'generation' ? query.get('view') as View : 'preparation');
+  const [initiallyOpenSettings, setInitiallyOpenSettings] = useState(false);
+  const [accessLostTripId, setAccessLostTripId] = useState<string | null>(null);
   const [conditions, setConditions] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
   const [conditionForm, setConditionForm] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
   const [conditionDirty, setConditionDirty] = useState(false);
@@ -56,8 +61,22 @@ export default function RoomPage() {
   const [localPersonalMessage, setLocalPersonalMessage] = useState('');
   const requestRef = useRef(0);
   const shared = useSharedPreparation(tripId, entry, Boolean(!isPreview && status === 'ready' && entry));
-  const fatalAccess = status === 'ready' && Boolean(entry) && !isPreview && shared.state === 'fatal';
-  const personalHook = usePersonalPreparation({ tripId, enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !fatalAccess), conditionsVersion: shared.preparation?.conditionsVersion ?? 0, onSaved: () => { void shared.refreshAfterPersonalMutation(); } });
+  const baseFatalAccess = status === 'ready' && Boolean(entry) && !isPreview && (shared.state === 'fatal' || accessLostTripId === tripId);
+  const onGenerationAccessLost = useCallback(() => setAccessLostTripId(tripId), [tripId]);
+  const personalHook = usePersonalPreparation({ tripId, enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !baseFatalAccess), conditionsVersion: shared.preparation?.conditionsVersion ?? 0, onSaved: () => { void shared.refreshAfterPersonalMutation(); } });
+  const fatalAccess = baseFatalAccess || (!isPreview && personalHook.state === 'fatal');
+  const generationBlocker = conditionDirty || shared.saving || rebaseRequired
+    ? '여행 기본조건의 미저장 변경을 먼저 저장하거나 취소해 주세요.'
+    : personalHook.dirty || personalHook.phase !== 'idle'
+      ? '내 취향 변경을 저장하고 준비 처리를 마친 뒤 다시 시도해 주세요.'
+      : undefined;
+  const generationStart = useGenerationStart({
+    tripId,
+    enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !fatalAccess),
+    blockedReason: generationBlocker,
+    onStarted: () => { setInitiallyOpenSettings(false); changeView('generation'); },
+    onAccessLost: onGenerationAccessLost,
+  });
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -127,11 +146,40 @@ export default function RoomPage() {
   function changeView(next: View) {
     setView(next);
     const nextQuery = new URLSearchParams(window.location.search);
-    if (next === 'canvas') nextQuery.set('view', 'canvas'); else nextQuery.delete('view');
+    if (next === 'preparation') nextQuery.delete('view'); else nextQuery.set('view', next);
     window.history.replaceState(null, '', `${window.location.pathname}?${nextQuery.toString()}`);
   }
-  if (view === 'canvas' && entry && status === 'ready' && (isPreview || shared.state === 'ready')) return <CanvasPreview tripId={entry.trip.id} onBack={() => changeView('preparation')} />;
-
+  function goToPersonalReview() {
+    changeView('preparation');
+    requestAnimationFrame(() => {
+      const target = document.getElementById('prep-self-review') ?? document.getElementById('tw-personal-title');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target?.focus();
+    });
+  }
+  if (view === 'canvas' && entry && status === 'ready' && !fatalAccess && (isPreview || shared.state === 'ready')) return <CanvasPreview tripId={entry.trip.id} onBack={() => changeView('preparation')} />;
+  if (view === 'generation') return <ItineraryRoom
+    entry={entry}
+    conditions={conditions}
+    conditionsVersion={shared.preparation?.conditionsVersion ?? 0}
+    people={isPreview ? [
+      { id: previewEntry.member.id, nickname: '여행자 A', role: 'OWNER' as const, preparationStatus: 'writing' as const },
+      { id: 'preview-b', nickname: '여행자 B', role: 'MEMBER' as const, preparationStatus: 'writing' as const },
+      { id: 'preview-c', nickname: '여행자 C', role: 'MEMBER' as const, preparationStatus: 'confirmed' as const },
+    ] : shared.preparation?.members ?? []}
+    tripId={tripId}
+    isPreview={isPreview}
+    status={status}
+    fatalAccess={fatalAccess}
+    errorMessage={errorMessage}
+    sharedReady={isPreview || shared.state === 'ready'}
+    sharedError={shared.state === 'error' ? shared.message : undefined}
+    initiallyOpenSettings={initiallyOpenSettings}
+    onPrepare={goToPersonalReview}
+    onRetry={() => { if (status === 'error' && tripId) { setStatus('loading'); loadRoomEntry(tripId).then((result) => { setEntry(result); setStatus('ready'); }).catch((error: unknown) => { setErrorMessage(error instanceof Error ? error.message : '여행방 정보를 불러오지 못했어요.'); setStatus('error'); }); } else void shared.refresh(); }}
+    onAccessLost={onGenerationAccessLost}
+    onChangeView={changeView}
+  />;
   const personal = isPreview ? previewPersonal : personalHook.draft;
   const updatePersonal = <K extends keyof PersonalDraft>(key: K, value: PersonalDraft[K]) => {
     if (isPreview) { setPreviewPersonal((draft) => ({ ...draft, [key]: value })); setLocalPersonalMessage('미리보기 취향을 수정했어요.'); }
@@ -156,6 +204,15 @@ export default function RoomPage() {
         : !['20', '40', 'unlimited'].includes(personalHook.savedDraft.walking) ? '걷기 시간을 선택하고 저장해 주세요.'
           : '저장한 취향을 확인하면 준비를 완료할 수 있어요.';
   const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '저장됨', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
+  const generationReasonLabel: Record<string, string> = {
+    REVIEW_REQUIRED: '참여자 조건 검토가 남아 있어요.', MEMBER_COUNT_MISMATCH: '현재 참여 인원과 예정 인원이 달라요.',
+    COMMON_REVIEW_REQUIRED: '숙박·고정 일정 조건 검토가 필요해요.', PREFERENCES_UNCONFIRMED: '모든 참여자가 개인 조건을 확정해야 해요.',
+    LODGING_REVIEW_REQUIRED: '숙박 장소와 일정을 확인해 주세요.', FIXED_SCHEDULE_REVIEW_REQUIRED: '고정 일정 장소와 시간을 확인해 주세요.',
+    CONDITIONS_INCOMPLETE: '여행 기본조건을 모두 입력해 주세요.',
+  };
+  const personalReviewReady = !isPreview && personalHook.state === 'ready' && personalHook.phase === 'idle'
+    && !personalHook.dirty && !conditionDirty && !shared.saving && !rebaseRequired
+    && personalHook.confirmation?.status === 'confirmed' && !personalHook.conditionsChangedNotice;
 
   return <main className="travel-workspace prep-room-shell">
     <header className="tw-topbar prep-topbar">
@@ -173,12 +230,12 @@ export default function RoomPage() {
       <aside className="prep-icon-rail" aria-label="여행 탐색">
         <button ref={navToggleRef} type="button" className="prep-rail-button" aria-expanded={mobileNavOpen} aria-label={mobileNavOpen ? '탐색 메뉴 닫기' : '탐색 메뉴 열기'} title={mobileNavOpen ? '탐색 메뉴 닫기' : '탐색 메뉴 열기'} onClick={() => setMobileNavOpen((open) => !open)}><PanelIcon /></button>
         <span className="prep-rail-rule" />
-        <button type="button" className="prep-rail-button is-active" aria-current="page" aria-label="여행 준비" title="여행 준비" onClick={() => changeView('preparation')}><CheckIcon /></button>
-        <button type="button" className="prep-rail-button" aria-label="일정 캔버스 미리보기" title="일정 캔버스 미리보기" onClick={() => changeView('canvas')}><MapIcon /></button>
+        <button type="button" className={`prep-rail-button ${view === 'preparation' ? 'is-active' : ''}`} aria-current={view === 'preparation' ? 'page' : undefined} aria-label="여행 준비" title="여행 준비" onClick={() => changeView('preparation')}><CheckIcon /></button>
+        <button type="button" className={`prep-rail-button ${view === 'canvas' ? 'is-active' : ''}`} aria-current={view === 'canvas' ? 'page' : undefined} aria-label="일정 캔버스 미리보기" title="일정 캔버스 미리보기" onClick={() => changeView('canvas')}><MapIcon /></button>
       </aside>
       {mobileNavOpen && <aside ref={navPanelRef} className="prep-nav-overlay" aria-label="여행 메뉴">
         <div className="prep-nav-heading"><strong>메뉴</strong><button ref={navCloseRef} type="button" className="prep-nav-close" aria-label="탐색 메뉴 닫기" onClick={() => { setMobileNavOpen(false); navToggleRef.current?.focus(); }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button></div>
-        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className="is-selected" type="button" aria-current="page" onClick={() => { changeView('preparation'); setMobileNavOpen(false); }}>여행 준비</button><button type="button" onClick={() => changeView('canvas')}>일정 캔버스 <small>미리보기</small></button></nav>
+        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className="is-selected" type="button" aria-current="page" onClick={() => { changeView('preparation'); setMobileNavOpen(false); }}>여행 준비</button><button type="button" onClick={() => { changeView('canvas'); setMobileNavOpen(false); }}>일정 캔버스 <small>미리보기</small></button><button type="button" onClick={() => { changeView('generation'); setMobileNavOpen(false); }}>실제 일정 생성</button></nav>
         <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
       </aside>}
       <section className="prep-main" aria-label="여행 준비 작업 공간">
@@ -206,7 +263,7 @@ export default function RoomPage() {
           </section>
 
           <section className="prep-personal-section" aria-labelledby="tw-personal-title">
-            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title">내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
+            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title" tabIndex={-1}>내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
             {!isPreview && personalHook.state !== 'fatal' && personalHook.conditionsChangedNotice && <p className="prep-conditions-changed-notice" role="status">공통 여행 조건이 바뀌었어요. 최신 조건과 내 취향을 확인한 뒤 준비 완료를 눌러 주세요.</p>}
             {isPreview ? <p className="prep-personal-message">예시 입력이에요. 분석 기능은 연결되지 않았어요.</p> : personalHook.state === 'fatal' ? <p className="prep-personal-message" role="alert">접근 권한을 확인할 수 없어 개인 입력을 숨겼어요.</p> : null}
             {(!isPreview && personalHook.state === 'fatal') ? null : <>
@@ -236,7 +293,19 @@ export default function RoomPage() {
             </>}
           </section>
         </div>
-        <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '일정 생성 기능은 아직 연결되지 않았어요.' : shared.preparation?.readiness.conditionsReady ? '일정 생성 기능은 아직 연결되지 않았어요.' : '공통 조건과 참여자 확인 상태를 먼저 준비해 주세요.'}</p></div><PreparationActionButton label="일정 만들기" disabled ariaDescribedBy="tw-generation-note" /></section>
+        {personalReviewReady && tripId && <section className="prep-self-review" id="prep-self-review" tabIndex={-1} aria-label="내 일정 생성 조건 검토">
+          <PersonalReviewPanel key={`${tripId}-${shared.preparation?.conditionsVersion ?? 0}-${personalHook.confirmation?.confirmedPreferenceVersion ?? 0}`} tripId={tripId} conditionsVersion={shared.preparation?.conditionsVersion ?? 0} onReviewed={() => { shared.refreshAfterPersonalMutation(); void generationStart.refresh(); }} onAccessLost={onGenerationAccessLost} />
+        </section>}
+        <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '실제 일정 생성은 예시 화면에서 사용할 수 없어요.' : generationBlocker ?? '여행 기본조건과 참여자 취향을 확인한 뒤 실제 코스를 생성해요.'}</p></div><PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role === 'OWNER' ? '일정 만들기' : '내 검토 확인'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || fatalAccess || generationStart.busy || Boolean(generationBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); else goToPersonalReview(); }} ariaDescribedBy="tw-generation-note" />
+          {!isPreview && (generationStart.data?.latestJob || generationStart.data?.latestPlan) && <Button variant="secondary" disabled={Boolean(generationBlocker) || generationStart.busy} onClick={() => { setInitiallyOpenSettings(false); changeView('generation'); }}>여행 일정 보기</Button>}
+          {!isPreview && (generationStart.message || generationStart.loading) && <p className="prep-generation-status" role="status">{generationStart.loading ? '참여자 확인 상태를 불러오는 중이에요.' : generationStart.message}</p>}
+          {!isPreview && generationStart.data && !generationStart.data.readyForGeneration && <div className="prep-generation-readiness" aria-label="공개 준비 상태">
+            <h3>일정 생성 전 확인할 내용</h3>
+            {generationStart.data.reasons.length > 0 && <ul>{generationStart.data.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}>{generationReasonLabel[reason.code] ?? '일정 생성 조건을 확인해 주세요.'}</li>)}</ul>}
+            {generationStart.data.reviewMembers.length > 0 && <ul aria-label="참여자 조건 검토 상태">{generationStart.data.reviewMembers.map((member) => <li key={member.id}>{member.nickname} · {member.status === 'reviewed' ? '조건 검토 완료' : member.status === 'stale' ? '다시 확인 필요' : '검토 필요'}</li>)}</ul>}
+            <Button variant="secondary" onClick={() => { setInitiallyOpenSettings(true); changeView('generation'); }}>생성 조건 확인</Button>
+          </div>}
+        </section>
       </section>
     </div>}
   </main>;
