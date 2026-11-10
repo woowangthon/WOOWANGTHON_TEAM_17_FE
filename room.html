@@ -1,1 +1,20 @@
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="여행방 진입 후 별도 HTML로 이동했는지 확인하는 화면입니다."><title>여행방 화면 연결</title><link rel="stylesheet" href="/assets/live-entry/room.css"></head><body><div class="shell"><header class="site-header" aria-hidden="true"></header><main class="handoff"><h1 id="handoff-title">여행방 화면으로 이동했어요.</h1><p class="message" id="handoff-description">생성하거나 참여한 방의 정보가 다음 HTML에 전달됐습니다.</p><div id="room-summary"><dl><div><dt>여행방</dt><dd id="handoff-name"></dd></div><div><dt>초대 코드</dt><dd><code id="handoff-code"></code></dd></div><div><dt>내 닉네임</dt><dd id="handoff-nickname"></dd></div></dl><button class="copy-code" id="copy-code" type="button">초대 코드 복사</button><p class="copy-status" id="copy-status" role="status"></p></div><p class="boundary">이 페이지는 화면 이동 확인용입니다. 이후 여행방 내부 화면이 연결될 위치입니다.</p><a href="./index.html">시작 화면으로 돌아가기</a></main></div><script type="module" src="/assets/live-entry/room.js"></script></body></html>
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="여행방 정보와 여행 준비 조건을 확인하세요." />
+    <title>여행방 | 충북 여행 계획</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <main>
+        <h1>여행방은 자바스크립트가 필요해요</h1>
+        <p>브라우저에서 자바스크립트를 켠 뒤 다시 열어 주세요. 여행 시작 화면에서 방을 만들거나 초대 코드로 참여할 수 있어요.</p>
+        <a href="/">여행 시작 화면으로</a>
+      </main>
+    </noscript>
+    <script type="module" src="/src/room-main.tsx"></script>
+  </body>
+</html>
