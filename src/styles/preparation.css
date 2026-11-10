@@ -86,6 +86,7 @@
 .prep-footnote { margin: var(--space-0) 0 0; color: var(--prep-muted); font-size: 12px; }
 .prep-personal-section { min-width: 0; }
 .prep-personal-message { min-height: 20px; margin: calc(-1 * var(--space-1)) 0 var(--space-2); color: var(--prep-muted); font-size: 13px; line-height: 1.5; }
+.prep-conditions-changed-notice { margin: calc(-1 * var(--space-2)) 0 var(--space-3); padding: var(--space-1) var(--space-2); border: 1px solid var(--color-accent-hover); background: color-mix(in srgb, var(--prep-soft) 48%, transparent); color: var(--prep-ink); font-size: 13px; line-height: 1.55; }
 .prep-recovery { margin: 0 0 var(--space-3); padding: var(--space-2); border: 1px solid var(--prep-line); border-radius: 7px; }
 .prep-recovery p { margin: 0 0 var(--space-2); color: var(--prep-muted); font-size: 13px; }
 .prep-original-wrap { position: relative; }
@@ -240,7 +241,6 @@
 .prep-region-summary:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
 .prep-region-summary, .prep-region-select { border-color: var(--wf-field); }
 .prep-region-photo-caption strong { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); }
-.prep-region-check { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Compact shared participant status and native, keyboard friendly choices. */
 .prep-heading-title { display: grid; min-width: 0; gap: var(--space-2); }

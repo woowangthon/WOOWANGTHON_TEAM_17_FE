@@ -207,9 +207,10 @@ export default function RoomPage() {
 
           <section className="prep-personal-section" aria-labelledby="tw-personal-title">
             <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title">내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
+            {!isPreview && personalHook.state !== 'fatal' && personalHook.conditionsChangedNotice && <p className="prep-conditions-changed-notice" role="status">공통 여행 조건이 바뀌었어요. 최신 조건과 내 취향을 확인한 뒤 준비 완료를 눌러 주세요.</p>}
             {isPreview ? <p className="prep-personal-message">예시 입력이에요. 분석 기능은 연결되지 않았어요.</p> : personalHook.state === 'fatal' ? <p className="prep-personal-message" role="alert">접근 권한을 확인할 수 없어 개인 입력을 숨겼어요.</p> : null}
             {(!isPreview && personalHook.state === 'fatal') ? null : <>
-              {!isPreview && personalHook.state === 'error' && <div className="prep-recovery" role="alert"><p>{personalHook.message.includes('공통 여행 조건이 바뀌었어요') ? '공통 여행 조건이 바뀌어 개인 입력과 저장 상태를 확인해야 해요.' : personalHook.message} 현재 입력은 남아 있어요. 저장본을 불러오면 미저장 입력이 대체돼요.</p><Button variant="secondary" onClick={() => void personalHook.reload()}>미저장 입력을 지우고 저장본 불러오기</Button></div>}
+              {!isPreview && personalHook.state === 'error' && <div className="prep-recovery" role="alert"><p>{personalHook.conditionsChangedNotice ? '개인 입력의 저장 상태를 확인해야 해요.' : personalHook.message} 현재 입력은 남아 있어요. 저장본을 불러오면 미저장 입력이 대체돼요.</p><Button variant="secondary" onClick={() => void personalHook.reload()}>미저장 입력을 지우고 저장본 불러오기</Button></div>}
               <fieldset className="prep-personal-editor" disabled={!isPreview && (personalHook.state !== 'ready' || personalHook.phase !== 'idle')}>
                 <div className={`prep-original-wrap ${!isPreview && personalHook.phase === 'analyzing' ? 'is-busy' : ''}`} aria-busy={!isPreview && personalHook.phase === 'analyzing'}>
                   <div className="prep-original-field"><label htmlFor="tw-original">어떤 여행을 하고 싶나요?</label><textarea id="tw-original" maxLength={5000} className="text-input prep-original-input" value={personal.originalText} onChange={(event) => updatePersonal('originalText', event.target.value)} placeholder="예: 자연 풍경을 보며 여유롭게 쉬고 싶어요. 오래 걷는 일정은 어려워요." /></div>

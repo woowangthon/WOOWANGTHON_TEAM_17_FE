@@ -5,6 +5,9 @@ import {
   type PersonalConfirmation,
 } from './personalApi.ts';
 import { derivePersonalSaveStatus, type PersonalSaveStatus } from './personalStatus.ts';
+import {
+  initialConditionsNoticeState, transitionConditionsNotice, type ConditionsNoticeState,
+} from './conditionsChangedNotice.ts';
 
 type HookState = {
   tripId: string | null;
@@ -73,6 +76,7 @@ export function usePersonalPreparation({
   operationError: string;
   needsWalkingAnswer: boolean;
   confirmation: PersonalConfirmation | null;
+  conditionsChangedNotice: { conditionsVersion: number } | null;
   reviewed: boolean;
   setReviewed: (reviewed: boolean) => void;
   canConfirm: boolean;
@@ -90,6 +94,17 @@ export function usePersonalPreparation({
   const sequence = useRef(0);
   const activeController = useRef<AbortController | null>(null);
   const lock = useRef(false);
+  const [conditionsNotice, setConditionsNotice] = useState<ConditionsNoticeState>(initialConditionsNoticeState);
+  const conditionsNoticeRef = useRef(conditionsNotice);
+  const noticeTripIdRef = useRef(tripId);
+  const conditionsVersionRef = useRef(conditionsVersion);
+  conditionsVersionRef.current = conditionsVersion;
+
+  const transitionNotice = useCallback((event: Parameters<typeof transitionConditionsNotice>[1]) => {
+    const next = transitionConditionsNotice(conditionsNoticeRef.current, event);
+    conditionsNoticeRef.current = next;
+    setConditionsNotice(next);
+  }, []);
 
   const update = useCallback((next: HookState) => {
     internalRef.current = next;
@@ -114,10 +129,16 @@ export function usePersonalPreparation({
       const result = await fetchMyPreferences(tripId, { signal: controller.signal });
       if (controller.signal.aborted || requestId !== sequence.current) return;
       editRevision.current += 1;
+      const conditionsMatch = result.conditionsVersion === conditionsVersionRef.current;
+      if (conditionsMatch && result.confirmation.status === 'confirmed') {
+        // A lost confirm response or another tab can already have completed this version.
+        transitionNotice({ type: 'observe', conditionsVersion: conditionsVersionRef.current });
+        transitionNotice({ type: 'confirmed', conditionsVersion: result.conditionsVersion });
+      }
       update({
-        tripId, draft: result.draft, savedDraft: result.draft, state: 'ready', phase: 'idle',
+        tripId, draft: result.draft, savedDraft: result.draft, state: conditionsMatch ? 'ready' : 'error', phase: 'idle',
         resultStatus: hasStoredResults(result.draft) ? 'stored' : 'empty', resultsVisible: retained.resultsVisible || hasSavedPreparation(result.draft, result.preferenceVersion), analysisStep: null, dirty: false,
-        message: '', operationError: '', needsWalkingAnswer: false, confirmation: result.confirmation, reviewed: false,
+        message: conditionsMatch ? '' : '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.', operationError: conditionsMatch ? '' : '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.', needsWalkingAnswer: false, confirmation: result.confirmation, reviewed: false,
         loadedConditionsVersion: result.conditionsVersion, preferenceVersion: result.preferenceVersion,
       });
     } catch (error) {
@@ -125,7 +146,7 @@ export function usePersonalPreparation({
       const fatal = fatalError(error);
       update({ ...internalRef.current, ...(fatal ? { draft: emptyPersonalDraft, savedDraft: emptyPersonalDraft, confirmation: null, needsWalkingAnswer: false, resultsVisible: false, preferenceVersion: 0, loadedConditionsVersion: null, dirty: false, reviewed: false } : {}), state: fatal ? 'fatal' : 'error', phase: 'idle', resultStatus: fatal ? 'empty' : hasStoredResults(internalRef.current.savedDraft) ? 'stale' : 'empty', analysisStep: null, message: errorMessage(error), operationError: errorMessage(error) });
     }
-  }, [enabled, tripId, update]);
+  }, [enabled, transitionNotice, tripId, update]);
 
   useEffect(() => {
     sequence.current += 1;
@@ -145,12 +166,20 @@ export function usePersonalPreparation({
   }, [tripId, enabled, reload, update]);
 
   useEffect(() => {
+    if (noticeTripIdRef.current !== tripId) {
+      noticeTripIdRef.current = tripId;
+      transitionNotice({ type: 'reset' });
+    }
+    transitionNotice({ type: 'observe', conditionsVersion });
+  }, [conditionsVersion, transitionNotice, tripId]);
+
+  useEffect(() => {
     const current = internalRef.current;
     if (current.tripId === tripId && current.loadedConditionsVersion !== null && current.loadedConditionsVersion !== conditionsVersion) {
       activeController.current?.abort();
       sequence.current += 1;
       lock.current = false;
-      if (current.state === 'ready' && !current.dirty && current.phase === 'idle' && enabled) {
+      if ((current.state === 'ready' || current.state === 'loading') && !current.dirty && current.phase === 'idle' && enabled) {
         void reload();
       } else {
         update({ ...current, phase: 'idle', analysisStep: null, reviewed: false, resultStatus: hasStoredResults(current.draft) ? 'stale' : 'empty', message: '공통 여행 조건이 바뀌었어요. 최신 조건을 확인한 뒤 개인 준비를 다시 확인해 주세요.' });
@@ -290,6 +319,8 @@ export function usePersonalPreparation({
     try {
       const result = await confirmMyPreferences(tripId, conditionsVersion, current.preferenceVersion, { signal: controller.signal });
       if (controller.signal.aborted || requestId !== sequence.current || revision !== editRevision.current) return false;
+      transitionNotice({ type: 'observe', conditionsVersion: conditionsVersionRef.current });
+      transitionNotice({ type: 'confirmed', conditionsVersion: result.conditionsVersion });
       update({ ...internalRef.current, state: 'ready', phase: 'idle', confirmation: result.confirmation, preferenceVersion: result.preferenceVersion,
         loadedConditionsVersion: result.conditionsVersion, reviewed: false, message: '준비를 완료했어요.' });
       onSavedRef.current?.();
@@ -303,7 +334,7 @@ export function usePersonalPreparation({
     } finally {
       if (requestId === sequence.current) lock.current = false;
     }
-  }, [conditionsVersion, enabled, tripId, update]);
+  }, [conditionsVersion, enabled, transitionNotice, tripId, update]);
 
   const visible = internal.tripId === tripId && enabled ? internal : initialState(tripId);
   const staleConditions = visible.state !== 'loading' && visible.loadedConditionsVersion !== null && visible.loadedConditionsVersion !== conditionsVersion;
@@ -321,6 +352,9 @@ export function usePersonalPreparation({
     resultStatus: visible.resultStatus, resultsVisible: visible.resultsVisible, analysisStep: staleConditions ? null : visible.analysisStep,
     dirty: visible.dirty, message: staleConditions ? '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.' : visible.message, operationError: staleConditions ? '' : visible.operationError, needsWalkingAnswer: visible.needsWalkingAnswer,
     confirmation: visible.confirmation,
+    conditionsChangedNotice: visible.state !== 'fatal' && internal.state !== 'fatal' && internal.tripId === tripId && conditionsNotice.pendingVersion !== null
+      ? { conditionsVersion: conditionsNotice.pendingVersion }
+      : null,
     reviewed: visible.reviewed, setReviewed, canConfirm, confirm,
     saveStatus: derivePersonalSaveStatus({
       state: effectiveState, phase: effectivePhase, dirty: visible.dirty, savedDraft: visible.savedDraft,

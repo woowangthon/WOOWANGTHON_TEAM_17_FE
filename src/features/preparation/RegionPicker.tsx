@@ -66,11 +66,11 @@ export default function RegionPicker({ value, onChange, error, disabled }: { val
     <div id="region-photo-panel" ref={stripRef} className="prep-region-strip" hidden={!photosOpen} role="group" aria-labelledby="region-picker-label" aria-invalid={Boolean(error)} aria-describedby={error ? 'region-error' : undefined} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={finishDrag} onPointerCancel={finishDrag} onLostPointerCapture={finishDrag} onClickCapture={(event) => { if (suppressClick.current && event.detail > 0) { event.preventDefault(); event.stopPropagation(); suppressClick.current = false; } }}>
       <button data-region="충북" type="button" className={`prep-region-photo ${selection.kind === 'all' ? 'is-selected' : ''}`} aria-pressed={selection.kind === 'all'} disabled={disabled} onClick={() => onChange('충북')}>
         <span className="prep-region-photo-collage" aria-hidden="true">{regionPhotos.slice(0, 3).map((photo) => <img key={photo.value} src={photo.image} alt="" draggable={false} onError={(event) => { event.currentTarget.hidden = true; }} />)}</span>
-        <span className="prep-region-photo-caption"><strong>충북 전체{selection.kind === 'all' && <svg className="prep-region-check" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg>}</strong><small>지역 제한 없이</small></span>
+        <span className="prep-region-photo-caption"><strong>충북 전체</strong><small>지역 제한 없이</small></span>
       </button>
       {regionPhotos.map((photo) => <button data-region={photo.value} type="button" className={`prep-region-photo ${selectedCity === photo.value ? 'is-selected' : ''}`} aria-pressed={selectedCity === photo.value} disabled={disabled} key={photo.value} onClick={() => onChange(photo.value)}>
         <img src={photo.image} alt="" draggable={false} onError={(event) => { event.currentTarget.hidden = true; }} />
-        <span className="prep-region-photo-caption"><strong>{photo.label}{selectedCity === photo.value && <svg className="prep-region-check" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg>}</strong><small>{photo.place}</small></span>
+        <span className="prep-region-photo-caption"><strong>{photo.label}</strong><small>{photo.place}</small></span>
       </button>)}
     </div>
     {selection.kind === 'unset' && <p className="prep-region-empty">지역을 아직 정하지 않았어요.</p>}

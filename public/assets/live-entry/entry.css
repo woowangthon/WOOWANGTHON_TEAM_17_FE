@@ -18,7 +18,7 @@
 
 * { box-sizing: border-box; }
 html, body { overflow-x: clip; }
-html { min-width: 320px; }
+html { min-width: 320px; scrollbar-gutter: stable; }
 body {
   min-width: 320px;
   margin: 0;
