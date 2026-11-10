@@ -40,6 +40,12 @@ async function request(path: string, init: RequestInit, options: Options): Promi
 const pathFor = (tripId: string) => `/api/v1/trips/${encodeURIComponent(tripId)}`;
 export async function getCanvas(tripId: string, options: Options = {}): Promise<CanvasState> { const value = parseCanvasState(await request(`${pathFor(tripId)}/canvas`, { method: 'GET' }, options)); if (!value || value.tripId !== tripId) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '캔버스 응답을 읽을 수 없어요.'); return value; }
 export async function saveCanvas(tripId: string, expectedRevision: number, document: CanvasDocument, idempotencyKey: string, options: Options = {}): Promise<CanvasState> { if(!isCanonicalCanvasUuid(idempotencyKey)||!Number.isInteger(expectedRevision)||expectedRevision<0)throw new CanvasHttpError(400,'VALIDATION_ERROR','저장 요청 정보를 확인해 주세요.');const value = parseCanvasState(await request(`${pathFor(tripId)}/canvas`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ expectedRevision, document }) }, options)); if (!value || value.tripId !== tripId) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '캔버스 저장 응답을 읽을 수 없어요.'); return value; }
+export async function importPlanToCanvas(tripId: string, planId: string, versionId: string, expectedCanvasRevision: number, idempotencyKey: string, options: Options = {}): Promise<CanvasState> {
+  if (!isCanonicalCanvasUuid(tripId) || !isCanonicalCanvasUuid(planId) || !isCanonicalCanvasUuid(versionId) || !isCanonicalCanvasUuid(idempotencyKey) || !Number.isSafeInteger(expectedCanvasRevision) || expectedCanvasRevision < 0) throw new CanvasHttpError(400, 'VALIDATION_ERROR', '일정 가져오기 정보를 확인해 주세요.');
+  const value = parseCanvasState(await request(`${pathFor(tripId)}/plans/${encodeURIComponent(planId)}/canvas`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ versionId, expectedCanvasRevision }) }, options));
+  if (!value || value.tripId !== tripId || value.sourcePlan?.planId !== planId || value.sourcePlan.versionId !== versionId) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '가져온 일정 응답을 확인할 수 없어요.');
+  return value;
+}
 export type PlaceSearchResult = { contentid: number; title: string; address: string | null; category: string | null };
 export async function searchPlaces(tripId: string, query: string, signal?: AbortSignal): Promise<PlaceSearchResult[]> {
   const url = `${pathFor(tripId)}/generation/places?q=${encodeURIComponent(query)}&limit=20`;

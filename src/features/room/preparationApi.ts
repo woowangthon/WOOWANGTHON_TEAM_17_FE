@@ -9,6 +9,8 @@ export type ServerConditions = {
   budget: number | null;
   transport: 'car' | 'transit' | 'charter' | 'walk' | null;
   departure: string | null;
+  departureTime: string;
+  departureContentid: number | null;
   returnRoute: string | null;
   lodging: string | null;
   fixedSchedule: string | null;
@@ -57,7 +59,7 @@ export class PreparationHttpError extends Error {
 type RequestOptions = { signal?: AbortSignal; fetcher?: typeof fetch };
 const conditionFields = [
   'region', 'startDate', 'endDate', 'expectedPeople', 'budget', 'transport',
-  'departure', 'returnRoute', 'lodging', 'fixedSchedule',
+  'departure', 'departureTime', 'departureContentid', 'returnRoute', 'lodging', 'fixedSchedule',
 ] as const satisfies readonly (keyof ServerConditions)[];
 const draftTextLimits = { region: 100, departure: 100, returnRoute: 100, lodging: 200, fixedSchedule: 500 } as const;
 const roleValues = ['OWNER', 'MEMBER'] as const;
@@ -84,7 +86,7 @@ function invalidDto(): never {
 
 function parseConditions(value: unknown): ServerConditions {
   if (!isRecord(value)) return invalidDto();
-  const textFields = ['region', 'startDate', 'endDate', 'departure', 'returnRoute', 'lodging', 'fixedSchedule'] as const;
+const textFields = ['region', 'startDate', 'endDate', 'departure', 'returnRoute', 'lodging', 'fixedSchedule'] as const;
   for (const field of textFields) {
     const item = value[field];
     if (item !== null && typeof item !== 'string') return invalidDto();
@@ -95,6 +97,9 @@ function parseConditions(value: unknown): ServerConditions {
   if (budget !== null && (!Number.isInteger(budget) || (budget as number) < 1 || (budget as number) > 1_000_000_000)) return invalidDto();
   const transport = value.transport;
   if (transport !== null && (typeof transport !== 'string' || !transportValues.includes(transport as (typeof transportValues)[number]))) return invalidDto();
+  const departureTime = value.departureTime === undefined ? '09:00' : value.departureTime;
+  const departureContentid = value.departureContentid === undefined ? null : value.departureContentid;
+  if (typeof departureTime !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/u.test(departureTime) || (departureContentid !== null && (!Number.isInteger(departureContentid) || (departureContentid as number) < -2147483648 || (departureContentid as number) > 2147483647))) return invalidDto();
   const conditions: ServerConditions = {
     region: value.region as string | null,
     startDate: value.startDate as string | null,
@@ -103,6 +108,8 @@ function parseConditions(value: unknown): ServerConditions {
     budget: budget as number | null,
     transport: transport as ServerConditions['transport'],
     departure: value.departure as string | null,
+    departureTime,
+    departureContentid: departureContentid as number | null,
     returnRoute: value.returnRoute as string | null,
     lodging: value.lodging as string | null,
     fixedSchedule: value.fixedSchedule as string | null,
@@ -168,6 +175,8 @@ function conditionsToDraft(conditions: ServerConditions): RoomDraft {
     budget: conditions.budget === null ? '' : String(conditions.budget),
     transport: conditions.transport ?? 'undecided',
     departure: conditions.departure ?? '',
+    departureTime: conditions.departureTime || '09:00',
+    departureContentid: conditions.departureContentid === null ? '' : String(conditions.departureContentid),
     returnRoute: conditions.returnRoute ?? '',
     lodging: conditions.lodging ?? '',
     fixedSchedule: conditions.fixedSchedule ?? '',
@@ -183,6 +192,9 @@ function draftToConditions(draft: RoomDraft): ServerConditions {
     throw new PreparationHttpError({ status: 400, code: 'INVALID_CONDITIONS', message: '입력한 여행 조건을 확인해 주세요.', fieldErrors: errors });
   }
   const integerOrNull = (raw: string): number | null => raw.trim() === '' ? null : Number(raw.trim());
+  const departureContentid = integerOrNull(draft.departureContentid);
+  if (draft.departureTime && !/^([01]\d|2[0-3]):[0-5]\d$/u.test(draft.departureTime)) errors.departureTime = '출발 시간을 확인해 주세요.';
+  if (draft.departureContentid.trim() && (!/^-?\d+$/u.test(draft.departureContentid.trim()) || departureContentid === null || departureContentid < -2147483648 || departureContentid > 2147483647)) errors.departureContentid = '장소 검색 결과를 선택해 주세요.';
   return {
     region: draft.region.trim() || null,
     startDate: draft.startDate.trim() || null,
@@ -191,6 +203,8 @@ function draftToConditions(draft: RoomDraft): ServerConditions {
     budget: integerOrNull(draft.budget),
     transport: draft.transport === 'undecided' ? null : draft.transport,
     departure: draft.departure.trim() || null,
+    departureTime: draft.departureTime || '09:00',
+    departureContentid,
     returnRoute: draft.returnRoute.trim() || null,
     lodging: draft.lodging.trim() || null,
     fixedSchedule: draft.fixedSchedule.trim() || null,

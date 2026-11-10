@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   conditionsToDraft,
+  draftToConditions,
   fetchPreparation,
   PreparationHttpError,
   saveSharedConditions,
@@ -81,19 +82,29 @@ test('condition conversion preserves nullable values, maps undecided, trims text
   assert.equal(called.init.headers['Content-Type'], 'application/json')
   const body = JSON.parse(called.init.body)
   assert.equal(body.expectedConditionsVersion, 3)
-  assert.deepEqual(Object.keys(body.conditions), ['region', 'startDate', 'endDate', 'expectedPeople', 'budget', 'transport', 'departure', 'returnRoute', 'lodging', 'fixedSchedule'])
+  assert.deepEqual(Object.keys(body.conditions), ['region', 'startDate', 'endDate', 'expectedPeople', 'budget', 'transport', 'departure', 'departureTime', 'departureContentid', 'returnRoute', 'lodging', 'fixedSchedule'])
   assert.equal(body.conditions.region, '충북 단양')
   assert.equal(body.conditions.startDate, '2027-11-14')
   assert.equal(body.conditions.expectedPeople, 3)
   assert.equal(body.conditions.budget, 600000)
   assert.equal(body.conditions.transport, null)
   assert.equal(body.conditions.departure, '청주역')
+  assert.equal(body.conditions.departureTime, '09:00')
+  assert.equal(body.conditions.departureContentid, null)
   assert.equal(body.conditions.returnRoute, null)
   assert.equal(body.conditions.lodging, '숙소')
   assert.equal(body.conditions.fixedSchedule, '둘째 날 18:00 복귀')
   assert.equal('clientOnly' in body.conditions, false)
   assert.equal(result.conditionsVersion, 4)
   assert.equal(result.requiresReconfirmation, true)
+})
+
+test('conditions preserve chosen database departure and saved departure time', async () => {
+  const draft = { ...emptyRoomDraft, departure: '청주역', departureTime: '07:35', departureContentid: '12345' }
+  const wire = draftToConditions(draft)
+  assert.equal(wire.departureTime, '07:35')
+  assert.equal(wire.departureContentid, 12345)
+  assert.deepEqual(conditionsToDraft({ ...emptyConditions(), departure: '청주역', departureTime: '07:35', departureContentid: 12345 }), { ...emptyRoomDraft, departure: '청주역', departureTime: '07:35', departureContentid: '12345' })
 })
 
 test('invalid drafts fail before issuing a request, including decimals and text over limits', async () => {

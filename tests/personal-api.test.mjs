@@ -22,7 +22,22 @@ test('GET validates private preferences and converts nullable draft fields to in
   assert.equal(call.init.credentials, 'same-origin')
   assert.equal(call.init.cache, 'no-store')
   assert.deepEqual(result.draft, emptyPersonalDraft)
+  assert.deepEqual(result.clarifications, [])
   assert.equal(result.confirmation.status, 'writing')
+})
+
+test('legacy preference draft stays readable and extracted schedule items round trip', async () => {
+  const id = '10000000-0000-4000-8000-000000000011'
+  const old = parsePersonalPreferences(dto())
+  assert.deepEqual(old.draft.scheduleItems, [])
+  const item = { id, kind: 'lodging', scope: null, placeQuery: '단양 숙소', contentid: null, date: '2027-06-10', time: '15:00', endDate: '2027-06-11', endTime: null }
+  let call
+  const result = await saveMyPreferences('trip-1', 2, 0, { ...emptyPersonalDraft, originalText: '숙소는 예약했어요', scheduleItems: [item] }, {
+    fetcher: async (url, init) => { call = { url, init }; return response(dto({ preferenceVersion: 1, draft: { ...dto().draft, originalText: '숙소는 예약했어요', scheduleItems: [item] }, clarifications: [{ itemId: id, fields: ['contentid'], code: 'PLACE_UNRESOLVED', candidates: [{ contentid: 10, title: '단양 숙소', address: null }] }] })) },
+  })
+  assert.deepEqual(JSON.parse(call.init.body).draft.scheduleItems, [item])
+  assert.equal(result.draft.scheduleItems[0].contentid, null)
+  assert.deepEqual(result.clarifications[0].candidates, [{ contentid: 10, title: '단양 숙소', address: null }])
 })
 
 test('PUT sends all strict fields, nulls blank text, and uses current versions', async () => {
@@ -85,6 +100,14 @@ test('interpret uses UUID idempotency and validates provenance, suggestions, and
   assert.equal(result.needsWalkingAnswer, true)
   assert.equal(result.suggestions.walking, '')
   assert.equal('originalText' in result.suggestions, false)
+})
+
+test('interpret accepts extracted schedule items and validates canonical identity', () => {
+  const item = { id: 'a0000000-0000-4000-8000-000000000012', kind: 'appointment', scope: null, placeQuery: '단양역', contentid: null, date: null, time: '18:00', endDate: null, endTime: null }
+  const result = parseInterpretation({ sourceConditionsVersion: 2, sourcePreferenceVersion: 1, suggestions: { likes: null, avoid: null, avoidImportance: 'required', food: null, foodImportance: 'preferred', walking: '20', scheduleItems: [item] }, needsWalkingAnswer: false, clarifications: [{ itemId: item.id, fields: ['scope'], code: 'SCOPE_REQUIRED', candidates: [] }] })
+  assert.deepEqual(result.suggestions.scheduleItems, [item])
+  assert.equal(result.clarifications[0].code, 'SCOPE_REQUIRED')
+  assert.throws(() => parseInterpretation({ sourceConditionsVersion: 2, sourcePreferenceVersion: 1, suggestions: { likes: null, avoid: null, avoidImportance: 'required', food: null, foodImportance: 'preferred', walking: '20', scheduleItems: [{ ...item, id: item.id.toUpperCase() }] }, needsWalkingAnswer: false }), /개인 준비 응답/u)
 })
 
 test('rejects malformed DTOs, unknown enums, overlong values, and inconsistent confirmation', () => {

@@ -74,6 +74,12 @@ export class CanvasSyncEngine {
       canUndo: idle && this.past.length > 0, canRedo: idle && this.future.length > 0 };
   }
   getSnapshot = () => this.snapshot;
+  acceptImportedState = (state: CanvasState) => {
+    if (state.tripId !== this.tripId || this.preview) return;
+    this.receive(state);
+    this.emit();
+    this.schedule();
+  };
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private emit() {
     this.snapshot = this.buildSnapshot();

@@ -76,6 +76,34 @@
 .prep-date-fields, .prep-two-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
 .prep-input-wrap { min-width: 0; }
 .prep-input-wrap > small { display: block; margin-top: var(--space-0); color: var(--prep-muted); font-size: 12px; }
+.prep-schedule-fields { display: grid; min-width: 0; gap: var(--space-3); }
+.prep-schedule-departure { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: var(--space-2); }
+.prep-schedule-fields > *, .prep-schedule-option-body > * { margin-bottom: 0; }
+.prep-schedule-option { min-width: 0; margin: 0; padding: var(--space-3) 0 0; border: 0; border-top: 1px solid var(--prep-line); }
+.prep-schedule-option-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.prep-schedule-option-heading h3, .prep-schedule-option-heading h4, .prep-schedule-option-heading legend { margin: 0; padding: 0; color: var(--prep-ink); font-size: 15px; font-weight: 600; }
+.prep-schedule-option-heading p { margin: var(--space-0) 0 0; color: var(--prep-muted); font-size: 12px; line-height: 1.5; }
+.prep-schedule-fields > h3 { margin: 0; color: var(--prep-ink); font-size: 15px; font-weight: 600; }
+.prep-schedule-option-heading small { margin-left: var(--space-1); color: var(--prep-muted); font-size: 12px; font-weight: 400; }
+.prep-schedule-toggle { display: inline-flex; flex: none; gap: var(--space-0); }
+.prep-schedule-toggle button { min-width: 60px; min-height: 44px; padding: var(--space-1) var(--space-2); border: 1px solid var(--prep-line); border-radius: 6px; background: var(--prep-paper); color: var(--prep-muted); font: inherit; font-size: 13px; cursor: pointer; }
+.prep-schedule-toggle button.is-selected { border-color: var(--color-accent-hover); background: var(--prep-soft); color: var(--prep-ink); }
+.prep-schedule-toggle button:hover:not(:disabled) { border-color: var(--prep-ink); }
+.prep-schedule-toggle button:disabled { cursor: not-allowed; opacity: .6; }
+.prep-schedule-option-body { display: grid; min-width: 0; gap: var(--space-2); margin-top: var(--space-2); }
+.prep-schedule-preview-note, .prep-schedule-hint { margin: 0; color: var(--prep-muted); font-size: 12px; line-height: 1.5; }
+.prep-schedule-fields .field-help { color: var(--prep-muted); font-size: 12px; line-height: 1.5; }
+.prep-schedule-items { display: grid; min-width: 0; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--prep-line); }
+.prep-schedule-items > h3 { margin: 0; color: var(--prep-ink); font-size: 14px; font-weight: 600; }
+.prep-schedule-items > p, .prep-schedule-item small { margin: 0; color: var(--prep-muted); font-size: 12px; line-height: 1.5; }
+.prep-schedule-item { display: grid; min-width: 0; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--prep-line); }
+.prep-schedule-item > header, .prep-schedule-item-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.prep-schedule-item > header > strong { color: var(--prep-ink); font-size: 13px; }
+.prep-schedule-item > header > button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: var(--prep-muted); font: inherit; cursor: pointer; }
+.prep-schedule-item-actions > span { color: var(--prep-muted); font-size: 12px; }
+.prep-schedule-place-result { display: flex; min-height: 44px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: var(--space-1) var(--space-2); border: 1px solid var(--prep-line); border-radius: 6px; background: var(--prep-paper); color: var(--prep-ink); font: inherit; text-align: left; cursor: pointer; }
+.prep-schedule-place-result > span { color: var(--prep-muted); font-size: 12px; }
+@media (max-width: 420px) { .prep-schedule-departure { grid-template-columns: minmax(0, 1fr); } .prep-schedule-fields .prep-two-fields { grid-template-columns: minmax(0, 1fr); } }
 .prep-optional { margin-left: var(--space-0); color: var(--prep-muted); font-size: 12px; font-weight: 400; }
 .prep-region-picker { min-width: 0; margin-bottom: var(--tw-space-20); }
 .prep-region-empty, .prep-region-legacy { margin: var(--space-0) 0 0; color: var(--prep-muted); font-size: 12px; }

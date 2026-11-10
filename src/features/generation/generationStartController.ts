@@ -4,6 +4,7 @@ type Dependencies = {
   getLatest: (tripId: string, signal: AbortSignal) => Promise<GenerationState>;
   create: (tripId: string, inputToken: string, settingsVersion: number, idempotencyKey: string, signal: AbortSignal) => Promise<Job>;
   createKey: () => string;
+  isCurrentCompleted?: (tripId: string, job: Job, data: GenerationState, signal: AbortSignal) => Promise<boolean>;
 };
 
 export type StartResult =
@@ -14,7 +15,7 @@ export type StartResult =
   | { kind: 'started'; data: GenerationState; job: Job };
 
 /** Keeps generation idempotency stable across uncertain retries for identical inputs. */
-export function createGenerationStartController({ getLatest, create, createKey }: Dependencies) {
+export function createGenerationStartController({ getLatest, create, createKey, isCurrentCompleted }: Dependencies) {
   let inFlight = false;
   let retry: { tripId: string; inputToken: string; settingsVersion: number; key: string } | null = null;
 
@@ -31,6 +32,12 @@ export function createGenerationStartController({ getLatest, create, createKey }
         if (data.latestJob?.status === 'QUEUED' || data.latestJob?.status === 'RUNNING') {
           retry = null;
           return { kind: 'active', data };
+        }
+        if (data.latestJob?.status === 'SUCCEEDED' && isCurrentCompleted) {
+          const completedIsCurrent = await isCurrentCompleted(tripId, data.latestJob, data, signal);
+          if (signal.aborted) return { kind: 'busy' };
+          if (currentBlocker()) return { kind: 'blocked', reason: currentBlocker()! };
+          if (completedIsCurrent) { retry = null; return { kind: 'active', data }; }
         }
         if (!data.readyForGeneration) {
           retry = null;

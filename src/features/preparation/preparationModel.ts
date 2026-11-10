@@ -44,10 +44,10 @@ export function regionSelection(value: string): RegionSelection {
 }
 
 /** Use the latest hidden values when saving the simplified visible form. */
-export function withPreservedHiddenConditions(visibleDraft: RoomDraft, latest: RoomDraft | null): RoomDraft {
+export function withPreservedHiddenConditions(visibleDraft: RoomDraft, latest: RoomDraft | null, options: { clearLegacyAnchors?: boolean } = {}): RoomDraft {
   return {
     ...visibleDraft,
-    lodging: latest?.lodging ?? visibleDraft.lodging,
-    fixedSchedule: latest?.fixedSchedule ?? visibleDraft.fixedSchedule,
+    lodging: options.clearLegacyAnchors ? '' : latest?.lodging ?? visibleDraft.lodging,
+    fixedSchedule: options.clearLegacyAnchors ? '' : latest?.fixedSchedule ?? visibleDraft.fixedSchedule,
   };
 }

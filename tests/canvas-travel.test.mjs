@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getCanvasRoute } from '../src/features/workspace/canvasApi.ts';
 import { CanvasRouteController, canvasRouteKey, collectCanvasRouteRequests, formatCanvasRouteLabel, parseCanvasRoute } from '../src/features/workspace/canvasRoutes.ts';
+import { canvasClipboardCopy, copyCanvasNode, replaceCanvasPlace } from '../src/features/workspace/canvasModel.ts';
 
 const uuid = '10000000-0000-4000-8000-000000000001';
 const input = { tripId: uuid, sourceContentid: -17, targetContentid: 22, conditionsVersion: 3, mode: 'walk' };
@@ -12,6 +13,16 @@ const deferred = () => {
   return { promise, resolve };
 };
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+test('copying and replacing imported places clear server-managed source metadata', () => {
+  const place = { id: id(1), kind: 'place', dayId: id(2), position: { x: 1, y: 2 }, color: 'default', contentid: 10, intent: 'route', source: { planId: id(3), versionId: id(4), nodeId: id(5) }, schedule: { startAt: '2026-11-11T09:00:00Z', endAt: null, locked: true } };
+  const clipboard = canvasClipboardCopy(place);
+  const pasted = copyCanvasNode(place, id(6), id(7));
+  const replaced = replaceCanvasPlace(place, 11);
+  for (const item of [clipboard, pasted, replaced]) { assert.equal('source' in item, false); assert.equal('schedule' in item, false); }
+  assert.equal(pasted.position.x, 37);
+  assert.equal(replaced.contentid, 11);
+});
 
 test('route parser requires exact signed IDs, condition version, mode, and coherent metrics', () => {
   assert.deepEqual(parseCanvasRoute(result(), input), result());

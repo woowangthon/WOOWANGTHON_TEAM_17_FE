@@ -37,3 +37,8 @@ export function useCanvasSync(tripId: string, preview: boolean) {
   return { ...snapshot, update: engine.update, updateLatest: engine.update, retry: engine.retry,
     resolve: engine.resolve, undo: engine.undo, redo: engine.redo };
 }
+
+export function acceptImportedCanvasState(tripId: string, state: Parameters<CanvasSyncEngine['acceptImportedState']>[0]) {
+  const engine = engines.get(`shared:${tripId}`);
+  engine?.acceptImportedState(state);
+}

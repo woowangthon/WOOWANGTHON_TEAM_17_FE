@@ -1,6 +1,6 @@
 export type CanvasColor = 'default' | 'lime' | 'sky' | 'rose' | 'amber';
 export type CanvasDay = { id: string; date: string | null };
-export type CanvasPlaceNode = { id: string; kind: 'place'; dayId: string; position: { x: number; y: number }; color: CanvasColor; contentid: number; intent: 'route' | 'candidate' };
+export type CanvasPlaceNode = { id: string; kind: 'place'; dayId: string; position: { x: number; y: number }; color: CanvasColor; contentid: number; intent: 'route' | 'candidate'; source?: { planId: string; versionId: string; nodeId: string }; schedule?: { startAt: string | null; endAt: string | null; locked: boolean } };
 export type CanvasCommentNode = { id: string; kind: 'comment'; dayId: string; position: { x: number; y: number }; color: CanvasColor; text: string };
 export type CanvasNode = CanvasPlaceNode | CanvasCommentNode;
 export type CanvasEdge = { id: string; source: string; target: string };
@@ -32,6 +32,22 @@ function text(value: unknown, min: number, max: number): value is string {
 }
 export const safeCanvasText = (value: unknown, max: number): value is string => text(value, 0, max);
 
+export function canvasClipboardCopy(node: CanvasNode): CanvasNode {
+  const copy = structuredClone(node);
+  if (copy.kind === 'place') { delete copy.source; delete copy.schedule; }
+  return copy;
+}
+
+export function copyCanvasNode(node: CanvasNode, newId: string, dayId: string, offset = 36): CanvasNode {
+  const copy = canvasClipboardCopy(node);
+  return { ...copy, id: newId, dayId, position: { x: copy.position.x + offset, y: copy.position.y + offset } };
+}
+
+export function replaceCanvasPlace(node: CanvasPlaceNode, contentid: number): CanvasPlaceNode {
+  const { source: _source, schedule: _schedule, ...editable } = node;
+  return { ...editable, contentid };
+}
+
 export function canConnectRoute(source: string, target: string, nodeDays: Map<string, string>, edges: CanvasEdgeRef[]): boolean {
   if (!source || !target || source === target || !nodeDays.has(source) || nodeDays.get(source) !== nodeDays.get(target)) return false;
   if (edges.some((edge) => edge.source === source || edge.target === target)) return false;
@@ -43,14 +59,24 @@ export function canConnectRoute(source: string, target: string, nodeDays: Map<st
 }
 
 export function parseCanvasDocument(value: unknown): CanvasDocument | null {
-  if (!isRecord(value) || !keys(value, ['schemaVersion', 'days', 'nodes', 'edges']) || value.schemaVersion !== 3 || !Array.isArray(value.days) || value.days.length < 1 || value.days.length > 31 || !Array.isArray(value.nodes) || value.nodes.length > 100 || !Array.isArray(value.edges) || value.edges.length > 100) return null;
-  try { if (new TextEncoder().encode(JSON.stringify(value)).length > 200_000) return null; } catch { return null; }
+  if (!isRecord(value) || !keys(value, ['schemaVersion', 'days', 'nodes', 'edges']) || value.schemaVersion !== 3 || !Array.isArray(value.days) || value.days.length < 1 || value.days.length > 31 || !Array.isArray(value.nodes) || value.nodes.length > 500 || !Array.isArray(value.edges) || value.edges.length > 500) return null;
+  try { if (new TextEncoder().encode(JSON.stringify(value)).length > 1_048_576) return null; } catch { return null; }
   const days: CanvasDay[] = []; const dayIds = new Set<string>(); const dayDates = new Set<string>();
   for (const item of value.days) { if (!isRecord(item) || !keys(item, ['id', 'date']) || !uuid(item.id) || dayIds.has(item.id) || (item.date !== null && (!date(item.date) || dayDates.has(item.date)))) return null; dayIds.add(item.id); if (item.date !== null) dayDates.add(item.date); days.push({ id: item.id, date: item.date as string | null }); }
   const nodes: CanvasNode[] = []; const nodeIds = new Set<string>();
   for (const item of value.nodes) {
     if (!isRecord(item) || !uuid(item.id) || nodeIds.has(item.id) || !uuid(item.dayId) || !dayIds.has(item.dayId) || !isRecord(item.position) || !keys(item.position, ['x', 'y']) || typeof item.position.x !== 'number' || !Number.isFinite(item.position.x) || Math.abs(item.position.x) > 100000 || typeof item.position.y !== 'number' || !Number.isFinite(item.position.y) || Math.abs(item.position.y) > 100000 || !colors.includes(item.color as CanvasColor)) return null;
-    if (item.kind === 'place' && keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent']) && typeof item.contentid === 'number' && Number.isInteger(item.contentid) && item.contentid >= -2147483648 && item.contentid <= 2147483647 && (item.intent === 'route' || item.intent === 'candidate')) nodes.push({ id: item.id, kind: 'place', dayId: item.dayId, position: { x: item.position.x, y: item.position.y }, color: item.color as CanvasColor, contentid: item.contentid, intent: item.intent });
+    if (item.kind === 'place' && (keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent']) || keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent', 'source', 'schedule'])) && typeof item.contentid === 'number' && Number.isInteger(item.contentid) && item.contentid >= -2147483648 && item.contentid <= 2147483647 && (item.intent === 'route' || item.intent === 'candidate')) {
+      let source: CanvasPlaceNode['source']; let schedule: CanvasPlaceNode['schedule'];
+      if ('source' in item || 'schedule' in item) {
+        if (!isRecord(item.source) || !keys(item.source, ['planId', 'versionId', 'nodeId']) || !uuid(item.source.planId) || !uuid(item.source.versionId) || !uuid(item.source.nodeId) || !isRecord(item.schedule) || !keys(item.schedule, ['startAt', 'endAt', 'locked']) || typeof item.schedule.locked !== 'boolean') return null;
+        const validTime = (v: unknown) => v === null || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(v) && !Number.isNaN(Date.parse(v)));
+        if (!validTime(item.schedule.startAt) || !validTime(item.schedule.endAt)) return null;
+        source = { planId: item.source.planId, versionId: item.source.versionId, nodeId: item.source.nodeId };
+        schedule = { startAt: item.schedule.startAt as string | null, endAt: item.schedule.endAt as string | null, locked: item.schedule.locked };
+      }
+      nodes.push({ id: item.id, kind: 'place', dayId: item.dayId, position: { x: item.position.x, y: item.position.y }, color: item.color as CanvasColor, contentid: item.contentid, intent: item.intent, ...(source ? { source } : {}), ...(schedule ? { schedule } : {}) });
+    }
     else if (item.kind === 'comment' && keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'text']) && typeof item.text === 'string' && text(item.text, 1, 1000) && item.text.trim()) nodes.push({ id: item.id, kind: 'comment', dayId: item.dayId, position: { x: item.position.x, y: item.position.y }, color: item.color as CanvasColor, text: item.text });
     else return null;
     nodeIds.add(item.id);

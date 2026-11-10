@@ -8,6 +8,7 @@ import { derivePersonalSaveStatus, type PersonalSaveStatus } from './personalSta
 import {
   initialConditionsNoticeState, transitionConditionsNotice, type ConditionsNoticeState,
 } from './conditionsChangedNotice.ts';
+import type { PersonalPreferences } from './personalApi.ts';
 
 type HookState = {
   tripId: string | null;
@@ -26,11 +27,12 @@ type HookState = {
   loadedConditionsVersion: number | null;
   preferenceVersion: number;
   reviewed: boolean;
+  clarifications: PersonalPreferences['clarifications'];
 };
 
 const initialState = (tripId: string | null): HookState => ({
   tripId, draft: emptyPersonalDraft, savedDraft: emptyPersonalDraft, state: 'loading', phase: 'idle', resultStatus: 'empty', resultsVisible: false, analysisStep: null, dirty: false,
-  message: '', operationError: '', needsWalkingAnswer: false, confirmation: null, loadedConditionsVersion: null, preferenceVersion: 0, reviewed: false,
+  message: '', operationError: '', needsWalkingAnswer: false, confirmation: null, loadedConditionsVersion: null, preferenceVersion: 0, reviewed: false, clarifications: [],
 });
 
 function fatalError(error: unknown): boolean {
@@ -78,6 +80,7 @@ export function usePersonalPreparation({
   confirmation: PersonalConfirmation | null;
   conditionsChangedNotice: { conditionsVersion: number } | null;
   reviewed: boolean;
+  clarifications: PersonalPreferences['clarifications'];
   setReviewed: (reviewed: boolean) => void;
   canConfirm: boolean;
   saveStatus: PersonalSaveStatus;
@@ -139,7 +142,7 @@ export function usePersonalPreparation({
         tripId, draft: result.draft, savedDraft: result.draft, state: conditionsMatch ? 'ready' : 'error', phase: 'idle',
         resultStatus: hasStoredResults(result.draft) ? 'stored' : 'empty', resultsVisible: retained.resultsVisible || hasSavedPreparation(result.draft, result.preferenceVersion), analysisStep: null, dirty: false,
         message: conditionsMatch ? '' : '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.', operationError: conditionsMatch ? '' : '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.', needsWalkingAnswer: false, confirmation: result.confirmation, reviewed: false,
-        loadedConditionsVersion: result.conditionsVersion, preferenceVersion: result.preferenceVersion,
+        loadedConditionsVersion: result.conditionsVersion, preferenceVersion: result.preferenceVersion, clarifications: result.clarifications,
       });
     } catch (error) {
       if (controller.signal.aborted || requestId !== sequence.current || (error instanceof DOMException && error.name === 'AbortError')) return;
@@ -216,7 +219,7 @@ export function usePersonalPreparation({
         ...internalRef.current, ...(unchanged ? { draft: result.draft } : {}), savedDraft: result.draft,
         state: 'ready', phase: 'idle', analysisStep: null, dirty: !unchanged,
         message: '취향을 저장했어요.', confirmation: result.confirmation, preferenceVersion: result.preferenceVersion,
-        loadedConditionsVersion: result.conditionsVersion,
+        loadedConditionsVersion: result.conditionsVersion, clarifications: result.clarifications,
       });
       onSavedRef.current?.();
       return true;
@@ -249,7 +252,7 @@ export function usePersonalPreparation({
         onSavedRef.current?.();
         return false;
       }
-      update({ ...internalRef.current, draft: savedRaw.draft, savedDraft: savedRaw.draft, preferenceVersion: savedRaw.preferenceVersion, confirmation: savedRaw.confirmation, reviewed: false, dirty: false, analysisStep: 'interpret', message: '저장한 원문을 분석하고 있어요.' });
+      update({ ...internalRef.current, draft: savedRaw.draft, savedDraft: savedRaw.draft, preferenceVersion: savedRaw.preferenceVersion, confirmation: savedRaw.confirmation, clarifications: savedRaw.clarifications, reviewed: false, dirty: false, analysisStep: 'interpret', message: '저장한 원문을 분석하고 있어요.' });
       onSavedRef.current?.();
       const interpreted = await interpretMyPreferences(tripId, conditionsVersion, savedRaw.preferenceVersion, { signal: controller.signal });
       if (controller.signal.aborted || requestId !== sequence.current) return false;
@@ -269,16 +272,17 @@ export function usePersonalPreparation({
         food: interpreted.suggestions.food,
         foodImportance: interpreted.suggestions.foodImportance,
         walking: interpreted.needsWalkingAnswer ? savedRaw.draft.walking : interpreted.suggestions.walking,
+        scheduleItems: interpreted.suggestions.scheduleItems,
       };
-      update({ ...internalRef.current, phase: 'analyzing', analysisStep: 'result', message: '분석 결과를 저장하고 있어요.' });
+      update({ ...internalRef.current, draft: merged, resultsVisible: true, dirty: JSON.stringify(merged) !== JSON.stringify(savedRaw.draft), clarifications: interpreted.clarifications, needsWalkingAnswer: interpreted.needsWalkingAnswer, phase: 'analyzing', analysisStep: 'result', message: '분석 결과를 저장하고 있어요.' });
       const finalResult = await saveMyPreferences(tripId, conditionsVersion, savedRaw.preferenceVersion, merged, { signal: controller.signal });
       if (controller.signal.aborted || requestId !== sequence.current) return false;
       if (revision !== editRevision.current) {
-        update({ ...internalRef.current, savedDraft: finalResult.draft, preferenceVersion: finalResult.preferenceVersion, confirmation: finalResult.confirmation, phase: 'idle', resultsVisible: true, analysisStep: null, resultStatus: 'stale', dirty: true, message: '입력이 바뀌어 분석 결과를 화면에 적용하지 않았어요. 새로고침해 확인해 주세요.' });
+        update({ ...internalRef.current, savedDraft: finalResult.draft, preferenceVersion: finalResult.preferenceVersion, confirmation: finalResult.confirmation, clarifications: finalResult.clarifications, phase: 'idle', resultsVisible: true, analysisStep: null, resultStatus: 'stale', dirty: true, message: '입력이 바뀌어 분석 결과를 화면에 적용하지 않았어요. 새로고침해 확인해 주세요.' });
         onSavedRef.current?.();
         return false;
       }
-      update({ ...internalRef.current, draft: finalResult.draft, savedDraft: finalResult.draft, state: 'ready', phase: 'idle', resultStatus: 'analyzed', resultsVisible: true, analysisStep: null, dirty: false, reviewed: false, confirmation: finalResult.confirmation, preferenceVersion: finalResult.preferenceVersion, loadedConditionsVersion: finalResult.conditionsVersion, needsWalkingAnswer: interpreted.needsWalkingAnswer, message: interpreted.needsWalkingAnswer ? '걷기 시간을 선택해 주세요.' : '취향을 분석하고 저장했어요.' });
+      update({ ...internalRef.current, draft: finalResult.draft, savedDraft: finalResult.draft, state: 'ready', phase: 'idle', resultStatus: 'analyzed', resultsVisible: true, analysisStep: null, dirty: false, reviewed: false, confirmation: finalResult.confirmation, preferenceVersion: finalResult.preferenceVersion, loadedConditionsVersion: finalResult.conditionsVersion, needsWalkingAnswer: interpreted.needsWalkingAnswer, clarifications: finalResult.clarifications, message: interpreted.needsWalkingAnswer ? '걷기 시간을 선택해 주세요.' : '취향을 분석하고 저장했어요.' });
       onSavedRef.current?.();
       return true;
     } catch (error) {
@@ -348,7 +352,7 @@ export function usePersonalPreparation({
     visible.confirmation?.status !== 'confirmed'
   );
   return {
-    draft: visible.draft, savedDraft: visible.savedDraft, state: effectiveState, phase: effectivePhase,
+    draft: visible.draft, savedDraft: visible.savedDraft, state: effectiveState, phase: effectivePhase, clarifications: visible.clarifications,
     resultStatus: visible.resultStatus, resultsVisible: visible.resultsVisible, analysisStep: staleConditions ? null : visible.analysisStep,
     dirty: visible.dirty, message: staleConditions ? '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.' : visible.message, operationError: staleConditions ? '' : visible.operationError, needsWalkingAnswer: visible.needsWalkingAnswer,
     confirmation: visible.confirmation,

@@ -31,6 +31,47 @@ test('reuses an active job without posting a duplicate', async () => {
   assert.equal(posts, 0);
 });
 
+test('reuses the completed server job so the flow can import its plan instead of generating again', async () => {
+  let posts = 0;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({ latestJob: { id: 'job-done', status: 'SUCCEEDED', planId: 'plan-a' } }),
+    create: async () => { posts += 1; }, createKey: () => 'key',
+    isCurrentCompleted: async () => true,
+  });
+  const result = await controller.start('trip-a', new AbortController().signal);
+  assert.equal(result.kind, 'active');
+  assert.equal(result.data.latestJob.id, 'job-done');
+  assert.equal(posts, 0);
+});
+
+test('stale completed job does not prevent a fresh generation job', async () => {
+  let posts = 0;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({ latestJob: { id: 'job-old', status: 'SUCCEEDED', planId: 'plan-old' } }),
+    create: async () => { posts += 1; return { id: 'job-new', status: 'QUEUED' }; }, createKey: () => 'new-key',
+    isCurrentCompleted: async () => false,
+  });
+  const result = await controller.start('trip-a', new AbortController().signal);
+  assert.equal(result.kind, 'started');
+  assert.equal(result.job.id, 'job-new');
+  assert.equal(posts, 1);
+});
+
+test('rechecks local edits after checking whether a completed plan is still current', async () => {
+  let blocked = undefined; let posts = 0; let release;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({ latestJob: { id: 'job-done', status: 'SUCCEEDED', planId: 'plan-a' } }),
+    create: async () => { posts += 1; return { id: 'job-new', status: 'QUEUED' }; }, createKey: () => 'key',
+    isCurrentCompleted: () => new Promise(resolve => { release = resolve; }),
+  });
+  const pending = controller.start('trip-a', new AbortController().signal, () => blocked);
+  await new Promise(resolve => setImmediate(resolve));
+  blocked = '입력이 바뀌었어요.'; release(true);
+  const result = await pending;
+  assert.deepEqual(result, { kind: 'blocked', reason: '입력이 바뀌었어요.' });
+  assert.equal(posts, 0);
+});
+
 test('keeps an idempotency key after an uncertain error and changes it with inputs', async () => {
   let inputToken = 'input-a';
   const keys = [];
