@@ -2,7 +2,9 @@
 
 검수한 여행방 시작 HTML/JavaScript와 React + TypeScript 공통 UI를 Vite로 함께 빌드하는 프론트엔드입니다. 기본 `/`는 확정된 여행방 화면이며 요청된 하단 푸터만 제거했습니다. 같은 출처의 BE API로 기기 세션·방 생성·초대 참여·방 진입 화면의 재접속을 처리합니다. `?preview=ui`는 기존 React 공통 UI 확인 화면을 엽니다.
 
-서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별합니다. 방 생성·참여 후 `/room.html`에서 여행 준비와 내 취향·제약 화면을 사용합니다. 방 정보·공통 여행 조건·전체 참여자 준비 상태는 실제 API이며, 방장이 저장한 조건을 함께 조회합니다. 실행 DB에는 BE migration 002의 준비 기능 테이블이 필요합니다. 개인 입력·개인 화면의 확정은 새로고침하면 사라지는 메모리 초안이며 공동 준비 상태를 바꾸지 않습니다. 개인 조건 저장·AI 해석·최근 여행 목록·일정 생성은 아직 연결하지 않았습니다. 두 화면은 서버 없이 `/room.html?preview=room`에서 미리 볼 수 있습니다. 자세한 연동 범위는 [공통 조건·준비 상태](docs/shared-preparation.md), 화면 구성은 [여행방 준비 화면](docs/room-dashboard.md)을 참고하세요. 이전 `src/features/entry` mock은 보존된 예시이며 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8), [여행 준비·개인 조건](https://app.notion.com/p/412e977e49088197b345d73603c6a27f), [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
+서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별합니다. 방 생성·참여 후 `/room.html`에서 여행 준비와 내 취향 화면을 사용합니다. 방 정보·공통 여행 조건·전체 참여자 준비 상태와 본인의 개인 조건 저장·AI 해석·준비 완료는 기존 BE API에 연결합니다. 방장만 공통 조건을 수정하며, 개인 원문·취향은 본인 전용입니다. 취향 분석은 원문 저장 → AI 해석 → 결과 저장 순서이며, 준비 완료는 사용자가 현재 조건과 취향을 확인한 뒤 별도로 요청합니다. 실행 DB에는 BE migration 002의 준비 기능 테이블이 필요하고 AI 해석에는 BE의 AI 설정이 필요합니다. FE에서 migration을 실행하거나 비밀키를 관리하지 않습니다.
+
+일정 캔버스는 비개인 예시 데이터를 사용하는 로컬 미리보기입니다. 실제 일정 생성·공유 일정 저장·실시간 공동 편집·장소 검색·경로 계산은 아직 연결하지 않았습니다. 최근 여행 목록도 제공하지 않습니다. 서버 없이 `/room.html?preview=room`에서 시안을 볼 수 있으며 실제 저장과 구분합니다. 최신 동작과 검수 범위는 [준비 상태·직접 확정](docs/preparation-confirmation-review.md), [조건 변경 안내](docs/preparation-condition-notice.md), [워크스페이스 검수](docs/workspace-ui-review.md)를 참고하세요. 기존 화면·연동 문서는 당시 단계의 기록입니다. 이전 `src/features/entry` mock은 보존된 예시이며 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8), [여행 준비·개인 조건](https://app.notion.com/p/412e977e49088197b345d73603c6a27f), [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
 
 ## 시작하기
 
