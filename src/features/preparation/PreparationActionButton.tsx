@@ -5,6 +5,8 @@ type PreparationActionButtonProps = {
   disabled?: boolean;
   className?: string;
   ariaDescribedBy?: string;
+  ariaExpanded?: boolean;
+  ariaControls?: string;
   onClick?: () => void;
   type?: 'button' | 'submit';
 };
@@ -16,6 +18,8 @@ export default function PreparationActionButton({
   disabled = false,
   className = '',
   ariaDescribedBy,
+  ariaExpanded,
+  ariaControls,
   onClick,
   type = 'button',
 }: PreparationActionButtonProps) {
@@ -25,6 +29,8 @@ export default function PreparationActionButton({
     disabled={disabled || loading}
     aria-busy={loading || undefined}
     aria-describedby={ariaDescribedBy}
+    aria-expanded={ariaExpanded}
+    aria-controls={ariaControls}
     onClick={onClick}
   >
     <span className="prep-action-label">{loading && loadingLabel ? loadingLabel : label}</span>

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { applyNodeChanges, Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, type Connection, type Edge, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Button from '../../components/ui/Button';
+import PreparationActionButton from '../preparation/PreparationActionButton';
 import { canConnectRoute, parseCanvasDocument, safeCanvasText, type CanvasDocument, type CanvasPlace } from './canvasModel';
 
 type PlaceNode = Node<{ place: CanvasPlace; intent: 'route' | 'candidate'; routeLabel?: string }, 'place'>;
@@ -114,8 +115,9 @@ export default function CanvasPreview({ tripId }: { tripId: string }) {
   useEffect(() => { const timer = window.setTimeout(() => { try { localStorage.setItem(storageKey(tripId), serialized); } catch { setMessage('이 기기에 저장하지 못했어요. 페이지를 닫기 전에 편집 내용을 확인해 주세요.'); } }, 150); return () => window.clearTimeout(timer); }, [serialized, tripId]);
 
   return <section className="tw-canvas-embedded" aria-label="일정 캔버스" onKeyDown={keyboard} tabIndex={-1}>
-    <div className="tw-canvas-header"><div><h1>일정 캔버스</h1><p>카드는 자유롭게, 방문 순서는 연결선으로.</p></div><div className="tw-canvas-actions"><Button variant="secondary" onClick={undo} disabled={!undoStack.length}>실행 취소</Button><Button variant="secondary" onClick={redo} disabled={!redoStack.length}>다시 실행</Button><Button variant="secondary" onClick={() => setDrawerOpen((open) => !open)} aria-expanded={drawerOpen} aria-controls="tw-place-panel">{drawerOpen ? '장소 목록 닫기' : '장소 목록 열기'}</Button></div></div>
-    <p className="tw-sample-note">예시 장소로 편집을 시험해 보세요. 이 기기에만 저장되며 다른 참여자에게 공유되지 않아요.</p>
+    <div className="prep-main prep-canvas-intro"><header className="prep-page-heading"><div className="prep-heading-info"><h1>일정 캔버스</h1><p>카드는 자유롭게, 방문 순서는 연결선으로.</p></div><div className="tw-canvas-actions"><PreparationActionButton label="실행 취소" onClick={undo} disabled={!undoStack.length} /><PreparationActionButton label="다시 실행" onClick={redo} disabled={!redoStack.length} /><PreparationActionButton label={drawerOpen ? '장소 목록 닫기' : '장소 목록 열기'} onClick={() => setDrawerOpen((open) => !open)} ariaExpanded={drawerOpen} ariaControls="tw-place-panel" /></div></header>
+      <p className="tw-sample-note">예시 장소로 편집을 시험해 보세요. 이 기기에만 저장되며 다른 참여자에게 공유되지 않아요.</p>
+    </div>
     <div className={`tw-canvas-shell ${drawerOpen ? '' : 'is-drawer-closed'}`}>
       <section className="tw-flow-area" aria-label="일정 장소 캔버스">
         <nav className="tw-day-tabs" aria-label="여행 날짜">{Array.from({ length: dayCount }, (_, index) => index + 1).map((number) => <button type="button" key={number} aria-current={day === number ? 'page' : undefined} aria-pressed={day === number} onClick={() => changeDay(number)}>{number}일차</button>)}<button type="button" disabled={dayCount >= 31} onClick={() => { setDayCount(dayCount + 1); changeDay(dayCount + 1); }}>날짜 추가</button></nav>

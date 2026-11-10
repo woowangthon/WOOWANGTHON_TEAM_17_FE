@@ -323,3 +323,18 @@
   .prep-participant-panel { width: min(360px, 100%); }
   .prep-topbar .tw-topbar-actions .prep-copy-wrap .btn { display: inline-flex; min-height: 40px; padding: 0 var(--space-1); font-size: 12px; white-space: nowrap; }
 }
+
+/* Shared navigation labels and canvas intro hierarchy. */
+.prep-nav-links button { justify-content: flex-start; gap: var(--space-2); }
+.prep-nav-links button svg { width: 21px; height: 21px; flex: none; }
+.prep-nav-links button span { min-width: 0; }
+.prep-main.prep-canvas-intro { padding-bottom: 0; }
+.prep-main.prep-canvas-intro .prep-page-heading { align-items: flex-start; margin-bottom: var(--space-2); }
+.prep-main.prep-canvas-intro .prep-heading-info { justify-items: start; text-align: left; }
+.prep-main.prep-canvas-intro .prep-heading-info p { margin: 0; color: var(--prep-muted); font-size: 14px; line-height: 1.5; }
+.prep-main.prep-canvas-intro .tw-canvas-actions { max-width: 100%; align-items: center; justify-content: flex-end; }
+.prep-main.prep-canvas-intro .tw-sample-note { margin: 0; padding: 0; color: var(--prep-muted); font-size: 13px; line-height: 1.5; }
+@media (max-width: 700px) {
+  .prep-main.prep-canvas-intro .prep-page-heading { align-items: stretch; gap: var(--space-2); }
+  .prep-main.prep-canvas-intro .tw-canvas-actions { width: 100%; justify-content: flex-end; }
+}
