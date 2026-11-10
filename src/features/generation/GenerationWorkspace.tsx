@@ -10,7 +10,7 @@ import ResultMap from './ResultMap';
 import '../../styles/generation.css';
 
 declare global { interface Window { kakao?: any } }
-type Props = { tripId: string; tripName: string; conditionsVersion: number; expectedPeople: string; budget: string; transport: string; isOwner: boolean; startDate: string; endDate: string; onAccessLost?: () => void };
+type Props = { tripId: string; tripName: string; conditionsVersion: number; expectedPeople: string; budget: string; transport: string; isOwner: boolean; startDate: string; endDate: string; initiallyOpenSettings?: boolean; onAccessLost?: () => void };
 type FieldKey = 'likes' | 'avoid' | 'food';
 const fieldName: Record<FieldKey, string> = { likes: '좋아하는 항목', avoid: '피하고 싶은 항목', food: '음식 조건' };
 const defaultSettings: Settings = { activityWindow: { start: '09:00', end: '18:00' }, departureAnchor: null, returnAnchor: null, reviewedCommonFields: [] };
@@ -104,12 +104,12 @@ export function PersonalReviewPanel({ tripId, conditionsVersion, onReviewed, onA
   </section>;
 }
 
-export default function GenerationWorkspace({ tripId, tripName, conditionsVersion, expectedPeople, budget, transport, isOwner, startDate, endDate, onAccessLost }: Props) {
+export default function GenerationWorkspace({ tripId, tripName, conditionsVersion, expectedPeople, budget, transport, isOwner, startDate, endDate, initiallyOpenSettings = false, onAccessLost }: Props) {
   const [data, setData] = useState<GenerationState | null>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
   const [settings, setSettings] = useState<Settings>(defaultSettings); const [settingsChanged, setSettingsChanged] = useState(false);
   const settingsChangedRef = useRef(false);
   const markSettingsChanged = () => { settingsChangedRef.current = true; setSettingsChanged(true); };
-  const [plan, setPlan] = useState<Plan | null>(null); const [job, setJob] = useState<Job | null>(null); const [query, setQuery] = useState(''); const [places, setPlaces] = useState<Place[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [ackUnverified, setAckUnverified] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [validationOpen, setValidationOpen] = useState(false); const [activeDate, setActiveDate] = useState<string | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null); const [job, setJob] = useState<Job | null>(null); const [query, setQuery] = useState(''); const [places, setPlaces] = useState<Place[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [ackUnverified, setAckUnverified] = useState(false); const [settingsOpen, setSettingsOpen] = useState(initiallyOpenSettings); const [validationOpen, setValidationOpen] = useState(false); const [activeDate, setActiveDate] = useState<string | null>(null);
   const changeSelection = useCallback((id: string) => setSelectedId(id), []);
   const epoch = useRef(0); const actionEpoch = useRef(0); const ctrl = useRef<AbortController | null>(null); const jobKey = useRef<string | null>(null); const lock = useRef(false);
   const pollEpoch = useRef(0); const pollController = useRef<AbortController | null>(null); const pollLock = useRef(false);
