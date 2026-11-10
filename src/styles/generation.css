@@ -116,3 +116,106 @@
 
 .result-layout.list-only { grid-template-columns: minmax(0, 1fr); }
 .result-layout.list-only .result-map-pane { display: none; }
+
+/* Itinerary result screen. Kept under the workspace so shared navigation and
+   the preparation and preference tabs keep their current presentation. */
+.generation-workspace .itinerary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 3px 0 5px;
+}
+.generation-workspace .itinerary-heading-copy { min-width: 0; }
+.generation-workspace .itinerary-heading-copy .room-eyebrow { margin: 0 0 7px; color: var(--color-accent-ink); font-size: 12px; font-weight: 750; letter-spacing: .035em; }
+.generation-workspace .itinerary-heading-copy h1 { margin: 0; overflow-wrap: anywhere; font-size: clamp(24px, 3vw, 34px); line-height: 1.2; }
+.generation-workspace .itinerary-heading-copy p { margin: 8px 0 0; color: var(--color-muted); font-size: 15px; }
+.generation-workspace .itinerary-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.generation-workspace .itinerary-version { padding: 9px 13px; border-radius: var(--radius-control); background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: 13px; font-weight: 700; white-space: nowrap; }
+.generation-workspace .itinerary-header-actions .btn { min-height: 44px; }
+.generation-workspace .itinerary-cost-strip { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto auto; align-items: center; gap: 14px 24px; padding: 12px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
+.generation-workspace .itinerary-cost-strip > strong { font-size: 17px; }
+.generation-workspace .itinerary-cost-strip > span { color: var(--color-success); font-size: 15px; }
+.generation-workspace .itinerary-cost-strip > .is-cost-unknown { color: var(--color-warning); }
+.generation-workspace .itinerary-cost-strip > .is-cost-over-budget { color: var(--color-danger); }
+.generation-workspace .itinerary-result-card { min-width: 0; padding: 17px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); }
+.generation-workspace .itinerary-result-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.generation-workspace .itinerary-result-header h2 { margin: 0; font-size: 19px; }
+.generation-workspace .itinerary-result-header p { margin: 3px 0 0; color: var(--color-muted); font-size: 13px; }
+.generation-workspace .itinerary-days { display: grid; align-content: start; gap: 15px; min-width: 0; }
+.generation-workspace .itinerary-day-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.generation-workspace .itinerary-day-tabs button { flex: 1 1 128px; min-height: 44px; padding: 8px 13px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
+.generation-workspace .itinerary-day-tabs button[aria-pressed="true"] { border-color: var(--color-accent-ink); background: var(--color-accent-ink); color: var(--color-surface); }
+.generation-workspace .itinerary-day-tabs button:focus-visible,
+.generation-workspace .itinerary-course-layout button:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.generation-workspace .itinerary-course-layout { display: grid; grid-template-columns: minmax(285px, .68fr) minmax(0, 1.32fr); align-items: start; gap: var(--space-3); min-width: 0; }
+.generation-workspace .generation-status.is-stale { color: var(--color-warning); background: var(--color-status-writing-bg); }
+.generation-workspace .itinerary-day { min-width: 0; }
+.generation-workspace .itinerary-day h3 { margin: 0; font-size: 18px; }
+.generation-workspace .itinerary-day > p { margin: 4px 0 13px; color: var(--color-muted); font-size: 13px; }
+.generation-workspace .itinerary-stops { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.generation-workspace .itinerary-stop { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; width: 100%; min-height: 78px; padding: 11px 13px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: inherit; text-align: left; cursor: pointer; }
+.generation-workspace .itinerary-stop:hover,
+.generation-workspace .itinerary-stop[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.generation-workspace .itinerary-stop time { color: var(--color-muted); font-size: 12px; }
+.generation-workspace .itinerary-stop-copy { display: grid; gap: 5px; min-width: 0; }
+.generation-workspace .itinerary-stop-copy strong { overflow-wrap: anywhere; font-size: 16px; line-height: 1.3; }
+.generation-workspace .itinerary-stop-copy small { color: var(--color-muted); font-size: 13px; }
+.generation-workspace .itinerary-stop-connector { display: flex; align-items: center; gap: 8px; min-height: 24px; padding-left: 34px; color: var(--color-muted); font-size: 12px; }
+.generation-workspace .itinerary-stop-connector::before { width: 1px; height: 15px; margin-left: 0; background: var(--color-border); content: ""; }
+.generation-workspace .itinerary-course-side { display: grid; gap: 15px; min-width: 0; }
+.generation-workspace .itinerary-stop-detail { display: grid; grid-template-columns: minmax(100px, 168px) minmax(0, 1fr); gap: 18px; padding: 17px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); }
+.generation-workspace .itinerary-stop-photo { display: grid; place-items: center; min-height: 115px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-page); color: var(--color-muted); font-size: 13px; }
+.generation-workspace .itinerary-stop-detail-copy { min-width: 0; }
+.generation-workspace .itinerary-stop-detail h3 { margin: 0; overflow-wrap: anywhere; font-size: 19px; }
+.generation-workspace .itinerary-stop-detail p { margin: 7px 0 0; color: var(--color-muted); font-size: 13px; overflow-wrap: anywhere; }
+.generation-workspace .itinerary-stop-detail .itinerary-detail-category { margin: 0 0 3px; color: var(--color-accent-ink); font-size: 12px; font-weight: 700; }
+.generation-workspace .itinerary-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.generation-workspace .itinerary-preparation { border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
+.generation-workspace .itinerary-preparation > summary { min-height: 48px; padding: 13px 16px; color: var(--color-accent-ink); font-weight: 700; cursor: pointer; }
+.generation-workspace .itinerary-preparation[open] { padding: 0 13px 13px; }
+.generation-workspace .itinerary-preparation > summary:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.generation-workspace .itinerary-empty { padding: 28px 18px; border: 1px dashed var(--color-border); border-radius: var(--radius-control); color: var(--color-muted); text-align: center; }
+
+.generation-workspace .itinerary-map-wrap { display: grid; gap: 8px; min-width: 0; }
+.generation-workspace .itinerary-map { position: relative; min-width: 0; min-height: 365px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-page); isolation: isolate; }
+.generation-workspace .itinerary-map-grid { position: absolute; z-index: -1; inset: 0; background-image: linear-gradient(to right, rgb(90 125 109 / 9%) 1px, transparent 1px), linear-gradient(to bottom, rgb(90 125 109 / 9%) 1px, transparent 1px); background-position: center; background-size: 92px 92px; }
+.generation-workspace .itinerary-map-canvas { position: absolute; inset: 0; }
+.generation-workspace .itinerary-map-canvas.is-hidden { visibility: hidden; pointer-events: none; }
+.generation-workspace .itinerary-map-schematic { position: absolute; inset: 12% 7% 17%; }
+.generation-workspace .itinerary-map-path { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.generation-workspace .itinerary-map-path path { fill: none; stroke: var(--color-accent); stroke-width: 1.3px; stroke-dasharray: 2 1.3; vector-effect: non-scaling-stroke; }
+.generation-workspace .itinerary-map-node { position: absolute; z-index: 2; display: grid; place-items: center; width: clamp(38px, 4vw, 48px); height: clamp(38px, 4vw, 48px); padding: 0; transform: translate(-50%, -50%); border: 1.5px solid var(--color-accent-ink); border-radius: 50%; background: var(--color-surface); color: var(--color-accent-ink); font: inherit; font-size: 16px; font-weight: 750; cursor: pointer; box-shadow: 0 2px 8px rgb(30 54 43 / 10%); }
+.generation-workspace .itinerary-map-node.is-selected { background: var(--color-accent-ink); color: var(--color-surface); }
+.generation-workspace .itinerary-map-note { position: absolute; top: 13px; left: 14px; z-index: 3; padding: 7px 10px; border-radius: var(--radius-control); background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: 12px; font-weight: 700; }
+.generation-workspace .itinerary-map-selected { position: absolute; right: 14px; bottom: 14px; z-index: 4; display: flex; align-items: flex-start; gap: 9px; max-width: min(330px, calc(100% - 28px)); padding: 11px 13px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); box-shadow: 0 5px 16px rgb(35 45 23 / 8%); }
+.generation-workspace .itinerary-map-selected > span { display: grid; flex: none; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: var(--color-accent-ink); color: var(--color-surface); font-size: 12px; font-weight: 750; }
+.generation-workspace .itinerary-map-selected > div { display: grid; gap: 4px; min-width: 0; }
+.generation-workspace .itinerary-map-selected strong { overflow-wrap: anywhere; font-size: 13px; }
+.generation-workspace .itinerary-map-selected small { color: var(--color-muted); font-size: 11px; }
+.generation-workspace .itinerary-map-empty { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 5px; color: var(--color-muted); }
+.generation-workspace .itinerary-map-empty span { color: var(--color-accent); font-size: 38px; }
+.generation-workspace .itinerary-map-empty p { margin: 0; font-size: 13px; }
+.generation-workspace .itinerary-map-index { display: flex; gap: 7px; flex-wrap: wrap; }
+.generation-workspace .itinerary-map-index button { display: flex; align-items: center; gap: 6px; min-height: 38px; padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 20px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 12px; cursor: pointer; }
+.generation-workspace .itinerary-map-index button.is-selected { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.generation-workspace .itinerary-map-index button span { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: var(--color-accent-ink); color: var(--color-surface); font-weight: 700; }
+.generation-workspace .itinerary-map-marker { display: grid; place-items: center; width: 36px; height: 36px; border: 2px solid var(--color-accent-ink); border-radius: 50%; background: var(--color-surface); color: var(--color-accent-ink); font: inherit; font-weight: 750; cursor: pointer; box-shadow: 0 2px 8px rgb(30 54 43 / 18%); }
+.generation-workspace .itinerary-map-marker.is-selected { background: var(--color-accent-ink); color: var(--color-surface); }
+
+@media (max-width: 950px) {
+  .generation-workspace .itinerary-cost-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .generation-workspace .itinerary-course-layout { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 12px; }
+  .generation-workspace .itinerary-map { min-height: 330px; }
+  .generation-workspace .itinerary-stop-detail { grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
+}
+@media (max-width: 760px) {
+  .generation-workspace .itinerary-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .generation-workspace .itinerary-header-actions { justify-content: flex-start; }
+  .generation-workspace .itinerary-cost-strip { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .generation-workspace .itinerary-course-layout { grid-template-columns: minmax(0, 1fr); }
+  .generation-workspace .itinerary-map { min-height: 310px; }
+  .generation-workspace .itinerary-stop-detail { grid-template-columns: minmax(0, 1fr); }
+  .generation-workspace .itinerary-stop-photo { min-height: 85px; }
+  .generation-workspace .itinerary-controls { justify-content: stretch; }
+}

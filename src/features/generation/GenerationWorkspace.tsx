@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
+import Dialog from '../../components/ui/Dialog';
 import { getPersonal, PersonalApiError } from '../room/personalApi';
-import { GenerationError, createJob, getGeneration, getJob, getPlan, getSelfReview, normalizeSelf, putSelfReview, savePlan, saveSettings, searchPlaces, type Coordinate, type GenerationState, type Job, type Location, type Plan, type Place, type SelfDto, type Settings } from './generationApi';
-import { isValidWgs84, verifiedEdgeGeometry } from './mapUtils';
+import { GenerationError, createJob, getGeneration, getJob, getPlan, getSelfReview, normalizeSelf, putSelfReview, savePlan, saveSettings, searchPlaces, type GenerationState, type Job, type Plan, type Place, type SelfDto, type Settings } from './generationApi';
+import { isValidWgs84 } from './mapUtils';
+import { courseEdgesForPlaces, courseNodesForDay, resolveSelectedCourse, selectCourseDay, totalBudgetSummary } from './itineraryPresentation';
+import ResultMap from './ResultMap';
 import '../../styles/generation.css';
 
 declare global { interface Window { kakao?: any } }
-type Props = { tripId: string; conditionsVersion: number; isOwner: boolean; startDate: string; endDate: string; onAccessLost?: () => void };
+type Props = { tripId: string; tripName: string; conditionsVersion: number; expectedPeople: string; budget: string; transport: string; isOwner: boolean; startDate: string; endDate: string; onAccessLost?: () => void };
 type FieldKey = 'likes' | 'avoid' | 'food';
 const fieldName: Record<FieldKey, string> = { likes: '좋아하는 항목', avoid: '피하고 싶은 항목', food: '음식 조건' };
 const defaultSettings: Settings = { activityWindow: { start: '09:00', end: '18:00' }, departureAnchor: null, returnAnchor: null, reviewedCommonFields: [] };
@@ -101,58 +104,13 @@ export function PersonalReviewPanel({ tripId, conditionsVersion, onReviewed, onA
   </section>;
 }
 
-async function loadKakao(): Promise<any> {
-  if (window.kakao?.maps) return window.kakao;
-  const key = import.meta.env.VITE_KAKAO_JAVASCRIPT_KEY;
-  if (!key) throw new Error('지도 키가 설정되지 않아 목록으로 표시해요.');
-  const current = (window as any).__kakaoMapPromise as Promise<any> | undefined;
-  if (current) return current;
-  const promise = new Promise<any>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error('지도 응답이 지연되어 목록으로 표시해요.')), 15000); const script = document.createElement('script'); script.async = true;
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false`;
-    script.onload = () => { if (!window.kakao?.maps?.load) { window.clearTimeout(timer); reject(new Error('지도 초기화에 실패했어요. 목록으로 확인해 주세요.')); return; } window.kakao.maps.load(() => { window.clearTimeout(timer); resolve(window.kakao); }); };
-    script.onerror = () => { window.clearTimeout(timer); reject(new Error('지도를 불러오지 못했어요. 목록으로 확인해 주세요.')); };
-    document.head.appendChild(script);
-  });
-  (window as any).__kakaoMapPromise = promise;
-  try { return await promise; } catch (error) { (window as any).__kakaoMapPromise = undefined; throw error; }
-}
-
-function ResultMap({ plan, selectedId, onSelect, pickTarget, onPick }: { plan: Plan | null; selectedId?: string | null; onSelect: (id: string) => void; pickTarget: 'departureAnchor' | 'returnAnchor' | null; onPick: (coordinate: Coordinate) => void }) {
-  const host = useRef<HTMLDivElement>(null); const map = useRef<any>(null); const markers = useRef<any[]>([]); const lines = useRef<any[]>([]); const listeners = useRef<Array<{ target: any; type: string; handler: any }>>([]);
-  const [mapMessage, setMapMessage] = useState('');
-  useEffect(() => {
-    let alive = true;
-    void loadKakao().then((sdk) => {
-      if (!alive || !host.current) return;
-      const mapNodes = plan?.document.days.flatMap((d) => d.nodes) ?? []; const center = (mapNodes.find((n) => n.id === selectedId && isValidWgs84(n.coordinate)) ?? mapNodes.find((n) => isValidWgs84(n.coordinate)))?.coordinate;
-      const centerCoord = center ?? { latitude: 36.991, longitude: 127.925, crs: 'WGS84' as const };
-      const kakaoMap = new sdk.maps.Map(host.current, { center: new sdk.maps.LatLng(centerCoord.latitude, centerCoord.longitude), level: center ? 8 : 12 }); map.current = kakaoMap;
-      const clickHandler = (event: any) => { if (pickTarget) { const latlng = event.latLng; onPick({ latitude: latlng.getLat(), longitude: latlng.getLng(), crs: 'WGS84' }); } };
-      sdk.maps.event.addListener(kakaoMap, 'click', clickHandler); listeners.current.push({ target: kakaoMap, type: 'click', handler: clickHandler });
-      const allNodes = plan?.document.days.flatMap((day) => day.nodes) ?? [];
-      for (const node of allNodes) if (isValidWgs84(node.coordinate)) {
-        const marker = new sdk.maps.Marker({ map: kakaoMap, position: new sdk.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude), title: node.title, zIndex: node.id === selectedId ? 100 : 0 });
-        markers.current.push(marker);
-        const click = () => { onSelect(node.id); const content = document.createElement('div'); content.className = 'map-info-title'; content.textContent = node.title; const info = new sdk.maps.InfoWindow({ content }); info.open(kakaoMap, marker); };
-        sdk.maps.event.addListener(marker, 'click', click); listeners.current.push({ target: marker, type: 'click', handler: click });
-      }
-      for (const edge of plan?.document.days.flatMap((day) => day.edges) ?? []) { const geometry = verifiedEdgeGeometry(edge); if (!geometry) continue;
-        const line = new sdk.maps.Polyline({ map: kakaoMap, path: geometry.map((point) => new sdk.maps.LatLng(point.latitude, point.longitude)), strokeWeight: 4, strokeColor: '#719222', strokeOpacity: .8, strokeStyle: 'solid' }); lines.current.push(line);
-      }
-      setMapMessage(pickTarget ? '지도를 눌러 좌표를 선택해 주세요.' : '장소 표시를 선택하면 목록과 상세 선택이 함께 바뀌어요.');
-    }).catch((error: unknown) => { if (alive) setMapMessage(errorText(error)); });
-    return () => { alive = false; const sdk = window.kakao; for (const item of listeners.current) sdk?.maps?.event.removeListener(item.target, item.type, item.handler); listeners.current = []; for (const marker of markers.current) marker.setMap(null); markers.current = []; for (const line of lines.current) line.setMap(null); lines.current = []; map.current = null; };
-  }, [onPick, onSelect, pickTarget, plan, selectedId]);
-  return <div className="result-map-wrap"><div className="result-map" ref={host} role="region" aria-label="여행 일정 지도" /><p className="map-note" role="status">{mapMessage}</p></div>;
-}
-
-export default function GenerationWorkspace({ tripId, conditionsVersion, isOwner, startDate, endDate, onAccessLost }: Props) {
+export default function GenerationWorkspace({ tripId, tripName, conditionsVersion, expectedPeople, budget, transport, isOwner, startDate, endDate, onAccessLost }: Props) {
   const [data, setData] = useState<GenerationState | null>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
   const [settings, setSettings] = useState<Settings>(defaultSettings); const [settingsChanged, setSettingsChanged] = useState(false);
   const settingsChangedRef = useRef(false);
   const markSettingsChanged = () => { settingsChangedRef.current = true; setSettingsChanged(true); };
-  const [plan, setPlan] = useState<Plan | null>(null); const [job, setJob] = useState<Job | null>(null); const [query, setQuery] = useState(''); const [places, setPlaces] = useState<Place[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [pickTarget, setPickTarget] = useState<'departureAnchor' | 'returnAnchor' | null>(null); const [ackUnverified, setAckUnverified] = useState(false); const [view, setView] = useState<'list' | 'map'>('list');
+  const [plan, setPlan] = useState<Plan | null>(null); const [job, setJob] = useState<Job | null>(null); const [query, setQuery] = useState(''); const [places, setPlaces] = useState<Place[]>([]); const [selectedId, setSelectedId] = useState<string | null>(null); const [ackUnverified, setAckUnverified] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [validationOpen, setValidationOpen] = useState(false); const [activeDate, setActiveDate] = useState<string | null>(null);
+  const changeSelection = useCallback((id: string) => setSelectedId(id), []);
   const epoch = useRef(0); const actionEpoch = useRef(0); const ctrl = useRef<AbortController | null>(null); const jobKey = useRef<string | null>(null); const lock = useRef(false);
   const pollEpoch = useRef(0); const pollController = useRef<AbortController | null>(null); const pollLock = useRef(false);
   const searchEpoch = useRef(0); const searchController = useRef<AbortController | null>(null);
@@ -162,7 +120,7 @@ export default function GenerationWorkspace({ tripId, conditionsVersion, isOwner
     ctrl.current?.abort(); ctrl.current = null; pollController.current?.abort(); pollController.current = null; searchController.current?.abort(); searchController.current = null; searchEpoch.current += 1;
     lock.current = false; pollLock.current = false; jobKey.current = null;
     settingsChangedRef.current = false; setBusy(false); setLoading(false); setData(null); setPlan(null); setJob(null);
-    setSettings(defaultSettings); setSettingsChanged(false); setPlaces([]); setQuery(''); setPickTarget(null); setMessage('');
+    setSettings(defaultSettings); setSettingsChanged(false); setPlaces([]); setQuery(''); setMessage('');
     onAccessLostRef.current?.();
   }, []);
   const reload = useCallback(async () => {
@@ -202,7 +160,6 @@ export default function GenerationWorkspace({ tripId, conditionsVersion, isOwner
     timer = window.setInterval(() => void poll(), 2200); void poll();
     return () => { stop(); pollEpoch.current += 1; pollLock.current = false; };
   }, [clearPrivateState, job?.id, job?.status, reload, tripId]);
-  const updateAnchor = (key: 'departureAnchor' | 'returnAnchor', value: Location | null) => setSettings((current) => ({ ...current, [key]: value }));
   const updateLocation = (key: 'departureAnchor' | 'returnAnchor', field: 'label' | 'latitude' | 'longitude', value: string) => setSettings((current) => { const old = current[key] ?? { label: '', coordinate: { latitude: Number.NaN, longitude: Number.NaN, crs: 'WGS84' as const } }; const next = field === 'label' ? { ...old, label: value } : { ...old, coordinate: { ...old.coordinate, [field]: value === '' ? Number.NaN : Number(value) } }; return { ...current, [key]: next }; });
   const runSearch = async () => { if (!query.trim()) { setPlaces([]); return; } searchController.current?.abort(); const own = ++searchEpoch.current; const ac = new AbortController(); searchController.current = ac; try { const result = await searchPlaces(tripId, query.trim(), ac.signal); if (own === searchEpoch.current) { setPlaces(result.places); setMessage(''); } } catch (error) { if (own === searchEpoch.current && !ac.signal.aborted) { if (isAccessLost(error)) clearPrivateState(); else setMessage(errorText(error)); } } };
   const setCommonAnchor = (field: 'lodging' | 'fixedSchedule', place: Place) => {
@@ -225,45 +182,102 @@ export default function GenerationWorkspace({ tripId, conditionsVersion, isOwner
     finally { if (own === actionEpoch.current) { lock.current = false; setBusy(false); } }
   };
   const saveCurrentPlan = async () => { if (!plan || !plan.canSave || lock.current) return; lock.current = true; setBusy(true); const own = ++actionEpoch.current; const ac = new AbortController(); ctrl.current?.abort(); ctrl.current = ac; try { const saved = await savePlan(tripId, plan, ackUnverified, ac.signal); if (own !== actionEpoch.current || ac.signal.aborted) return; setPlan(saved); setMessage('일정을 저장했어요.'); void reload(); } catch (error) { if (own === actionEpoch.current && !ac.signal.aborted) { if (isAccessLost(error)) clearPrivateState(); else { setMessage(errorText(error)); if (error instanceof GenerationError && error.status === 409) void reload(); } } } finally { if (own === actionEpoch.current) { lock.current = false; setBusy(false); } } };
-  const acceptMapCoordinate = useCallback((coordinate: Coordinate) => { if (!pickTarget) return; const key = pickTarget; setSettings((current) => ({ ...current, [key]: { label: current[key]?.label ?? (key === 'departureAnchor' ? '출발 위치' : '복귀 위치'), coordinate } })); setPickTarget(null); markSettingsChanged(); }, [pickTarget]);
-  const selectNode = useCallback((id: string) => setSelectedId(id), []);
-  const selected = useMemo(() => plan?.document.days.flatMap((day) => day.nodes).find((node) => node.id === selectedId) ?? null, [plan, selectedId]);
+  const activeDay = useMemo(() => selectCourseDay(plan?.document.days ?? [], activeDate), [activeDate, plan]);
+  const courseNodes = useMemo(() => courseNodesForDay(activeDay), [activeDay]);
+  const courseEdges = useMemo(() => courseEdgesForPlaces(activeDay, courseNodes), [activeDay, courseNodes]);
+  const selected = useMemo(() => resolveSelectedCourse(courseNodes, selectedId), [courseNodes, selectedId]);
   const reasons = data?.reasons.map((reason) => reason.code) ?? [];
+  const displayTransport = ({ car: '자가용', transit: '대중교통', charter: '전세버스', walk: '도보', undecided: '이동수단 미정' } as Record<string, string>)[transport] ?? (transport || '이동수단 미정');
+  const expectedPeopleLabel = expectedPeople ? `${expectedPeople}명` : '인원 미정';
+  const budgetValue = /^\d+$/u.test(budget) ? Number(budget) : null;
+  const costSummary = plan ? totalBudgetSummary(plan.document.validation.totalCostKrw, budgetValue) : null;
+  const costAmount = costSummary?.amount === null || costSummary?.amount === undefined ? costSummary?.label : `${costSummary.label} ${costSummary.amount.toLocaleString('ko-KR')}원`;
+  const costRemainder = costSummary?.remainder === null || costSummary?.remainder === undefined ? budgetValue === null ? '예산 미정' : `예산 ${budgetValue.toLocaleString('ko-KR')}원 / 잔액 확인 필요` : costSummary.remainder >= 0 ? `예산 ${budgetValue!.toLocaleString('ko-KR')}원 / ${costSummary.remainder.toLocaleString('ko-KR')}원 여유` : `예산 ${budgetValue!.toLocaleString('ko-KR')}원 / ${Math.abs(costSummary.remainder).toLocaleString('ko-KR')}원 초과`;
+  const resultDateSummary = plan?.document.days.length ? `${plan.document.days[0].date.replaceAll('-', '.')} – ${plan.document.days.at(-1)!.date.replaceAll('-', '.')}` : startDate && endDate ? `${startDate.replaceAll('-', '.')} – ${endDate.replaceAll('-', '.')}` : '여행 날짜 미정';
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const validationButtonRef = useRef<HTMLButtonElement>(null);
+  const preparationRef = useRef<HTMLDetailsElement>(null);
+  const preparationSummaryRef = useRef<HTMLElement>(null);
   useEffect(() => { titleRef.current?.focus(); window.scrollTo({ top: 0, behavior: 'auto' }); }, []);
+  function changeDay(date: string) {
+    const day = selectCourseDay(plan?.document.days ?? [], date);
+    setActiveDate(day?.date ?? null);
+    const firstCourse = resolveSelectedCourse(courseNodesForDay(day), null);
+    setSelectedId(firstCourse?.id ?? null);
+  }
+
+  function openSettings() {
+    setSettingsOpen(true);
+    requestAnimationFrame(() => {
+      preparationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      preparationSummaryRef.current?.focus();
+    });
+  }
+
   return <div className="generation-workspace">
-    <header className="generation-page-title"><div><p className="room-eyebrow">03 GENERATE</p><h1 ref={titleRef} tabIndex={-1}>함께 만드는 여행 일정</h1><p>모두의 검토 결과와 장소 정보를 바탕으로 초안을 만들어요.</p></div>{data && <span className={`generation-status ${data.readyForGeneration ? 'is-ready' : ''}`}>{data.readyForGeneration ? '생성 준비 완료' : '검토가 필요해요'}</span>}</header>
+    <header className="itinerary-header">
+      <div className="itinerary-heading-copy"><p className="room-eyebrow">03 ITINERARY</p><h1 ref={titleRef} tabIndex={-1}>{tripName || '함께 만드는 여행 일정'}</h1><p>{resultDateSummary} · {expectedPeopleLabel} · {displayTransport}</p></div>
+      <div className="itinerary-header-actions">
+        {plan && <span className={`generation-status ${plan.stale ? 'is-stale' : plan.status === 'SAVED' ? 'is-ready' : ''}`}>{plan.status === 'SAVED' && plan.versionNo !== null ? `v${plan.versionNo}` : '초안'} · {plan.stale ? '재확인 필요' : plan.status === 'SAVED' ? '저장됨' : '저장 전'}</span>}
+        <Button variant="secondary" disabled title="변경 이력 화면은 준비 중이에요.">변경 이력</Button>
+        <Button variant="primary" onClick={openSettings}>일정 설정</Button>
+      </div>
+    </header>
     {loading && <p role="status">생성 설정과 최신 일정을 불러오고 있어요.</p>}
     {message && <p className="generation-message" role="status">{message}</p>}
-    {data && <>
-      <section className="generation-card"><div className="generation-card-heading"><div><h2>개인·공통 조건 검토</h2><p>개인 검토 내용은 본인에게만 표시되고 다른 사람의 원문은 공개하지 않아요.</p></div><Button variant="secondary" onClick={() => void reload()} disabled={loading}>새로고침</Button></div>
-        <div className="review-members">{data.reviewMembers.map((member) => <span key={member.id} className={`review-member status-${member.status}`}>{member.nickname} · {member.status === 'reviewed' ? '조건 검토 완료' : member.status === 'stale' ? '다시 확인 필요' : '검토 필요'}</span>)}</div>
-        {reasons.length > 0 && <ul className="generation-reasons">{reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reasonLabel(reason)}</li>)}</ul>}
-      </section>
-      <PersonalReviewPanel tripId={tripId} conditionsVersion={conditionsVersion} onReviewed={() => void reload()} onAccessLost={onAccessLost} />
-      <section className="generation-card"><div className="generation-card-heading"><div><h2>일정 생성 설정</h2><p>장소 좌표는 WGS84 좌표를 입력하거나 지도 선택 모드에서 직접 지정해요.</p></div><span className="generation-setting-version">공통 조건 v{data.conditionsVersion} · 설정 v{data.settingsVersion}</span></div>
-        <div className="generation-settings-grid"><Input id="activity-start" label="활동 시작 시간" type="time" value={settings.activityWindow.start} onChange={(e) => { setSettings((s) => ({ ...s, activityWindow: { ...s.activityWindow, start: e.target.value } })); markSettingsChanged(); }} /><Input id="activity-end" label="활동 종료 시간" type="time" value={settings.activityWindow.end} onChange={(e) => { setSettings((s) => ({ ...s, activityWindow: { ...s.activityWindow, end: e.target.value } })); markSettingsChanged(); }} />
-        {(['departureAnchor', 'returnAnchor'] as const).map((key) => <fieldset className="location-editor" key={key}><legend>{key === 'departureAnchor' ? '출발 위치' : '복귀 위치'}</legend><Input id={`${key}-label`} label="표시 이름" value={settings[key]?.label ?? ''} onChange={(e) => { updateLocation(key, 'label', e.target.value); markSettingsChanged(); }} maxLength={100} /><div className="coordinate-inputs"><Input id={`${key}-lat`} label="위도" type="number" min={-90} max={90} step="any" value={settings[key]?.coordinate.latitude ?? ''} onChange={(e) => { updateLocation(key, 'latitude', e.target.value); markSettingsChanged(); }} /><Input id={`${key}-lng`} label="경도" type="number" min={-180} max={180} step="any" value={settings[key]?.coordinate.longitude ?? ''} onChange={(e) => { updateLocation(key, 'longitude', e.target.value); markSettingsChanged(); }} /></div><div className="location-actions"><Button variant="secondary" onClick={() => { setPickTarget(key); setView('map'); }}>지도에서 위치 선택</Button>{settings[key] && <Button variant="secondary" onClick={() => { updateAnchor(key, null); markSettingsChanged(); }}>위치 지우기</Button>}</div>{settings[key] && !isValidWgs84(settings[key]?.coordinate) && <small className="is-error">좌표는 위도 -90~90, 경도 -180~180으로 입력해 주세요.</small>}</fieldset>)}
+    {!data && !loading && message && <Button variant="secondary" onClick={() => void reload()}>일정 정보를 다시 불러오기</Button>}
+
+    {plan && <section className="itinerary-cost-strip" aria-label="여행 예상 비용">
+      <strong>{costAmount}</strong><span className={costSummary?.remainder != null && costSummary.remainder < 0 ? 'is-cost-over-budget' : costSummary?.remainder == null ? 'is-cost-unknown' : undefined}>{costRemainder}</span>
+      <span className={plan.document.validation.status === 'verified' ? undefined : 'is-cost-unknown'}>{plan.document.validation.status === 'verified' ? '일정 검사 완료' : plan.document.validation.status === 'violated' ? '해결할 일정 문제가 있어요' : '일부 정보 확인 필요'}</span>
+      <button ref={validationButtonRef} type="button" className="btn btn-secondary" onClick={() => setValidationOpen(true)}>검사 내역</button>
+    </section>}
+
+    {job && !plan && <section className="generation-card" aria-live="polite"><h2>{job.status === 'QUEUED' ? '일정 생성 대기 중' : job.status === 'RUNNING' ? '여행 코스를 만들고 있어요' : job.status === 'STALE' ? '조건이 바뀌어 다시 확인이 필요해요' : '일정 초안을 만들지 못했어요'}</h2><p>{job.status === 'FAILED' ? '일정 준비·설정에서 다시 시도해 주세요.' : '완료되면 이 화면에 여행 코스가 표시돼요.'}</p><Button variant="secondary" onClick={() => void reload()} disabled={loading}>상태 새로고침</Button></section>}
+
+    {plan && <section className="generation-card itinerary-result-card" aria-labelledby="course-heading">
+      <div className="itinerary-result-header"><div><h2 id="course-heading">여행 코스</h2><p>방문할 장소를 날짜별로 확인해 보세요.</p></div><div className="generation-actions"><Button variant="secondary" disabled title="코스 직접 수정은 준비 중이에요.">일정 수정</Button>{plan.status === 'SAVED' && <span className="saved-plan-note">저장된 일정 · 버전 {plan.versionNo ?? 1}{plan.stale ? ' · 현재 조건과 달라 다시 확인해 주세요.' : ''}</span>}</div></div>
+      <div className="itinerary-course-layout">
+        <div className="itinerary-days">
+        {plan.document.days.length > 0 && <div className="itinerary-day-tabs" role="group" aria-label="여행 날짜">
+          {plan.document.days.map((day, index) => <button key={day.date} type="button" aria-pressed={day.date === activeDay?.date} onClick={() => changeDay(day.date)}>{index + 1}일차 · {day.date.slice(5).replace('-', '/')}</button>)}
+        </div>}
+          {activeDay && <section className="itinerary-day"><h3>{(plan.document.days.findIndex((day) => day.date === activeDay.date) + 1)}일차 · {activeDay.date.slice(5).replace('-', '/')}</h3><p>{courseNodes.length ? `여행 코스 ${courseNodes.length}곳` : '아직 등록된 여행 코스가 없어요.'}</p>
+              {courseNodes.length > 0 ? <ol className="itinerary-stops">{courseNodes.map((node, index) => <li key={node.id}>
+                <button type="button" className={`itinerary-stop ${node.id === selected?.id ? 'is-selected' : ''}`} aria-pressed={node.id === selected?.id} aria-controls="selected-course-detail" onClick={() => changeSelection(node.id)}>
+                  <time>{node.estimatedStartAt ? new Date(node.estimatedStartAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }) : '시간 미정'}</time><span className="itinerary-stop-copy"><strong>{node.title}</strong><small>{node.stayMinutes ? `${node.stayMinutes}분` : '체류 시간 미정'}{node.estimatedCostKrw === null ? ' · 비용 미정' : ` · ${node.estimatedCostKrw.toLocaleString('ko-KR')}원`}</small></span>
+                </button>{index < courseNodes.length - 1 && <div className="itinerary-stop-connector" aria-hidden="true">↓ 이동 정보 확인 필요</div>}
+              </li>)}</ol> : <p className="itinerary-empty">이 날짜에는 표시할 여행 장소가 없어요.</p>}
+          </section>}
+            {!activeDay && <p className="itinerary-empty">표시할 여행 일정이 없어요.</p>}
         </div>
-        <div className="catalog-search"><h3>숙박·고정 일정 장소 확인</h3><p>검색된 장소만 일정 기준점으로 추가할 수 있어요.</p><div className="catalog-search-row"><Input id="catalog-query" label="장소 검색" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="장소명 또는 주소" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void runSearch(); } }} /><Button variant="secondary" onClick={() => void runSearch()}>장소 검색</Button></div>
-          {places.length > 0 && <ul className="catalog-place-list">{places.map((place) => <li key={place.contentid}><span><strong>{place.title}</strong><small>{place.address} · {place.planningRole}</small></span><Button variant="secondary" onClick={() => { setCommonAnchor('lodging', place); markSettingsChanged(); }}>숙박 기준점</Button><Button variant="secondary" onClick={() => { setCommonAnchor('fixedSchedule', place); markSettingsChanged(); }}>고정 일정 기준점</Button></li>)}</ul>}
-        </div>
-        {settings.reviewedCommonFields.map((review) => <section className="common-anchor-summary" key={review.field}><h4>{review.field === 'lodging' ? '숙박 기준점' : '고정 일정 기준점'}</h4><ol>{review.anchors.map((anchor, index) => <li key={`${anchor.contentid}-${anchor.date}-${index}`}><span>장소 ID {anchor.contentid}</span><div className="anchor-fields"><label>날짜<input className="text-input" type="date" value={anchor.date} onChange={(event) => { setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, n) => n === index ? { ...item, date: event.target.value } : item) } : field) })); markSettingsChanged(); }} /></label><label>순서<input className="text-input" type="number" min={1} max={8} value={anchor.position + 1} onChange={(event) => { const position = Math.max(0, Math.min(7, Number(event.target.value) - 1)); setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, n) => n === index ? { ...item, position } : item) } : field) })); markSettingsChanged(); }} /></label><label>시작 시간<input className="text-input" type="time" value={anchor.startTime ?? ''} onChange={(event) => { setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, n) => n === index ? { ...item, startTime: event.target.value || null } : item) } : field) })); markSettingsChanged(); }} /></label><label>종료 시간<input className="text-input" type="time" value={anchor.endTime ?? ''} onChange={(event) => { setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, n) => n === index ? { ...item, endTime: event.target.value || null } : item) } : field) })); markSettingsChanged(); }} /></label><label>도착 마감<input className="text-input" type="time" value={anchor.arrivalDeadline ?? ''} onChange={(event) => { setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, n) => n === index ? { ...item, arrivalDeadline: event.target.value || null } : item) } : field) })); markSettingsChanged(); }} /></label><label>체류 분<input className="text-input" type="number" min={1} max={1440} value={anchor.stayMinutes ?? ''} onChange={(event) => { setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, n) => n === index ? { ...item, stayMinutes: event.target.value ? Number(event.target.value) : null } : item) } : field) })); markSettingsChanged(); }} /></label></div><Button variant="secondary" onClick={() => { setSettings((s) => ({ ...s, reviewedCommonFields: s.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.filter((_, n) => n !== index).map((a, n) => ({ ...a, position: n })) } : field).filter((field) => field.anchors.length > 0) })); markSettingsChanged(); }}>삭제</Button></li>)}</ol></section>)}
-        {isOwner && <div className="generation-actions"><Button variant="secondary" onClick={() => void saveConfig()} disabled={!settingsChanged || busy}>설정 저장</Button><Button onClick={() => void startGeneration()} disabled={!data.readyForGeneration || busy || settingsChanged}>{busy ? '처리 중…' : '일정 초안 만들기'}</Button>{settingsChanged && <small>변경한 설정을 먼저 저장해 주세요.</small>}</div>}
-      </section>
-      {pickTarget && !job && !plan && <section className="generation-card"><h2>지도에서 위치 선택</h2><p>선택한 장소의 위치를 지도에서 직접 지정해 주세요.</p><ResultMap plan={null} onSelect={selectNode} pickTarget={pickTarget} onPick={acceptMapCoordinate} /></section>}
-      {(job || plan) && <section className="generation-card"><div className="generation-card-heading"><div><h2>공동 일정</h2><p>방 참여자가 함께 볼 수 있는 일정 결과예요. 개인 원문이나 해석 근거는 포함하지 않아요.</p></div><div className="result-view-toggle"><Button variant={view === 'list' ? 'primary' : 'secondary'} onClick={() => setView('list')}>목록</Button><Button variant={view === 'map' ? 'primary' : 'secondary'} onClick={() => setView('map')}>지도</Button></div></div>
-        {job && <p className="job-state" role="status">{job.status === 'QUEUED' ? '생성 대기 중' : job.status === 'RUNNING' ? `일정 ${job.phase === 'generating' ? '작성 중' : '확인 중'}` : job.status === 'SUCCEEDED' ? '일정 생성 완료' : job.status === 'STALE' ? '조건이 바뀌어 생성 결과가 오래되었어요' : '생성을 완료하지 못했어요.'}</p>}
-        {plan && <><div className={`validation-summary status-${plan.document.validation.status}`}><strong>{plan.document.validation.status === 'verified' ? '경로와 일정 확인 완료' : plan.document.validation.status === 'violated' ? '해결해야 할 일정 위반' : '확인이 필요한 항목 있음'}</strong><span>예상 합계 {plan.document.validation.totalCostKrw === null ? '알 수 없음' : `${plan.document.validation.totalCostKrw.toLocaleString('ko-KR')}원`} · 확인된 금액 {plan.document.validation.knownCostKrw.toLocaleString('ko-KR')}원</span></div>
-          {plan.document.validation.violations.length > 0 && <div className="validation-issues"><h3>저장 전에 해결해 주세요</h3><ul>{plan.document.validation.violations.map((v, i) => <li key={`${v.code}-${i}`}>{v.date ? `${v.date} · ` : ''}{validationLabel(v.code)}</li>)}</ul></div>}
-          <div className={`result-layout ${view === 'list' ? 'list-only' : ''}`}><div className={`result-days ${view === 'map' ? 'mobile-map-list' : ''}`}>{plan.document.days.map((day) => <section key={day.date} className="result-day"><h3>{day.date}</h3><ol>{day.nodes.map((node) => <li key={node.id}><button type="button" className={`result-node ${selectedId === node.id ? 'is-selected' : ''}`} aria-pressed={selectedId === node.id} onClick={() => setSelectedId(node.id)}><span className="node-kind">{node.kind === 'START' ? '출발' : node.kind === 'END' ? '복귀' : '장소'}</span><strong>{node.title}</strong><small>{node.estimatedStartAt ? new Date(node.estimatedStartAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }) : '시간 미정'}{node.stayMinutes ? ` · ${node.stayMinutes}분` : ''}{node.estimatedCostKrw === null ? '' : ` · ${node.estimatedCostKrw.toLocaleString('ko-KR')}원`}</small></button></li>)}</ol></section>)}
-            {selected && <section className="node-detail"><h3>선택한 일정</h3><strong>{selected.title}</strong><p>{selected.kind} · {selected.feeLabel || '비용 정보 없음'}</p>{selected.openingHoursText && <p>영업시간 {selected.openingHoursText}</p>}{selected.coordinate && isValidWgs84(selected.coordinate) && <p>위도 {selected.coordinate.latitude}, 경도 {selected.coordinate.longitude}</p>}</section>}
-          </div><div className={`result-map-pane ${view === 'list' ? 'mobile-hidden-map' : ''}`}>{view === 'map' && <ResultMap plan={plan} selectedId={selectedId} onSelect={selectNode} pickTarget={pickTarget} onPick={acceptMapCoordinate} />}</div></div>
-          {plan.document.validation.warnings.length > 0 && <details className="validation-warnings"><summary>확인되지 않은 항목 {plan.document.validation.warnings.length}개</summary><ul>{plan.document.validation.warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warningLabel(warning)}</li>)}</ul></details>}
-          {isOwner && plan.status === 'DRAFT' && <div className="generation-actions plan-save"><label className="ack-checkbox"><input type="checkbox" checked={ackUnverified} onChange={(e) => setAckUnverified(e.target.checked)} /> 검증되지 않은 항목을 확인했고 이 초안을 저장할게요.</label><Button onClick={() => void saveCurrentPlan()} disabled={busy || !plan.canSave || (plan.document.validation.warnings.length > 0 && !ackUnverified) || plan.document.validation.violations.length > 0}>일정 저장</Button><small>{plan.stale ? '조건이 변경되어 이 일정은 오래된 상태예요.' : plan.document.validation.violations.length ? '일정 위반이 해결되어야 저장할 수 있어요.' : '방장이 확인 후 직접 저장해요.'}</small></div>}
-          {plan.status === 'SAVED' && <p className="saved-plan-note">저장된 일정 · 버전 {plan.versionNo ?? 1}{plan.stale ? ' · 현재 조건과 달라 오래된 일정' : ''}</p>}
-        </>}
-      </section>}
-    </>}
+        <div className="itinerary-course-side">{activeDay && <ResultMap nodes={courseNodes} edges={courseEdges} selectedId={selected?.id ?? null} onSelect={changeSelection} />}
+            {selected && <section className="itinerary-stop-detail" id="selected-course-detail" aria-labelledby="selected-course-heading"><div className="itinerary-stop-photo" aria-hidden="true">장소 정보</div><div><p className="room-eyebrow">{courseNodes.findIndex((node) => node.id === selected.id) + 1}번째 코스</p><h3 id="selected-course-heading">{selected.title}</h3><p>{selected.estimatedStartAt ? new Date(selected.estimatedStartAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' }) : '시간 미정'} · 체류 {selected.stayMinutes ? `${selected.stayMinutes}분` : '시간 미정'}</p><p>{selected.feeLabel || '장소 비용 정보가 없어요.'}</p>{selected.openingHoursText && <p>영업시간 {selected.openingHoursText}</p>}</div></section>}
+      </div>
+      </div>
+      {isOwner && plan.status === 'DRAFT' && <div className="generation-actions plan-save"><label className="ack-checkbox"><input type="checkbox" checked={ackUnverified} onChange={(event) => setAckUnverified(event.target.checked)} /> 검증되지 않은 항목을 확인했고 이 초안을 저장할게요.</label><Button onClick={() => void saveCurrentPlan()} disabled={busy || !plan.canSave || (plan.document.validation.warnings.length > 0 && !ackUnverified) || plan.document.validation.violations.length > 0}>일정 저장</Button><small>{plan.stale ? '조건이 변경되어 이 일정은 오래된 상태예요.' : plan.document.validation.violations.length ? '일정 위반이 해결되어야 저장할 수 있어요.' : '방장이 확인 후 직접 저장해요.'}</small></div>}
+    </section>}
+
+    <details ref={preparationRef} className="itinerary-preparation" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
+      <summary ref={preparationSummaryRef}>일정 준비·설정 {data && `· 공통 조건 v${data.conditionsVersion} / 설정 v${data.settingsVersion}`}</summary>
+      {data && <>
+        <section className="generation-card"><div className="generation-card-heading"><div><h2>참여자 조건 검토</h2><p>개인 원문은 본인에게만 표시돼요.</p></div><Button variant="secondary" onClick={() => void reload()} disabled={loading}>새로고침</Button></div><div className="review-members">{data.reviewMembers.map((member) => <span key={member.id} className={`review-member status-${member.status}`}>{member.nickname} · {member.status === 'reviewed' ? '조건 검토 완료' : member.status === 'stale' ? '다시 확인 필요' : '검토 필요'}</span>)}</div>{reasons.length > 0 && <ul className="generation-reasons">{reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reasonLabel(reason)}</li>)}</ul>}</section>
+        <PersonalReviewPanel tripId={tripId} conditionsVersion={conditionsVersion} onReviewed={() => void reload()} onAccessLost={onAccessLost} />
+        <section className="generation-card"><div className="generation-card-heading"><div><h2>여행 코스 생성 조건</h2><p>활동 시간과 복귀 기준, 숙박·고정 일정을 확인해 주세요.</p></div><span className="generation-setting-version">공통 조건 v{data.conditionsVersion} · 설정 v{data.settingsVersion}</span></div>
+          <div className="generation-settings-grid"><Input id="activity-start" label="활동 시작 시간" type="time" value={settings.activityWindow.start} onChange={(event) => { setSettings((current) => ({ ...current, activityWindow: { ...current.activityWindow, start: event.target.value } })); markSettingsChanged(); }} /><Input id="activity-end" label="활동 종료 시간" type="time" value={settings.activityWindow.end} onChange={(event) => { setSettings((current) => ({ ...current, activityWindow: { ...current.activityWindow, end: event.target.value } })); markSettingsChanged(); }} />
+            <fieldset className="location-editor"><legend>복귀 위치 (생성 기준)</legend><Input id="returnAnchor-label" label="표시 이름" value={settings.returnAnchor?.label ?? ''} onChange={(event) => { updateLocation('returnAnchor', 'label', event.target.value); markSettingsChanged(); }} maxLength={100} /><div className="coordinate-inputs"><Input id="returnAnchor-lat" label="위도" type="number" min={-90} max={90} step="any" value={settings.returnAnchor?.coordinate.latitude ?? ''} onChange={(event) => { updateLocation('returnAnchor', 'latitude', event.target.value); markSettingsChanged(); }} /><Input id="returnAnchor-lng" label="경도" type="number" min={-180} max={180} step="any" value={settings.returnAnchor?.coordinate.longitude ?? ''} onChange={(event) => { updateLocation('returnAnchor', 'longitude', event.target.value); markSettingsChanged(); }} /></div></fieldset>
+          </div>
+          <div className="catalog-search"><h3>숙박·고정 일정 장소 확인</h3><p>검색한 장소를 일정 기준점으로 검토할 수 있어요.</p><div className="catalog-search-row"><Input id="catalog-query" label="장소 검색" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="장소명 또는 주소" onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void runSearch(); } }} /><Button variant="secondary" onClick={() => void runSearch()} disabled={busy}>장소 검색</Button></div>
+            {places.length > 0 && <ul className="catalog-place-list">{places.map((place) => <li key={place.contentid}><span><strong>{place.title}</strong><small>{place.address} · {place.planningRole}</small></span><Button variant="secondary" onClick={() => { setCommonAnchor('lodging', place); markSettingsChanged(); }}>숙박 기준점</Button><Button variant="secondary" onClick={() => { setCommonAnchor('fixedSchedule', place); markSettingsChanged(); }}>고정 일정 기준점</Button></li>)}</ul>}
+          </div>
+            {settings.reviewedCommonFields.map((review) => <section className="common-anchor-summary" key={review.field}><h3>{review.field === 'lodging' ? '숙박 기준점' : '고정 일정 기준점'}</h3><ol>{review.anchors.map((anchor, index) => <li key={`${anchor.contentid}-${anchor.date}-${index}`}><span>장소 ID {anchor.contentid}</span><div className="anchor-fields"><label>날짜<input className="text-input" type="date" value={anchor.date} onChange={(event) => { setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, position) => position === index ? { ...item, date: event.target.value } : item) } : field) })); markSettingsChanged(); }} /></label><label>순서<input className="text-input" type="number" min={1} max={8} value={anchor.position + 1} onChange={(event) => { const position = Math.max(0, Math.min(7, Number(event.target.value) - 1)); setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, slot) => slot === index ? { ...item, position } : item) } : field) })); markSettingsChanged(); }} /></label><label>시작 시간<input className="text-input" type="time" value={anchor.startTime ?? ''} onChange={(event) => { setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, slot) => slot === index ? { ...item, startTime: event.target.value || null } : item) } : field) })); markSettingsChanged(); }} /></label><label>종료 시간<input className="text-input" type="time" value={anchor.endTime ?? ''} onChange={(event) => { setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, slot) => slot === index ? { ...item, endTime: event.target.value || null } : item) } : field) })); markSettingsChanged(); }} /></label><label>도착 마감<input className="text-input" type="time" value={anchor.arrivalDeadline ?? ''} onChange={(event) => { setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, slot) => slot === index ? { ...item, arrivalDeadline: event.target.value || null } : item) } : field) })); markSettingsChanged(); }} /></label><label>체류 분<input className="text-input" type="number" min={1} max={1440} value={anchor.stayMinutes ?? ''} onChange={(event) => { setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.map((item, slot) => slot === index ? { ...item, stayMinutes: event.target.value ? Number(event.target.value) : null } : item) } : field) })); markSettingsChanged(); }} /></label></div><Button variant="secondary" onClick={() => { setSettings((current) => ({ ...current, reviewedCommonFields: current.reviewedCommonFields.map((field) => field.field === review.field ? { ...field, anchors: field.anchors.filter((_, slot) => slot !== index).map((item, position) => ({ ...item, position })) } : field).filter((field) => field.anchors.length > 0) })); markSettingsChanged(); }}>삭제</Button></li>)}</ol></section>)}
+          {isOwner && <div className="generation-actions"><Button variant="secondary" onClick={() => void saveConfig()} disabled={!settingsChanged || busy}>설정 저장</Button><Button onClick={() => void startGeneration()} disabled={!data.readyForGeneration || busy || settingsChanged}>{busy ? '처리 중…' : '여행 코스 만들기'}</Button>{settingsChanged && <small>변경한 설정을 먼저 저장해 주세요.</small>}</div>}
+        </section>
+      </>}
+    </details>
+
+    {plan && <Dialog open={validationOpen} title="여행 코스 검사 내역" onClose={() => setValidationOpen(false)} onConfirm={() => setValidationOpen(false)} confirmLabel="확인" cancelLabel="닫기" returnFocusRef={validationButtonRef}>
+      <div><p>{plan.document.validation.status === 'verified' ? '경로와 일정을 확인했어요.' : plan.document.validation.status === 'violated' ? '저장 전에 해결해야 할 항목이 있어요.' : '아직 확인하지 못한 정보가 있어요.'}</p>{plan.document.validation.violations.length > 0 && <section><h3>일정 문제</h3><ul>{plan.document.validation.violations.map((item, index) => <li key={`${item.code}-${index}`}>{item.date ? `${item.date} · ` : ''}{validationLabel(item.code)}</li>)}</ul></section>}<p>전체 추정 비용: {plan.document.validation.totalCostKrw === null ? '확인 필요' : `${plan.document.validation.totalCostKrw.toLocaleString('ko-KR')}원`} · 확인된 금액 {plan.document.validation.knownCostKrw.toLocaleString('ko-KR')}원</p>{plan.document.validation.warnings.length > 0 && <ul>{plan.document.validation.warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warningLabel(warning)}</li>)}</ul>}</div>
+    </Dialog>}
   </div>;
 }
