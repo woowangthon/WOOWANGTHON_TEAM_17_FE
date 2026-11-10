@@ -2,7 +2,7 @@
 
 검수한 여행방 시작 HTML/JavaScript와 React + TypeScript 공통 UI를 Vite로 함께 빌드하는 프론트엔드입니다. 기본 `/`는 확정된 여행방 화면이며 요청된 하단 푸터만 제거했습니다. 같은 출처의 BE API로 기기 세션·방 생성·초대 참여·방 진입 화면의 재접속을 처리합니다. `?preview=ui`는 기존 React 공통 UI 확인 화면을 엽니다.
 
-서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별하며 계정 로그인·인원/여행 조건 설정·최근 여행 목록 UI·AI 일정 생성은 이번 화면에 포함하지 않습니다. 이전 `src/features/entry` mock은 보존된 예시이며 현재 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8)과 [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
+서버는 별도로 실행해야 합니다. 기기 쿠키 방식으로 본인을 식별합니다. 방 생성·참여 후 `/room.html`에서 여행 준비와 내 취향·제약 화면을 사용합니다. 방 정보는 실제 API이며 공통 조건·개인 입력·확정은 새로고침하면 사라지는 메모리 초안입니다. AI 해석·공동 조건 저장·최근 여행 목록·일정 생성은 아직 연결하지 않았습니다. 두 화면은 서버 없이 `/room.html?preview=room`에서 미리 볼 수 있습니다. 자세한 범위는 [여행방 준비 화면](docs/room-dashboard.md)을 참고하세요. 이전 `src/features/entry` mock은 보존된 예시이며 기본 화면에서 사용하지 않습니다. 규격 원본은 [Notion 여행방 시작](https://app.notion.com/p/40ee977e49088105a9b4ce4df0aef6f8)과 [공통 규칙](https://app.notion.com/p/40ee977e49088189b512e6e817984d48)입니다.
 
 ## 시작하기
 
