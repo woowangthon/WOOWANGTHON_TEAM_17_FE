@@ -73,7 +73,10 @@ export class CanvasSyncEngine {
   }
 
   private buildSnapshot(): CanvasSyncSnapshot {
-    const idle = this.status === 'saved' && !this.pending && !this.writing && !this.conflict
+    const rejectedTravelSettled = this.status === 'error' && !this.pending && !this.writing
+      && !this.conflict && !this.travel && Boolean(this.acknowledged && this.local
+        && equal(this.local, this.acknowledged.document));
+    const idle = (this.status === 'saved' || rejectedTravelSettled) && !this.pending && !this.writing && !this.conflict
       && !this.travel && this.queued.length === 0;
     return { state: this.acknowledged, document: this.local, status: this.status, message: this.message,
       canUndo: idle && this.past.length > 0, canRedo: idle && this.future.length > 0 };
@@ -240,6 +243,7 @@ export class CanvasSyncEngine {
     } else {
       this.queued.push(action);
       this.status = 'saving';
+      this.message = '';
     }
     this.emit(); this.schedule();
     return true;
@@ -289,7 +293,7 @@ export class CanvasSyncEngine {
         actionIds: this.queued.map((action) => action.id), travel: this.travel };
     }
     const request = this.pending;
-    this.writing = true; this.status = 'saving'; this.emit();
+    this.writing = true; this.status = 'saving'; this.message = ''; this.emit();
     try {
       const saved = await this.transport.save(request);
       if (this.pending !== request) return;
@@ -326,11 +330,12 @@ export class CanvasSyncEngine {
             else { this.local = merged.document; this.settleMergedDraft(); }
           }
         } catch (readError) { this.failure(readError); }
-      } else if (error instanceof CanvasHttpError && ([400, 404, 415, 422].includes(error.status)
+      } else if (error instanceof CanvasHttpError && ([400, 404, 413, 415, 422].includes(error.status)
         || error.code === 'SCHEMA_VERSION_CONFLICT' || error.code === 'SCHEMA_MIGRATION_REQUIRED')
         && error.code !== 'TRIP_NOT_ACCESSIBLE') {
-        // A validation/unknown-place rejection proves there was no write.
+        // These HTTP validation responses prove there was no write; a later retry gets a fresh key.
         this.pending = null;
+        if (request.travel && this.acknowledged) this.local = this.acknowledged.document;
         this.travel = null;
         this.status = 'error';
         this.message = error.message;
@@ -382,7 +387,7 @@ export class CanvasSyncEngine {
       if (direction === 'undo') { this.past.pop(); this.future.push(entry); }
       else { this.future.pop(); this.past.push(entry); }
       this.local = merged.document; this.acknowledged = { ...this.acknowledged, document: merged.document };
-    } else { this.travel = { direction, entry }; this.local = merged.document; this.status = 'saving'; }
+    } else { this.travel = { direction, entry }; this.local = merged.document; this.status = 'saving'; this.message = ''; }
     this.emit(); this.schedule(); return true;
   }
   undo = () => this.history('undo');

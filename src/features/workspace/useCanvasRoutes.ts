@@ -1,19 +1,47 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasHttpError, getCanvasRoute } from './canvasApi.ts';
-import { canvasRouteKey, collectCanvasRouteRequests, formatCanvasRouteLabel, type CanvasRoute, type CanvasRouteRequest, type CanvasTravelMode } from './canvasRoutes.ts';
+import { canvasRouteKey, collectCanvasRouteRequests, formatCanvasRouteLabel, type CanvasRoute, type CanvasRouteInput, type CanvasRouteRequest, type CanvasTravelMode } from './canvasRoutes.ts';
 import { CanvasRouteController as RouteController } from './canvasRoutes.ts';
 import type { CanvasDocument } from './canvasModel.ts';
 
 type RouteState = { scope: string; phase: 'loading' | 'ready' | 'error' | 'stale'; route: CanvasRoute | null };
 type RoutePlan = { scope: string; requests: CanvasRouteRequest[] };
 
+export type CanvasRoutePreviewState = { phase: 'idle' | 'loading' | 'ready' | 'error' | 'stale'; route: CanvasRoute | null; errorCode?: string };
+
+/** A single uncached preview request. Selection changes abort the prior leg and stale completions are ignored. */
+export function useCanvasRoutePreview(input: CanvasRouteInput | null, enabled = true): CanvasRoutePreviewState {
+  const inputJson = enabled && input ? JSON.stringify(input) : '';
+  const request = useMemo(() => inputJson ? JSON.parse(inputJson) as CanvasRouteInput : null, [inputJson]);
+  const [result, setResult] = useState<{ request: CanvasRouteInput; state: CanvasRoutePreviewState } | null>(null);
+
+  useEffect(() => {
+    if (!request) return;
+    const controller = new AbortController();
+    void getCanvasRoute(request, controller.signal).then(route => {
+      if (!controller.signal.aborted) setResult({ request, state: { phase: 'ready', route } });
+    }).catch(error => {
+      if (controller.signal.aborted) return;
+      const code = error instanceof CanvasHttpError ? error.code : 'NETWORK_ERROR';
+      setResult({ request, state: {
+        phase: code === 'STALE_ROUTE_INPUT' ? 'stale' : 'error', route: null, errorCode: code,
+      } });
+    });
+    return () => controller.abort();
+  }, [request]);
+
+  if (!request) return { phase: 'idle', route: null };
+  return result?.request === request ? result.state : { phase: 'loading', route: null };
+}
+
 export function useCanvasRoutes(
   tripId: string, conditionsVersion: number | null, mode: CanvasTravelMode,
   document: CanvasDocument | null, activeDayId: string | null, preview: boolean,
+  effectiveModeForEdge?: (edgeId: string) => CanvasTravelMode,
 ) {
   const planJson = JSON.stringify({
-    scope: JSON.stringify([tripId, conditionsVersion, mode, preview]),
-    requests: preview ? [] : collectCanvasRouteRequests(tripId, conditionsVersion, mode, document, activeDayId),
+    scope: JSON.stringify([tripId, conditionsVersion, preview]),
+    requests: preview ? [] : collectCanvasRouteRequests(tripId, conditionsVersion, mode, document, activeDayId, effectiveModeForEdge),
   });
   const plan = useMemo(() => JSON.parse(planJson) as RoutePlan, [planJson]);
   const controller = useMemo(() => new RouteController<{ route: CanvasRoute | null; errorCode?: string }>(2), []);

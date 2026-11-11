@@ -17,6 +17,8 @@ export type CanvasRouteInput = {
   targetContentid: number;
   conditionsVersion: number;
   mode: CanvasTravelMode;
+  /** When present, asks for a leg-specific mode; absent keeps the trip's shared transport. */
+  modeOverride?: Exclude<CanvasTravelMode, null>;
 };
 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -73,7 +75,7 @@ export function formatCanvasRouteLabel(route: CanvasRoute | null | undefined, lo
 export type CanvasRouteRequest = CanvasRouteInput & { edgeIds: string[] };
 export function collectCanvasRouteRequests(
   tripId: string, conditionsVersion: number | null, mode: CanvasTravelMode, document: { nodes: Array<{ id: string; kind: string; dayId: string; contentid?: number }>; edges: Array<{ id: string; source: string; target: string }> } | null,
-  activeDayId: string | null,
+  activeDayId: string | null, effectiveModeForEdge?: (edgeId: string) => CanvasTravelMode,
 ): CanvasRouteRequest[] {
   if (!document || conditionsVersion === null || !validConditionsVersion(conditionsVersion)) return [];
   const nodes = new Map(document.nodes.filter(node => node.kind === 'place' && (activeDayId === null || node.dayId === activeDayId) && validContentid(node.contentid)).map(node => [node.id, { dayId: node.dayId, contentid: node.contentid as number }]));
@@ -81,7 +83,9 @@ export function collectCanvasRouteRequests(
   for (const edge of document.edges) {
     const source = nodes.get(edge.source); const target = nodes.get(edge.target);
     if (!source || !target || source.dayId !== target.dayId) continue;
-    const input = { tripId, sourceContentid: source.contentid, targetContentid: target.contentid, conditionsVersion, mode };
+    const effectiveMode = effectiveModeForEdge ? effectiveModeForEdge(edge.id) : mode;
+    const input = { tripId, sourceContentid: source.contentid, targetContentid: target.contentid, conditionsVersion, mode: effectiveMode,
+      ...(effectiveMode !== mode && effectiveMode !== null ? { modeOverride: effectiveMode } : {}) };
     const key = canvasRouteKey(input); const current = byKey.get(key);
     if (current) current.edgeIds.push(edge.id);
     else byKey.set(key, { ...input, edgeIds: [edge.id] });

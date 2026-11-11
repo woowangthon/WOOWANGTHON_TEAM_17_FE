@@ -45,7 +45,23 @@ async function request(path: string, init: RequestInit, options: Options): Promi
   try { const fetcher = options.fetcher ?? ((input: RequestInfo | URL, config?: RequestInit) => globalThis.fetch(input, config)); const headers = new Headers(init.headers); headers.set('X-Canvas-Version', '4'); response = await fetcher(path, { ...init, headers, credentials: 'include', cache: 'no-store', signal: options.signal }); }
   catch (error) { if (error instanceof DOMException && error.name === 'AbortError') throw error; throw new CanvasHttpError(0, 'NETWORK_ERROR', '서버에 연결하지 못했어요. 입력은 이 화면에 보관하고 있어요.'); }
   const body = await response.json().catch(() => null);
-  if (!response.ok) { const code = isRecord(body) && isRecord(body.error) && typeof body.error.code === 'string' ? body.error.code : 'CANVAS_UNAVAILABLE'; const message = code === 'VERSION_CONFLICT' ? '다른 참여자가 먼저 저장했어요.' : code === 'SCHEMA_VERSION_CONFLICT' ? '저장하지 못했어요. 새로고침한 뒤 다시 시도해 주세요.' : code === 'SCHEMA_MIGRATION_REQUIRED' ? 'DB에 날짜 편집 저장 업데이트(005)가 필요해요. 관리자에게 확인해 주세요.' : code === 'PLACE_NOT_FOUND' ? '장소 정보를 찾지 못했어요.' : response.status >= 500 ? '캔버스 서버를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.' : '요청을 처리하지 못했어요.'; throw new CanvasHttpError(response.status, code, message, isRecord(body) ? parseCanvasState(body.current) ?? undefined : undefined); }
+  if (!response.ok) {
+    const code = isRecord(body) && isRecord(body.error) && typeof body.error.code === 'string' ? body.error.code : 'CANVAS_UNAVAILABLE';
+    let isV4CanvasWrite = false;
+    if (init.method === 'PUT' && typeof init.body === 'string') {
+      try { const sent = JSON.parse(init.body) as unknown; isV4CanvasWrite = isRecord(sent) && isRecord(sent.document) && sent.document.schemaVersion === 4; }
+      catch { /* malformed local request keeps the generic validation message */ }
+    }
+    const message = code === 'VERSION_CONFLICT' ? '다른 참여자가 먼저 저장했어요.'
+      : code === 'SCHEMA_VERSION_CONFLICT' ? '저장하지 못했어요. 새로고침한 뒤 다시 시도해 주세요.'
+      : code === 'SCHEMA_MIGRATION_REQUIRED' ? 'DB에 날짜 편집 저장 업데이트(005)가 필요해요. 관리자에게 확인해 주세요.'
+      : code === 'PLACE_NOT_FOUND' ? '장소 정보를 찾지 못했어요.'
+      : code === 'VALIDATION_ERROR' && response.status < 500 && isV4CanvasWrite ? '캔버스 저장 형식을 처리하지 못했어요. 실행 중인 run.py가 이전 버전일 수 있어요. run.py를 다시 시작한 뒤 이 초안을 다시 시도해 주세요. 변경 내용은 보관 중이에요.'
+      : code === 'VALIDATION_ERROR' && response.status < 500 && init.method === 'PUT' ? '저장 요청을 확인하지 못했어요. 입력한 변경 내용은 화면에 보관돼 있어요.'
+      : response.status >= 500 ? '캔버스 서버를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.'
+      : '요청을 처리하지 못했어요.';
+    throw new CanvasHttpError(response.status, code, message, isRecord(body) ? parseCanvasState(body.current) ?? undefined : undefined);
+  }
   return body;
 }
 const pathFor = (tripId: string) => `/api/v1/trips/${encodeURIComponent(tripId)}`;
@@ -67,10 +83,12 @@ export async function searchPlaces(tripId: string, query: string, signal?: Abort
 }
 export async function getPlaceDetail(tripId: string, contentid: number, signal?: AbortSignal): Promise<CanvasPlaceDetail> { const value = parsePlace(await request(`${pathFor(tripId)}/canvas/places/${contentid}`, { method: 'GET' }, { signal })); if (!value||value.contentid!==contentid) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '장소 상세 응답을 읽을 수 없어요.'); return value; }
 export async function getCanvasRoute(input: CanvasRouteInput, signal?: AbortSignal, options: Options = {}): Promise<CanvasRoute> {
-  if (!isCanonicalCanvasUuid(input.tripId) || !Number.isSafeInteger(input.conditionsVersion) || input.conditionsVersion < 0 || input.conditionsVersion > 4294967295 || !Number.isInteger(input.sourceContentid) || input.sourceContentid < -2147483648 || input.sourceContentid > 2147483647 || !Number.isInteger(input.targetContentid) || input.targetContentid < -2147483648 || input.targetContentid > 2147483647 || !['car', 'walk', 'transit', 'charter', null].includes(input.mode)) {
+  if (!isCanonicalCanvasUuid(input.tripId) || !Number.isSafeInteger(input.conditionsVersion) || input.conditionsVersion < 0 || input.conditionsVersion > 4294967295 || !Number.isInteger(input.sourceContentid) || input.sourceContentid < -2147483648 || input.sourceContentid > 2147483647 || !Number.isInteger(input.targetContentid) || input.targetContentid < -2147483648 || input.targetContentid > 2147483647 || !['car', 'walk', 'transit', 'charter', null].includes(input.mode)
+    || (input.modeOverride !== undefined && (!['car', 'walk', 'transit', 'charter'].includes(input.modeOverride) || input.modeOverride !== input.mode))) {
     throw new CanvasHttpError(400, 'VALIDATION_ERROR', '경로 조회 정보를 확인해 주세요.');
   }
   const query = new URLSearchParams({ sourceContentid: String(input.sourceContentid), targetContentid: String(input.targetContentid), expectedConditionsVersion: String(input.conditionsVersion) });
+  if (input.modeOverride) query.set('mode', input.modeOverride);
   const value = await request(`${pathFor(input.tripId)}/canvas/route?${query}`, { method: 'GET' }, { ...options, signal });
   const route = parseCanvasRoute(value, input);
   if (!route) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '경로 응답의 조건이나 장소가 일치하지 않아요.');

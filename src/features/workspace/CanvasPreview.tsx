@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Controls, getSmoothStepPath, Handle, MarkerType, Position, ReactFlow, useStore, useReactFlow, type Connection, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance, type Rect } from '@xyflow/react';
+import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, getBezierPath, Handle, MarkerType, Position, ReactFlow, useStore, useReactFlow, useUpdateNodeInternals, type Connection, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance, type Rect } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Button from '../../components/ui/Button';
 import CanvasToolIcon from './CanvasToolIcon';
@@ -19,15 +19,21 @@ import { CanvasEdgeEditor } from './CanvasEdgeEditor.tsx';
 import { modeLabel, resolveCanvasEdgeTime } from './canvasEdgePreferences.ts';
 import { useCanvasEdgePreferences } from './useCanvasEdgePreferences.ts';
 
-type FlowNode = Node<{ model: CanvasNode; title?: string; detail?: CanvasPlaceDetail; visitLabel?: string; dayTitle?: string; isActive?:boolean; tone?: string; placeCount?: number; mealCount?: number; commentCount?: number; connectionCandidate?:boolean; connectionStart?:boolean }, 'place'|'comment'|'dayFrame'>;
+type FlowNode = Node<{ model: CanvasNode; title?: string; detail?: CanvasPlaceDetail; visitLabel?: string; dayTitle?: string; isActive?:boolean; tone?: string; placeCount?: number; mealCount?: number; commentCount?: number; connectionCandidate?:boolean; connectionStart?:boolean; sourceSide?:Position; targetSide?:Position }, 'place'|'comment'|'dayFrame'>;
 type Board = { nodes: FlowNode[]; edges: Edge[] };
 type FlowEdge = Edge<{ worldPoints?: Array<{x:number;y:number}>; dayLinkId?:string }>;
 const OpenCanvasMenu=createContext<(id:string,element:HTMLElement)=>void>(()=>{});
+const SelectRouteEdge=createContext<(id:string)=>void>(()=>{});
 type DiscoveryMemory={tab:'ai'|'search';query:string;results:PlaceSearchResult[];prompt:string;aiPlace:CanvasPlaceDetail|null;aiAlternatives:CanvasPlaceDetail[];pending:RecommendationRequest|null;context:{dayId:string;replaceTargetId:string}};
 const discoveryMemory=new Map<string,DiscoveryMemory>();
 const colorOptions: Array<[CanvasColor,string]> = [['default','기본'],['lime','연두'],['sky','하늘'],['rose','분홍'],['amber','살구']];
 const marker = { type: MarkerType.ArrowClosed, color: 'var(--color-accent-hover)' };
-const edgeStyle = { type: 'smoothstep' as const, markerEnd: marker, style: { stroke: 'var(--color-accent-hover)', strokeWidth: 2 } };
+const edgeStyle = { type: 'default' as const, markerEnd: marker, style: { stroke: 'var(--color-accent-hover)', strokeWidth: 2 } };
+function sidesToward(from:{x:number;y:number},to:{x:number;y:number}):[Position,Position]{
+  const dx=to.x-from.x;const dy=to.y-from.y;
+  if(Math.abs(dx)>=Math.abs(dy))return dx>=0?[Position.Right,Position.Left]:[Position.Left,Position.Right];
+  return dy>=0?[Position.Bottom,Position.Top]:[Position.Top,Position.Bottom];
+}
 function frameBounds(frames: CanvasFrameLayout[]): Rect | null {
   if (!frames.length) return null;
   const x = Math.min(...frames.map(frame => frame.position.x));
@@ -63,23 +69,49 @@ function RestoreCanvasViewport({ viewport, onRestored }: { viewport:CanvasViewpo
   }, [flow, viewportReady, onRestored, viewport]);
   return null;
 }
-function DayFrame({ data }: NodeProps<FlowNode>) {
+function DayFrame({ id,data }: NodeProps<FlowNode>) {
+  const updateNodeInternals=useUpdateNodeInternals();
+  useEffect(()=>{updateNodeInternals(id);},[id,data.sourceSide,data.targetSide,updateNodeInternals]);
   const open=useContext(OpenCanvasMenu);
   return <section className={`tw-canvas-day-frame ${data.isActive?'is-active':''}`} data-tone={data.tone} aria-label={`${data.dayTitle} 일정 그룹`}>
-    <Handle type="target" id="day-link-in" position={Position.Left} isConnectable className="tw-daylink-handle" />
-    <Handle type="source" id="day-link-out" position={Position.Right} isConnectable className="tw-daylink-handle" />
+    <Handle type="target" id="day-link-in" position={data.targetSide??Position.Left} isConnectable className="tw-daylink-handle" />
+    <Handle type="source" id="day-link-out" position={data.sourceSide??Position.Right} isConnectable className="tw-daylink-handle" />
     <header className="tw-day-frame-grip"><strong>{data.dayTitle}</strong><span>{data.placeCount}곳{data.mealCount ? ` · 식사 ${data.mealCount}` : ''} · 댓글 {data.commentCount}</span><button type="button" className="tw-node-menu-button nodrag nopan" aria-label={`${data.dayTitle} 편집 메뉴`} onClick={event=>{event.stopPropagation();open(`day-frame:${data.model.dayId}`,event.currentTarget);}}>⋯</button></header>
   </section>;
 }
 function DayOrderEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, selected }: EdgeProps<FlowEdge>) {
   const dx=targetX-sourceX;const dy=targetY-sourceY;const distance=Math.max(1,Math.hypot(dx,dy));const insetX=(dx/distance)*10;const insetY=(dy/distance)*10;
-  const [path]=getSmoothStepPath({sourceX:sourceX+insetX,sourceY:sourceY+insetY,targetX:targetX-insetX,targetY:targetY-insetY,sourcePosition,targetPosition,borderRadius:12});
+  const [path]=getBezierPath({sourceX:sourceX+insetX,sourceY:sourceY+insetY,targetX:targetX-insetX,targetY:targetY-insetY,sourcePosition,targetPosition,curvature:.22});
   return <BaseEdge id={id} path={path} markerEnd={markerEnd} interactionWidth={18} style={{ stroke: selected?'var(--color-accent-hover)':'var(--canvas-muted)', strokeWidth: selected?3:2, strokeDasharray: '5 4' }} />;
 }
-function PlaceCard({ id,data, selected }: NodeProps<FlowNode>) { const model = data.model as CanvasPlaceNode; const open=useContext(OpenCanvasMenu); return <article className={`tw-place-node ${selected?'is-selected':''} ${data.connectionCandidate?'is-link-target':''} ${data.connectionStart?'is-link-start':''} ${model.intent==='candidate'?'is-candidate':''} color-${model.color}`}><button type="button" className="tw-node-menu-button nodrag nopan" aria-label={`${data.title??'장소'} 편집 메뉴`} onClick={event=>{event.stopPropagation();open(id,event.currentTarget);}}>⋯</button><CanvasPlaceCardContent place={data.detail} visitLabel={data.visitLabel} candidate={model.intent==='candidate'} schedule={model.schedule}/><Handle type="target" position={Position.Left} className="tw-handle" aria-label="앞 장소 연결점" /><Handle type="source" position={Position.Right} className="tw-handle" aria-label="다음 장소 연결점" /></article>; }
+function RouteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, selected, label }: EdgeProps<FlowEdge>) {
+  const select = useContext(SelectRouteEdge);
+  const [path, x, y] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: .2 });
+  return <>
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} interactionWidth={18}
+      style={{ stroke: selected ? 'var(--color-accent-hover)' : 'var(--canvas-muted)', strokeWidth: selected ? 3 : 2 }} />
+    {label && <EdgeLabelRenderer>
+      <button type="button" className="tw-route-edge-label nodrag nopan"
+        style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
+        aria-label={`이동 구간 편집: ${String(label)}`} onClick={() => select(id)}>
+        {label}
+      </button>
+    </EdgeLabelRenderer>}
+  </>;
+}
+function PlaceCard({ id,data, selected }: NodeProps<FlowNode>) {
+  const model=data.model as CanvasPlaceNode;const open=useContext(OpenCanvasMenu);const updateNodeInternals=useUpdateNodeInternals();
+  useEffect(()=>{updateNodeInternals(id);},[data.sourceSide,data.targetSide,id,updateNodeInternals]);
+  return <article className={`tw-place-node ${selected?'is-selected':''} ${data.connectionCandidate?'is-link-target':''} ${data.connectionStart?'is-link-start':''} ${model.intent==='candidate'?'is-candidate':''} color-${model.color}`}>
+    <button type="button" className="tw-node-menu-button nodrag nopan" aria-label={`${data.title??'장소'} 편집 메뉴`} onClick={event=>{event.stopPropagation();open(id,event.currentTarget);}}>⋯</button>
+    <CanvasPlaceCardContent place={data.detail} visitLabel={data.visitLabel} candidate={model.intent==='candidate'} schedule={model.schedule}/>
+    <Handle type="target" position={data.targetSide??Position.Left} className="tw-handle" aria-label="앞 장소 연결점" />
+    <Handle type="source" position={data.sourceSide??Position.Right} className="tw-handle" aria-label="다음 장소 연결점" />
+  </article>;
+}
 function CommentCard({ id,data, selected }: NodeProps<FlowNode>) { const model = data.model as CanvasCommentNode; const open=useContext(OpenCanvasMenu); return <article className={`tw-comment-node color-${model.color} ${selected?'is-selected':''}`}><button type="button" className="tw-node-menu-button nodrag nopan" aria-label="댓글 편집 메뉴" onClick={event=>{event.stopPropagation();open(id,event.currentTarget);}}>⋯</button><span>공유 댓글</span><p>{model.text}</p></article>; }
 const nodeTypes = { place: PlaceCard, comment: CommentCard, dayFrame: DayFrame };
-const edgeTypes = { dayOrder: DayOrderEdge };
+const edgeTypes = { dayOrder: DayOrderEdge, default: RouteEdge };
 function plannedKst(schedule: CanvasPlaceNode['schedule']): string | undefined {
   if (!schedule || (!schedule.startAt && !schedule.endAt)) return undefined;
   const format = (value: string | null) => value ? new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value)) : null;
@@ -95,7 +127,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const viewScope=canvasViewScope(tripId,preview); const savedView=readCanvasView(viewScope);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const closeDrawer = () => { setDrawerOpen(false); drawerTrigger.current?.focus(); };
-  const initialDiscovery=discoveryMemory.get(tripId); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [message,setMessage]=useState(''); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null);  const [hasClipboard,setHasClipboard]=useState(false);
+  const initialDiscovery=discoveryMemory.get(tripId); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [message,setMessage]=useState(''); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
   const [flowNodes,setFlowNodes]=useState<{base:CanvasDocument|null;nodes:FlowNode[]}|null>(null); const [fitFocus,setFitFocus]=useState<'all'|'day'>('all'); const flow=useRef<ReactFlowInstance<FlowNode>|null>(null); const shell=useRef<HTMLDivElement>(null); const menuRef=useRef<HTMLDivElement>(null); const menuOpener=useRef<HTMLElement|null>(null); const clipboard=useRef<CanvasNode|null>(null); const abort=useRef<AbortController|null>(null); const triedDetails=useRef<Set<number>>(new Set()); const pendingRecommendation=useRef<RecommendationRequest|null>(initialDiscovery?.pending??null); const recommendationContext=useRef<{dayId:string;replaceTargetId:string}>(initialDiscovery?.context??{dayId:initialDiscovery?.pending?.dayId??savedView?.dayId??'',replaceTargetId:''}); const placeChoiceSequence=useRef(0);
   const viewInitialized=useRef(false); const viewSnapshot=useRef<CanvasViewMemory>({dayId:savedView?.dayId??'',viewport:savedView?.viewport??null});
   const [fitTarget,setFitTarget]=useState<{key:string;nodes:string[]}|null>(null);
@@ -137,8 +169,12 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const knownDates=doc?.days.flatMap(item=>item.date?[item.date]:[])??[];
   const formatTripDate=(date:string)=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric'}).format(new Date(`${date}T12:00:00Z`));
   const tripRangeLabel=knownDates.length?`${formatTripDate(knownDates[0])}${knownDates.length>1&&knownDates.at(-1)!==knownDates[0]?`–${formatTripDate(knownDates.at(-1)!)}`:''} · ${doc?.days.length??0}일`:`여행 일정 · ${doc?.days.length??0}일`;
-  const routes=useCanvasRoutes(tripId,conditionsVersion,transport,doc??null,null,preview);
   const edgePrefs=useCanvasEdgePreferences(tripId,preview);
+  const effectiveModeForEdge=(edgeId:string):CanvasTravelMode=>{
+    const edge=doc?.edges.find(item=>item.id===edgeId);
+    return edge&&doc?edgePrefs.get(edge,doc)?.modeOverride??transport:transport;
+  };
+  const routes=useCanvasRoutes(tripId,conditionsVersion,transport,doc??null,null,preview,effectiveModeForEdge);
   useEffect(()=>{if((aiPlace||aiAlternatives.length)&&!recommendationContextMatches){setAiPlace(null);setAiAlternatives([]);}},[aiAlternatives.length,aiPlace,recommendationContextMatches]);
   useEffect(()=>{
     if(!doc)return;
@@ -149,40 +185,64 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   useEffect(()=>{ if(!doc||preview) return; const missing=[...new Set(doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid))].filter(id=>!placeDetails.has(id)&&!triedDetails.current.has(id)); if(!missing.length)return; const attemptedDetails=triedDetails.current;missing.forEach(id=>attemptedDetails.add(id)); const ctrl=new AbortController();let settled=false; void Promise.all(missing.map(id=>getPlaceDetail(tripId,id,ctrl.signal).then(p=>[id,p] as const).catch(()=>null))).then(items=>{settled=true;if(ctrl.signal.aborted)return;const successful=items.filter((item):item is readonly [number,CanvasPlaceDetail]=>item!==null);if(successful.length)setDetails(old=>{const next=new Map(old);for(const [id,place] of successful)next.set(id,place);return next;});}); return ()=>{ctrl.abort();if(!settled)for(const id of missing)attemptedDetails.delete(id);}; },[doc,placeDetails,preview,tripId]);
   const board=useMemo(()=>doc?boardOf(doc,placeDetails):{nodes:[],edges:[]},[doc,placeDetails]);
   const frameLayouts=useMemo(()=>doc?layoutCanvasDayFrames(doc,measuredSizes):new Map<string,CanvasFrameLayout>(),[doc,measuredSizes]);
-  const dayLinks=doc?getDayLinks(doc):[];
-  const placeMap=new Map(board.nodes.filter(n=>n.data.model.kind==='place').map(n=>[n.id,n.data.model.dayId]));
+  const dayLinks=useMemo(()=>doc?getDayLinks(doc):[],[doc]);
+  const placeMap=useMemo(()=>new Map(board.nodes.filter(n=>n.data.model.kind==='place').map(n=>[n.id,n.data.model.dayId])),[board.nodes]);
   const allFrameNodes=useMemo(()=>{
     if(!doc)return [];
+    const placeWorldPositions=new Map<string,{x:number;y:number}>();
+    for(const node of board.nodes){
+      const layout=frameLayouts.get(node.data.model.dayId);
+      if(!layout)continue;
+      const local=canvasFrameNodePosition(node.data.model,layout);
+      const size=measuredSizes.get(node.id)??{width:250,height:180};
+      placeWorldPositions.set(node.id,{x:layout.position.x+local.x+size.width/2,y:layout.position.y+local.y+size.height/2});
+    }
+    const placeSides=new Map<string,{sourceSide?:Position;targetSide?:Position}>();
+    for(const edge of doc.edges){
+      const source=placeWorldPositions.get(edge.source);const target=placeWorldPositions.get(edge.target);
+      if(!source||!target)continue;
+      const [sourceSide,targetSide]=sidesToward(source,target);
+      placeSides.set(edge.source,{...placeSides.get(edge.source),sourceSide});
+      placeSides.set(edge.target,{...placeSides.get(edge.target),targetSide});
+    }
+    const frameSides=new Map<string,{sourceSide?:Position;targetSide?:Position}>();
+    for(const link of dayLinks){
+      const source=frameLayouts.get(link.source);const target=frameLayouts.get(link.target);
+      if(!source||!target)continue;
+      const [sourceSide,targetSide]=sidesToward({x:source.position.x+source.width/2,y:source.position.y+source.height/2},{x:target.position.x+target.width/2,y:target.position.y+target.height/2});
+      frameSides.set(link.source,{...frameSides.get(link.source),sourceSide});
+      frameSides.set(link.target,{...frameSides.get(link.target),targetSide});
+    }
     const frames:FlowNode[]=doc.days.map((item,index)=>{
       const layout=frameLayouts.get(item.id)!;
       const groupNodes=doc.nodes.filter(node=>node.dayId===item.id);
-      return {id:`day-frame:${item.id}`,type:'dayFrame',position:layout.position,draggable:true,dragHandle:'.tw-day-frame-grip',selectable:false,connectable:true,zIndex:-1,style:{width:layout.width,height:layout.height},data:{model:{id:item.id,kind:'comment',dayId:item.id,position:{x:0,y:0},color:'default',text:''},dayTitle:dayLabel(item,index),tone:canvasDayTone(item.id),isActive:item.id===activeDayId,placeCount:groupNodes.filter(node=>node.kind==='place').length,mealCount:groupNodes.filter((node):node is CanvasPlaceNode=>node.kind==='place'&&placeDetails.get(node.contentid)?.planningRole==='meal_stop').length,commentCount:groupNodes.filter(node=>node.kind==='comment').length}} as FlowNode;
+      const id=`day-frame:${item.id}`;
+      return {id,type:'dayFrame',position:layout.position,draggable:true,dragHandle:'.tw-day-frame-grip',selectable:false,connectable:true,zIndex:-1,measured:measuredSizes.get(id),style:{width:layout.width,height:layout.height},data:{model:{id:item.id,kind:'comment',dayId:item.id,position:{x:0,y:0},color:'default',text:''},dayTitle:dayLabel(item,index),tone:canvasDayTone(item.id),isActive:item.id===activeDayId,placeCount:groupNodes.filter(node=>node.kind==='place').length,mealCount:groupNodes.filter((node):node is CanvasPlaceNode=>node.kind==='place'&&placeDetails.get(node.contentid)?.planningRole==='meal_stop').length,commentCount:groupNodes.filter(node=>node.kind==='comment').length,...frameSides.get(item.id)}} as FlowNode;
     });
     const children=board.nodes.map(node=>{
       const layout=frameLayouts.get(node.data.model.dayId)!;
       const placeNode=node.data.model.kind==='place';
-      const connectionCandidate=Boolean(placeConnectionMode&&placeNode&&(placeConnectionStartId?canConnectRoute(placeConnectionStartId,node.id,placeMap,doc.edges):!doc.edges.some(edge=>edge.source===node.id)));
-      return {...node,parentId:`day-frame:${layout.dayId}`,position:canvasFrameNodePosition(node.data.model,layout),selected:node.id===selectedId,zIndex:1,data:{...node.data,connectionCandidate,connectionStart:node.id===placeConnectionStartId}};
+      const availableEdges=doc.edges.filter(edge=>!placeConnectionMode||edge.id!==reconnectEdgeId);
+      const connectionCandidate=Boolean(placeConnectionMode&&placeNode&&(placeConnectionStartId?canConnectRoute(placeConnectionStartId,node.id,placeMap,availableEdges):!availableEdges.some(edge=>edge.source===node.id)));
+      return {...node,parentId:`day-frame:${layout.dayId}`,position:canvasFrameNodePosition(node.data.model,layout),selected:node.id===selectedId,zIndex:1,...(measuredSizes.has(node.id)?{measured:measuredSizes.get(node.id)}:{}),data:{...node.data,...placeSides.get(node.id),connectionCandidate,connectionStart:node.id===placeConnectionStartId}};
     });
     return [...frames,...children];
-  },[activeDayId,board.nodes,doc,frameLayouts,placeDetails,selectedId,placeConnectionMode,placeConnectionStartId]);
+  },[activeDayId,board.nodes,dayLinks,doc,frameLayouts,measuredSizes,placeDetails,placeMap,selectedId,placeConnectionMode,placeConnectionStartId,reconnectEdgeId]);
   const overviewBounds = frameBounds([...frameLayouts.values()]);
   const activeFrame = frameLayouts.get(activeDayId);
   const initialBounds = fitFocus === 'day' && activeFrame ? frameBounds([activeFrame]) : overviewBounds;
   const cardsMeasured = doc?.nodes.every(node => measuredSizes.has(node.id));
-  const totalPlaces=doc?.nodes.filter(node=>node.kind==='place').length??0;
-  const totalComments=doc?.nodes.filter(node=>node.kind==='comment').length??0;
-  const totalConnections=doc?.edges.length??0;
-  const totalDayLinks=dayLinks.length;
   const visibleRouteLabel=(edge:CanvasDocument['edges'][number])=>{
     if(!doc)return '시간 미확인';
-    const resolution=resolveCanvasEdgeTime(edgePrefs.get(edge,doc),transport);
-    if(resolution.source==='required')return '시간 입력 필요';
+    const preference=edgePrefs.get(edge,doc);
+    const resolution=resolveCanvasEdgeTime(preference,transport);
     if(resolution.source==='manual')return `${modeLabel(resolution.mode)} ${resolution.minutes}분 · 직접 입력`;
-    return preview?'시간 미확인':routes.labels.get(edge.id)??'시간 미확인';
+    const routeLabel=preview?'시간 미확인':routes.labels.get(edge.id)??'시간 미확인';
+    if(routeLabel!=='시간 미확인')return routeLabel;
+    return resolution.source==='required'?'시간 입력 필요':'시간 미확인';
   };
   const visibleEdges:FlowEdge[]=[
-    ...board.edges.map(e=>({...e,...edgeStyle,selected:e.id===selectedEdgeId,label:visibleRouteLabel(e),labelStyle:{fill:'var(--canvas-ink)',fontSize:12},labelBgStyle:{fill:'var(--canvas-surface)',stroke:'var(--canvas-border)'},labelBgPadding:[6,3] as [number,number],labelBgBorderRadius:8,labelShowBg:true})),
+    ...board.edges.map(e=>({...e,...edgeStyle,selected:e.id===selectedEdgeId,label:visibleRouteLabel(e)})),
     ...(dayLinksOn?dayLinks.flatMap(link=>{
       const source=frameLayouts.get(link.source); const target=frameLayouts.get(link.target);
       if(!source||!target)return [];
@@ -200,6 +260,8 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const replaceName=replaceNode?placeDetails.get(replaceNode.contentid)?.title??'장소 정보 확인 중':'';
   const contextNode=menu?.nodeId?doc?.nodes.find(node=>node.id===menu.nodeId):undefined;
   const contextPlace=contextNode?.kind==='place'?placeDetails.get(contextNode.contentid):undefined;
+  const contextNodeEdges=contextNode?doc?.edges.filter(edge=>edge.source===contextNode.id||edge.target===contextNode.id)??[]:[];
+  const contextRouteEdge=menu?.edgeId?doc?.edges.find(edge=>edge.id===menu.edgeId):undefined;
   const publish=(nextNodes:FlowNode[],nextEdges:Edge[],note:string):boolean=>{if(!doc)return false;const materialized=doc.days.reduce((current,day)=>materializeProjectedDay(current,day.id,measuredSizes),doc);const normalizedNodes=nextNodes.filter(node=>node.type!=='dayFrame').map(node=>{const original=doc.nodes.find(item=>item.id===node.id);const normalized=materialized.nodes.find(item=>item.id===node.id);const unchangedPosition=original&&node.data.model.dayId===original.dayId&&JSON.stringify(node.data.model.position)===JSON.stringify(original.position);return unchangedPosition&&normalized?{...node,data:{...node.data,model:{...node.data.model,position:normalized.position}}}:node;});const proposed=docOf(normalizedNodes,nextEdges,materialized);let conflictPaths:string[]=[];const updated=sync.update(current=>{const merged=mergeCanvasDocuments(doc,proposed,current);conflictPaths=merged.conflicts;return merged.document??current;});if(!updated&&conflictPaths.length){setMessage(`다른 참여자의 변경과 겹쳐 이 편집을 보류했어요: ${conflictPaths.slice(0,3).join(', ')}`);return false;}if(updated)setMessage(note);return updated;};
   const editNode=(id:string,update:(model:CanvasNode)=>CanvasNode,note='변경 사항을 저장하고 있어요.')=>{const nodes=board.nodes.map(n=>n.id===id?{...n,data:{...n.data,model:update(n.data.model)}}:n);publish(nodes,board.edges,note);};
   const moveNode=(nodeId:string,nextDay:string)=>{if(!doc)return;const model=board.nodes.find(n=>n.id===nodeId)?.data.model;if(!model||model.dayId===nextDay)return;const from=frameLayouts.get(model.dayId);const to=frameLayouts.get(nextDay);if(!to)return;const local=from?canvasFrameNodePosition(model,from):model.position;const position=canvasDocumentPosition(local,to);const edges=model.kind==='place'?board.edges.filter(e=>e.source!==nodeId&&e.target!==nodeId):board.edges;const nodes=board.nodes.map(n=>n.id===nodeId?{...n,data:{...n.data,model:{...model,dayId:nextDay,position}}}:n);publish(nodes,edges,model.kind==='place'?'날짜를 옮기고 기존 연결을 함께 제거했어요.':'댓글 날짜를 옮겼어요.');changeDay(nextDay);};
@@ -214,9 +276,20 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
       if(updated&&changed){setMessage('날짜 그룹을 연결했어요. 장소 동선과는 별도로 저장돼요.');setSelectedDayLinkId('');return true;}
       setMessage('이 날짜 연결을 추가하지 못했어요.');return false;
     }
-    if(!canConnectRoute(connection.source,connection.target,placeMap,doc.edges)){setMessage('같은 날짜의 장소끼리 앞뒤 한 곳씩 연결할 수 있어요. 순환 연결은 만들 수 없어요.');return false;}
+    const activeReconnectEdgeId=placeConnectionMode?reconnectEdgeId:'';
+    const remainingEdges=doc.edges.filter(edge=>edge.id!==activeReconnectEdgeId);
+    if(!canConnectRoute(connection.source,connection.target,placeMap,remainingEdges)){setMessage('같은 날짜의 장소끼리 앞뒤 한 곳씩 연결할 수 있어요. 순환 연결은 만들 수 없어요.');return false;}
     const nodes=board.nodes.map(node=>node.id===connection.source||node.id===connection.target?{...node,data:{...node.data,model:node.data.model.kind==='place'?{...node.data.model,intent:'route' as const}:node.data.model}}:node);
-    return publish(nodes,addEdge({...connection,id:crypto.randomUUID(),...edgeStyle},board.edges),'장소를 연결했어요. 다른 카드는 자동으로 연결하지 않아요.');
+    const nextEdges=activeReconnectEdgeId&&doc.edges.some(edge=>edge.id===activeReconnectEdgeId)?board.edges.map(edge=>edge.id===activeReconnectEdgeId?{...edge,source:connection.source!,target:connection.target!}:edge):addEdge({...connection,id:crypto.randomUUID(),...edgeStyle},board.edges);
+    const saved=publish(nodes,nextEdges,activeReconnectEdgeId?'장소 연결을 바꿨어요.':'장소를 연결했어요. 다른 카드는 자동으로 연결하지 않아요.');
+    if(saved&&activeReconnectEdgeId)setReconnectEdgeId('');
+    return saved;
+  };
+  const reconnectRouteEdge=(edge:Edge,connection:Pick<Connection,'source'|'target'>)=>{
+    if(!doc||!connection.source||!connection.target||edge.type==='dayOrder'){setMessage('장소 연결만 바꿀 수 있어요.');return;}
+    const remaining=doc.edges.filter(item=>item.id!==edge.id);
+    if(!canConnectRoute(connection.source,connection.target,placeMap,remaining)){setMessage('같은 날짜의 앞뒤 장소 순서에 맞지 않아 연결을 바꾸지 않았어요. 기존 연결은 그대로예요.');return;}
+    publish(board.nodes,board.edges.map(item=>item.id===edge.id?{...item,source:connection.source!,target:connection.target!}:item),'장소 연결을 바꿨어요.');
   };
   const remove=()=>{if(!doc)return;const dayLinkId=menu?.dayLinkId??selectedDayLinkId;if(dayLinkId){let removed=false;sync.update(current=>{const next=disconnectDayFrames(current,dayLinkId);if(!next)return current;removed=true;return next;});if(removed)setMessage('날짜 연결을 삭제했어요. 장소 동선은 그대로 유지돼요.');setSelectedDayLinkId('');setMenu(null);return;}const nodeId=board.nodes.find(node=>node.id===(menu?.nodeId??selectedId))?.id;if(nodeId){const ids=new Set([nodeId]);publish(board.nodes.filter(n=>!ids.has(n.id)),board.edges.filter(e=>!ids.has(e.source)&&!ids.has(e.target)),'선택한 카드를 삭제하고 연결선을 함께 제거했어요.');setSelectedId('');setMenu(null);return;}const edgeId=menu?.edgeId??selectedEdgeId;if(edgeId&&board.edges.some(e=>e.id===edgeId)){publish(board.nodes,board.edges.filter(e=>e.id!==edgeId),'장소 연결을 삭제했어요.');setSelectedEdgeId('');setMenu(null);}};
   const addPosition=(point?:{x:number;y:number},targetDay=activeDayId)=>{
@@ -278,12 +351,14 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     setHasClipboard(true);setMessage('카드를 복사했어요.');setMenu(null);
   };
   const paste=()=>{const source=clipboard.current;if(!source||!doc||doc.nodes.length>=500)return;const placed=addPosition(undefined,discoveryDayId);if(!placed)return;const model=copyCanvasNode(source,crypto.randomUUID(),placed.dayId);model.position=placed.position;const layout=frameLayouts.get(model.dayId)!;publish([...allFrameNodes.filter(node=>node.type!=='dayFrame'),{id:model.id,type:model.kind,parentId:`day-frame:${model.dayId}`,position:canvasFrameNodePosition(model,layout),data:{model,...(model.kind==='place'?{title:placeDetails.get(model.contentid)?.title,detail:placeDetails.get(model.contentid)}:{})}}],board.edges,'복사한 카드를 추가했어요. 연결선은 복사하지 않았어요.');selectCard(model.id);};
-  const clearSelectionAfterHistory=()=>{if(selectedId||selectedEdgeId)setDrawerOpen(false);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setMenu(null);if(!['offline','conflict','error'].includes(sync.status))setMessage('');};
+  const clearSelectionAfterHistory=()=>{if(selectedId||selectedEdgeId)setDrawerOpen(false);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setMenu(null);if(!['offline','conflict','error'].includes(sync.status))setMessage('');};
   const undo=()=>{if(sync.undo())clearSelectionAfterHistory();};
   const redo=()=>{if(sync.redo())clearSelectionAfterHistory();};
-  const cancelPlaceConnection=(note='장소 연결을 취소했어요.')=>{setPlaceConnectionMode(false);setPlaceConnectionStartId('');setSelectedId('');setFlowNodes(null);setMessage(note);};
-  const startPlaceConnection=(sourceId='')=>{
-    if(sourceId){const source=board.nodes.find(node=>node.id===sourceId)?.data.model;if(!source||source.kind!=='place'||doc?.edges.some(edge=>edge.source===sourceId)){setMessage('이미 다음 장소가 연결된 카드는 시작점으로 선택할 수 없어요.');return;}}
+  const cancelPlaceConnection=(note='장소 연결을 취소했어요.')=>{setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setSelectedId('');setFlowNodes(null);setMessage(note);};
+  const startPlaceConnection=(sourceId='',replacingEdgeId='')=>{
+    const remainingEdges=doc?.edges.filter(edge=>edge.id!==replacingEdgeId)??[];
+    if(sourceId){const source=board.nodes.find(node=>node.id===sourceId)?.data.model;if(!source||source.kind!=='place'||remainingEdges.some(edge=>edge.source===sourceId)){setReconnectEdgeId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setMessage('이미 다음 장소가 연결된 카드는 시작점으로 선택할 수 없어요.');return;}}
+    setReconnectEdgeId(replacingEdgeId);
     setPlaceConnectionMode(true);setPlaceConnectionStartId(sourceId);setSelectedId(sourceId);setSelectedEdgeId('');setSelectedDayLinkId('');setReplaceTargetId('');setMenu(null);setFlowNodes(null);setDrawerOpen(false);
     const title=sourceId?board.nodes.find(node=>node.id===sourceId)?.data.title:'첫 장소';
     setMessage(sourceId?`${title??'선택한 장소'}에서 이어질 장소를 클릭해 주세요.`:'먼저 연결을 시작할 장소를 클릭해 주세요.');
@@ -298,17 +373,25 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   useEffect(()=>{
     if(!placeConnectionMode||!placeConnectionStartId)return;
     const sourceExists=doc?.nodes.some(node=>node.id===placeConnectionStartId&&node.kind==='place');
-    const alreadyContinues=doc?.edges.some(edge=>edge.source===placeConnectionStartId);
-    if(!sourceExists||alreadyContinues){
-      setPlaceConnectionMode(false);setPlaceConnectionStartId('');setSelectedId('');setFlowNodes(null);
+    const alreadyContinues=doc?.edges.some(edge=>edge.id!==reconnectEdgeId&&edge.source===placeConnectionStartId);
+    const reconnectStillExists=!reconnectEdgeId||doc?.edges.some(edge=>edge.id===reconnectEdgeId);
+    if(!sourceExists||alreadyContinues||!reconnectStillExists){
+      setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setSelectedId('');setFlowNodes(null);
       setMessage('시작 장소가 바뀌어 장소 연결을 취소했어요.');
     }
-  },[doc,placeConnectionMode,placeConnectionStartId]);
+  },[doc,placeConnectionMode,placeConnectionStartId,reconnectEdgeId]);
   const runSearch=async()=>{abort.current?.abort();const controller=new AbortController();abort.current=controller;setBusy(true);setSearchMessage('');setResults([]);try{const found=await searchPlaces(tripId,query,controller.signal);if(controller.signal.aborted)return;setResults(found);setSearchMessage(found.length?'':`“${query.trim()}” 검색 결과가 없어요.`);}catch(error){if(!controller.signal.aborted)setSearchMessage(error instanceof Error?error.message:'장소 검색에 실패했어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
   const askAI=async()=>{if(busy||!prompt.trim()||!discoveryDayId||!doc||(pendingRecommendation.current&&!recommendationContextMatches))return;const exclude=doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid);const hadPending=Boolean(pendingRecommendation.current);if(!hadPending){recommendationContext.current={dayId:discoveryDayId,replaceTargetId};setAiPlace(null);setAiAlternatives([]);}pendingRecommendation.current=retainRecommendationRequest(pendingRecommendation.current,prompt.trim(),discoveryDayId,exclude);if(!hadPending)setRecommendationPending(true);const request=pendingRecommendation.current;const requestContext={...recommendationContext.current};const controller=new AbortController();abort.current?.abort();abort.current=controller;setBusy(true);try{const result=await recommendPlace(tripId,request.prompt,request.dayId,request.exclude,request.key,controller.signal);if(controller.signal.aborted)return;pendingRecommendation.current=null;setRecommendationPending(false);if(requestContext.dayId===currentTargetRef.current.dayId&&requestContext.replaceTargetId===currentTargetRef.current.replaceTargetId){setAiPlace(result.place);setAiAlternatives(result.alternatives);setTab('ai');setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');}else{setAiPlace(null);setAiAlternatives([]);setMessage('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');}}catch(error){if(!controller.signal.aborted)setMessage(error instanceof Error?error.message:'추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
   useEffect(()=>()=>abort.current?.abort(),[]);
+  useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),4200);return()=>window.clearTimeout(timeout);},[message]);
   useEffect(()=>{discoveryMemory.set(tripId,{tab,query,results,prompt,aiPlace,aiAlternatives,pending:pendingRecommendation.current,context:recommendationContext.current});},[tripId,tab,query,results,prompt,aiPlace,aiAlternatives,recommendationPending]);
   useEffect(()=>{if(!menu)return;const focusTimer=window.setTimeout(()=>menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus(),0);const outside=(event:PointerEvent)=>{if(!menuRef.current?.contains(event.target as globalThis.Node))setMenu(null);};const escape=(event:globalThis.KeyboardEvent)=>{if(event.key==='Escape'){setMenu(null);menuOpener.current?.focus();}};window.addEventListener('pointerdown',outside);window.addEventListener('keydown',escape);return()=>{window.clearTimeout(focusTimer);window.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',escape);};},[menu]);
+  useLayoutEffect(()=>{
+    if(!menu)return;
+    const place=()=>{const rect=menuRef.current?.getBoundingClientRect();if(!rect)return;setMenuPosition({left:Math.max(8,Math.min(menu.x,window.innerWidth-rect.width-8)),top:Math.max(8,Math.min(menu.y,window.innerHeight-rect.height-8))});};
+    const frame=window.requestAnimationFrame(place);window.addEventListener('resize',place);
+    return()=>{window.cancelAnimationFrame(frame);window.removeEventListener('resize',place);};
+  },[menu]);
   const keydown=(event:ReactKeyboardEvent<HTMLElement>)=>{
     if(event.key==='Escape'&&placeConnectionMode){event.preventDefault();cancelPlaceConnection();return;}
     if((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]'))return;
@@ -319,32 +402,22 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     else if(event.key==='Delete'||event.key==='Backspace'){event.preventDefault();remove();}
     else if((event.key==='F10'&&event.shiftKey)||event.key==='ContextMenu'){event.preventDefault();const target=(event.target as HTMLElement).closest<HTMLElement>('.react-flow__node');const nodeId=target?.getAttribute('data-id')??selectedId;const rect=target?.getBoundingClientRect()??shell.current?.getBoundingClientRect();context({preventDefault:()=>event.preventDefault(),clientX:rect?rect.left+24:100,clientY:rect?rect.top+24:100},nodeId||undefined);}
   };
-  const context=(event:{preventDefault:()=>void;clientX:number;clientY:number},nodeId?:string,dayLinkId?:string,edgeId?:string,dayTarget?:string)=>{event.preventDefault();menuOpener.current=document.activeElement instanceof HTMLElement?document.activeElement:null;let dayIdForMenu=dayTarget;if(nodeId?.startsWith('day-frame:')){dayIdForMenu=nodeId.slice('day-frame:'.length);nodeId=undefined;}if(nodeId){const target=board.nodes.find(node=>node.id===nodeId);if(!target)return;setDayId(target.data.model.dayId);setAddTargetDayId(target.data.model.dayId);setSelectedId(nodeId);setReplaceTargetId('');setSelectedEdgeId('');setSelectedDayLinkId('');}else if(dayLinkId){setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId(dayLinkId);}else if(edgeId){setSelectedId('');setSelectedEdgeId(edgeId);setSelectedDayLinkId('');}else{setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');}if(dayIdForMenu){if(dayIdForMenu!==discoveryDayId)setReplaceTargetId('');setAddTargetDayId(dayIdForMenu);setDayId(dayIdForMenu);}setMenu({x:event.clientX,y:event.clientY,nodeId,dayId:dayIdForMenu,dayLinkId,edgeId});};
+  const context=(event:{preventDefault:()=>void;clientX:number;clientY:number},nodeId?:string,dayLinkId?:string,edgeId?:string,dayTarget?:string)=>{event.preventDefault();setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');menuOpener.current=document.activeElement instanceof HTMLElement?document.activeElement:null;let dayIdForMenu=dayTarget;if(nodeId?.startsWith('day-frame:')){dayIdForMenu=nodeId.slice('day-frame:'.length);nodeId=undefined;}if(nodeId){const target=board.nodes.find(node=>node.id===nodeId);if(!target)return;setDayId(target.data.model.dayId);setAddTargetDayId(target.data.model.dayId);setSelectedId(nodeId);setReplaceTargetId('');setSelectedEdgeId('');setSelectedDayLinkId('');}else if(dayLinkId){setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId(dayLinkId);}else if(edgeId){setSelectedId('');setSelectedEdgeId(edgeId);setSelectedDayLinkId('');}else{setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');}if(dayIdForMenu){if(dayIdForMenu!==discoveryDayId)setReplaceTargetId('');setAddTargetDayId(dayIdForMenu);setDayId(dayIdForMenu);}setMenu({x:event.clientX,y:event.clientY,nodeId,dayId:dayIdForMenu,dayLinkId,edgeId});};
   const openCardMenu=(nodeId:string,element:HTMLElement)=>{const rect=element.getBoundingClientRect();context({preventDefault:()=>{},clientX:rect.right,clientY:rect.bottom},nodeId);};
-  const openToolbarMenu=(element:HTMLElement)=>{const rect=element.getBoundingClientRect();menuOpener.current=element;setMenu({x:rect.left,y:rect.bottom,nodeId:selectedId||undefined,dayId:discoveryDayId||undefined,dayLinkId:selectedDayLinkId||undefined,edgeId:selectedEdgeId||undefined});};
-  const changeDay=(nextId:string)=>{setDayId(nextId);setAddTargetDayId(nextId);setReplaceTargetId('');viewSnapshot.current={dayId:nextId,viewport:viewSnapshot.current.viewport};writeCanvasView(viewScope,viewSnapshot.current);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setMenu(null);};
-  const runCommand=(command:CanvasCommandId)=>{if(command==='undo')undo();else if(command==='redo')redo();else if(command==='add-comment')addComment(undefined,menu?.dayId??discoveryDayId);else if(command==='fit'&&overviewBounds)void flow.current?.fitBounds(overviewBounds,{padding:.14,duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180});else if(command==='toggle-drawer')setDrawerOpen(open=>!open);else if(command==='toggle-day-links')setDayLinksOn(value=>!value);else if(command==='connect-places')startPlaceConnection(selectedModel?.kind==='place'?selectedModel.id:'');else if(command==='copy')copy();else if(command==='paste')paste();else if(command==='disconnect'){if(menu?.dayLinkId||selectedDayLinkId)remove();else if(selectedModel?.kind==='place')publish(board.nodes,board.edges.filter(e=>e.source!==selectedModel.id&&e.target!==selectedModel.id),'이 장소의 기존 연결을 끊었어요.');}else if(command==='delete')remove();};
+  const openToolbarMenu=(element:HTMLElement)=>{const rect=element.getBoundingClientRect();menuOpener.current=element;setMenu({x:rect.left,y:rect.bottom,nodeId:selectedId||undefined,dayId:undefined,dayLinkId:selectedDayLinkId||undefined,edgeId:selectedEdgeId||undefined});};
+  const changeDay=(nextId:string)=>{setDayId(nextId);setAddTargetDayId(nextId);setReplaceTargetId('');viewSnapshot.current={dayId:nextId,viewport:viewSnapshot.current.viewport};writeCanvasView(viewScope,viewSnapshot.current);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setMenu(null);};
+  const startEdgeReconnect=(edgeId:string)=>{const edge=doc?.edges.find(item=>item.id===edgeId);if(!edge)return;startPlaceConnection(edge.source,edge.id);};
+  const runCommand=(command:CanvasCommandId)=>{if(command==='undo')undo();else if(command==='redo')redo();else if(command==='add-comment')addComment(undefined,menu?.dayId??discoveryDayId);else if(command==='fit'&&overviewBounds)void flow.current?.fitBounds(overviewBounds,{padding:.14,duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180});else if(command==='toggle-drawer')setDrawerOpen(open=>!open);else if(command==='toggle-day-links')setDayLinksOn(value=>!value);else if(command==='connect-places'){if(selectedRouteEdge)startEdgeReconnect(selectedRouteEdge.id);else startPlaceConnection(selectedModel?.kind==='place'?selectedModel.id:'');}else if(command==='copy')copy();else if(command==='paste')paste();else if(command==='disconnect'){if(menu?.dayLinkId||selectedDayLinkId)remove();else if(selectedModel?.kind==='place')publish(board.nodes,board.edges.filter(e=>e.source!==selectedModel.id&&e.target!==selectedModel.id),'이 장소의 기존 연결을 끊었어요.');}else if(command==='delete')remove();};
   const syncLabel=preview?'예시 미리보기':sync.status==='saved'?'공유 초안 저장됨':sync.status==='saving'?'저장 중':sync.status==='offline'?'저장 대기':sync.status==='conflict'?'변경 확인 필요':sync.status==='error'?'저장 오류':'공유 일정 불러오는 중';
 
   return <section className={`tw-canvas-embedded ${preview?'is-preview':''}`} aria-label="공동 일정 캔버스" onKeyDown={keydown} tabIndex={-1}>
     <header className="tw-canvas-header">
       <div className="tw-canvas-heading"><h1>일정 캔버스</h1><span>{tripRangeLabel}</span><span className={`tw-canvas-save-state status-${preview?'preview':sync.status}`} role="status">{syncLabel}</span></div>
-      <div className="tw-canvas-toolbar" role="toolbar" aria-label="캔버스 도구">
-        <div className="tw-canvas-toolbar-group" role="group" aria-label="편집">
-          {canvasCommands.filter(item=>['undo','redo','add-comment','connect-places'].includes(item.id)).map(command=><button key={command.id} title={command.label} aria-label={command.label} aria-pressed={command.id==='connect-places'?placeConnectionMode:undefined} className={command.id==='connect-places'&&placeConnectionMode?'is-active':''} disabled={command.id==='undo'?!sync.canUndo:command.id==='redo'?!sync.canRedo:false} onClick={()=>runCommand(command.id)}><CanvasToolIcon command={command.id} /><span>{command.id==='add-comment'?'댓글':command.id==='connect-places'?'장소 연결':''}</span></button>)}
-        </div>
-        <div className="tw-canvas-toolbar-group" role="group" aria-label="보기">
-          {canvasCommands.filter(item=>item.id==='fit').map(command=><button key={command.id} title={command.label} aria-label={command.label} onClick={()=>runCommand(command.id)}><CanvasToolIcon command={command.id} /><span>전체 보기</span></button>)}
-        </div>
-        <div className="tw-canvas-toolbar-group" role="group" aria-label="패널">
-          <button className="tw-toolbar-menu-button" title="편집 메뉴" aria-label="편집 메뉴" aria-haspopup="menu" aria-expanded={Boolean(menu)} onClick={event=>openToolbarMenu(event.currentTarget)}><CanvasToolIcon command="edit-menu" /><span>메뉴</span></button>
-          <button ref={drawerTrigger} title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button>
-        </div>
-      </div>
+      <button ref={drawerTrigger} className="tw-canvas-panel-toggle" title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button>
     </header>
     {placeConnectionMode&&<div className="tw-place-link-mode" role="status"><span>{placeConnectionStartId?`${board.nodes.find(node=>node.id===placeConnectionStartId)?.data.title??'선택한 장소'}에서 이어질 장소를 선택해 주세요.`:'연결을 시작할 장소를 선택해 주세요.'}</span><Button variant="secondary" onClick={()=>cancelPlaceConnection()}>취소</Button><small>Esc로 취소할 수 있어요.</small></div>}
     {preview&&<p className="tw-preview-banner">예시 미리보기 · 이 화면의 변경은 실제 여행방과 공유되지 않아요.</p>}
-    {!preview&&['offline','conflict','error'].includes(sync.status)&&<div className={`tw-sync-status status-${sync.status}`} role="alert"><span>{sync.message||'캔버스 상태를 확인해 주세요.'}</span>{sync.status==='offline'&&<Button variant="secondary" onClick={sync.retry}>다시 연결</Button>}{sync.status==='conflict'&&<><Button variant="secondary" onClick={()=>sync.resolve('local')}>내 변경 유지</Button><Button variant="secondary" onClick={()=>sync.resolve('remote')}>최신 내용 사용</Button></>}</div>}
+    {!preview&&['offline','conflict','error'].includes(sync.status)&&<div className={`tw-sync-status status-${sync.status}`} role="alert"><span>{sync.message||'캔버스 상태를 확인해 주세요.'}</span>{['offline','error'].includes(sync.status)&&sync.state&&<Button variant="secondary" onClick={sync.retry}>다시 저장</Button>}{sync.status==='conflict'&&<><Button variant="secondary" onClick={()=>sync.resolve('local')}>내 변경 유지</Button><Button variant="secondary" onClick={()=>sync.resolve('remote')}>최신 내용 사용</Button></>}</div>}
     <div className={`tw-canvas-shell ${drawerOpen?'':'is-drawer-closed'}`} onKeyDownCapture={event=>{
       if(!placeConnectionMode||(event.key!=='Enter'&&event.key!==' '&&event.key!=='Spacebar'))return;
       const target=event.target as HTMLElement;
@@ -356,7 +429,12 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     }}>
       <section className="tw-flow-area" aria-label="캔버스 작업 영역">
         <div className="tw-flow-canvas" ref={shell} onDragOver={e=>{e.preventDefault();}} onDrop={e=>{e.preventDefault();const raw=e.dataTransfer.getData('application/canvas-contentid');const id=Number(raw);const detail=placeDetails.get(id);if(detail&&flow.current)addPlace(detail,flow.current.screenToFlowPosition({x:e.clientX,y:e.clientY}));}}>
-          {doc&&<OpenCanvasMenu.Provider value={openCardMenu}><ReactFlow<FlowNode>
+          <div className="tw-canvas-tool-dock" role="toolbar" aria-label="캔버스 도구">
+            <div className="tw-canvas-dock-group" role="group" aria-label="실행 기록">{canvasCommands.filter(command=>command.id==='undo'||command.id==='redo').map(command=><button key={command.id} title={command.label} aria-label={command.label} disabled={command.id==='undo'?!sync.canUndo:!sync.canRedo} onClick={()=>runCommand(command.id)}><CanvasToolIcon command={command.id}/></button>)}</div>
+            <div className="tw-canvas-dock-group" role="group" aria-label="일정 편집">{canvasCommands.filter(command=>command.id==='add-comment'||command.id==='connect-places').map(command=><button key={command.id} title={command.label} aria-label={command.label} aria-pressed={command.id==='connect-places'?placeConnectionMode:undefined} className={command.id==='connect-places'&&placeConnectionMode?'is-active':''} onClick={()=>runCommand(command.id)}><CanvasToolIcon command={command.id}/></button>)}</div>
+            <div className="tw-canvas-dock-group" role="group" aria-label="보기와 더보기">{canvasCommands.filter(command=>command.id==='fit'||command.id==='edit-menu').map(command=><button key={command.id} className={command.id==='edit-menu'?'tw-canvas-options-button':''} title={command.label} aria-label={command.label} aria-haspopup={command.id==='edit-menu'?'menu':undefined} aria-expanded={command.id==='edit-menu'?Boolean(menu):undefined} onClick={event=>command.id==='edit-menu'?openToolbarMenu(event.currentTarget):runCommand(command.id)}><CanvasToolIcon command={command.id}/></button>)}</div>
+          </div>
+          {doc&&<SelectRouteEdge.Provider value={id=>{setSelectedEdgeId(id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setDrawerOpen(true);}}><OpenCanvasMenu.Provider value={openCardMenu}><ReactFlow<FlowNode>
             nodes={flowNodes?.base===doc?flowNodes.nodes:allFrameNodes}
             edges={visibleEdges}
             nodeTypes={nodeTypes}
@@ -378,10 +456,11 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             }}
             onEdgesChange={changes=>{const removed=new Set(changes.filter(change=>change.type==='remove').map(change=>change.id));if(removed.size)publish(board.nodes,board.edges.filter(edge=>!removed.has(edge.id)),'연결을 제거했어요.');}}
             onConnect={connect}
-            isValidConnection={connection=>{if(!connection.source||!connection.target)return false;const sourceDay=connection.source.startsWith('day-frame:');const targetDay=connection.target.startsWith('day-frame:');if(sourceDay||targetDay){if(!sourceDay||!targetDay)return false;return connection.source!==connection.target&&!dayLinks.some(link=>link.source===connection.source!.slice('day-frame:'.length)&&link.target===connection.target!.slice('day-frame:'.length));}return canConnectRoute(connection.source,connection.target,placeMap,doc.edges);}}
+            isValidConnection={connection=>{if(!connection.source||!connection.target)return false;const sourceDay=connection.source.startsWith('day-frame:');const targetDay=connection.target.startsWith('day-frame:');if(sourceDay||targetDay){if(!sourceDay||!targetDay)return false;return connection.source!==connection.target&&!dayLinks.some(link=>link.source===connection.source!.slice('day-frame:'.length)&&link.target===connection.target!.slice('day-frame:'.length));}return canConnectRoute(connection.source,connection.target,placeMap,doc.edges.filter(edge=>!placeConnectionMode||edge.id!==reconnectEdgeId));}}
             onNodeClick={(_,node)=>{if(node.type==='dayFrame')return;if(placeConnectionMode){choosePlaceConnectionNode(node.id);return;}setSelectedId(node.id);setReplaceTargetId('');setDayId(node.data.model.dayId);setAddTargetDayId(node.data.model.dayId);setSelectedEdgeId('');setSelectedDayLinkId('');setDrawerOpen(true);}}
-            onEdgeClick={(_,edge)=>{const dayLinkId=(edge as FlowEdge).data?.dayLinkId;if(edge.type==='dayOrder'&&dayLinkId){setSelectedDayLinkId(dayLinkId);setSelectedEdgeId('');setSelectedId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');return;}setSelectedEdgeId(edge.id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setDrawerOpen(true);}}
-            onPaneClick={()=>{setMenu(null);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');}}
+            onEdgeClick={(_,edge)=>{const dayLinkId=(edge as FlowEdge).data?.dayLinkId;if(edge.type==='dayOrder'&&dayLinkId){setSelectedDayLinkId(dayLinkId);setSelectedEdgeId('');setSelectedId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');return;}setSelectedEdgeId(edge.id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setDrawerOpen(true);}}
+            onReconnect={reconnectRouteEdge}
+            onPaneClick={()=>{setMenu(null);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');}}
             onPaneContextMenu={event=>context(event)}
             onNodeContextMenu={(event,node)=>{event.stopPropagation();context(event,node.id);}}
             onEdgeContextMenu={(event,edge)=>{event.stopPropagation();const flowEdge=edge as FlowEdge;if(flowEdge.type==='dayOrder'&&flowEdge.data?.dayLinkId){context(event,undefined,flowEdge.data.dayLinkId);return;}context(event,undefined,undefined,edge.id);}}
@@ -392,19 +471,60 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             {cardsMeasured && fitTarget && overviewBounds && <FitDayFrames key={fitTarget.key} bounds={overviewBounds} onFitted={completeFit}/>}
             {cardsMeasured && initialFitPending && !fitTarget && !restoreViewport && initialBounds && <FitDayFrames bounds={initialBounds} onFitted={completeInitialFit}/>}
             <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="var(--tw-grid)"/><Controls showInteractive={false}/>
-          </ReactFlow></OpenCanvasMenu.Provider>}
+          </ReactFlow></OpenCanvasMenu.Provider></SelectRouteEdge.Provider>}
           {!doc&&<div className="tw-canvas-loading">{sync.status==='error'?'공유 캔버스를 불러오지 못했어요.': '공유 캔버스를 불러오고 있어요.'}<Button variant="secondary" onClick={sync.retry}>다시 불러오기</Button></div>}
           {doc&&doc.nodes.length===0&&<div className="tw-empty-canvas"><strong>아직 일정이 비어 있어요</strong><p>날짜별 영역에 장소를 검색하거나 추천을 받아 첫 카드를 추가해 보세요.</p><Button variant="secondary" onClick={()=>setDrawerOpen(true)}>장소 찾기</Button></div>}
-          {menu&&createPortal(<div ref={menuRef} className="tw-context-menu" role="menu" aria-label="캔버스 편집 메뉴" style={{left:Math.max(8,Math.min(menu.x,window.innerWidth-230)),top:Math.max(8,Math.min(menu.y,window.innerHeight-330)),maxHeight:Math.max(96,window.innerHeight-Math.max(8,Math.min(menu.y,window.innerHeight-330))-8)}} onKeyDown={e=>{if(e.key==='Escape'){setMenu(null);menuOpener.current?.focus();return;}if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();const items=[...e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];const i=items.indexOf(document.activeElement as HTMLButtonElement);items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length]?.focus();}}}>
-            {contextPlace&&<CanvasPlaceMenuSummary place={contextPlace}/>} {menu.dayId&&<button role="menuitem" onClick={()=>{setAddTargetDayId(menu.dayId!);setDayId(menu.dayId!);setSelectedId('');setReplaceTargetId('');setTab('ai');setDrawerOpen(true);setMenu(null);}}>이 날짜에 장소 추가</button>}{menu.edgeId&&board.edges.some(edge=>edge.id===menu.edgeId)&&<button role="menuitem" onClick={()=>{setSelectedEdgeId(menu.edgeId!);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setDrawerOpen(true);setMenu(null);}}>이 구간 편집</button>}{canvasCommands.filter(command=>command.surface==='context'||command.surface==='both').map(command=><button key={command.id} role="menuitem" aria-pressed={command.id==='toggle-day-links'?dayLinksOn:undefined} disabled={command.id==='undo'?!sync.canUndo:command.id==='redo'?!sync.canRedo:command.id==='delete'?!menu.nodeId&&!menu.dayLinkId&&!menu.edgeId&&!selectedId&&!selectedDayLinkId&&!selectedEdgeId:command.id==='paste'?!hasClipboard:command.id==='disconnect'?!selectedDayLinkId&&selectedModel?.kind!=='place':command.id==='copy'?!menu.nodeId&&!selectedId:false} onClick={()=>{runCommand(command.id);setMenu(null);}}>{command.id==='toggle-day-links'?dayLinksOn?'날짜 흐름선 숨기기':'날짜 흐름선 표시':command.label}</button>)}<label className="tw-context-day">날짜 이동<select className="text-input" value={menu.nodeId?board.nodes.find(n=>n.id===menu.nodeId)?.data.model.dayId??activeDayId:activeDayId} disabled={!menu.nodeId} onChange={e=>{if(menu.nodeId)moveNode(menu.nodeId,e.target.value);setMenu(null);}}>{doc?.days.map((item,index)=><option key={item.id} value={item.id}>{item.date??`${index+1}일차`}</option>)}</select></label><button role="menuitem" disabled={!menu.nodeId} onClick={()=>{setDrawerOpen(true);setMenu(null);}}>선택 정보</button><button role="menuitem" disabled={selectedModel?.kind!=='comment'} onClick={()=>{setDrawerOpen(true);setMenu(null);}}>댓글 편집</button><div className="tw-context-colors" aria-label="카드 색상">{colorOptions.map(([value,label])=><button key={value} disabled={!menu.nodeId} aria-label={`${label} 색상`} title={`${label} 색상`} onClick={()=>{if(menu.nodeId)editNode(menu.nodeId,m=>({...m,color:value}));setMenu(null);}}>●</button>)}</div><button role="menuitem" onClick={()=>setMenu(null)}>닫기</button>
+          {menu&&createPortal(<div ref={menuRef} className="tw-context-menu" role="menu" aria-label="편집 메뉴" style={{position:'fixed',left:menuPosition.left,top:menuPosition.top,maxHeight:'calc(100vh - 16px)',overflowY:'auto'}} onKeyDown={event=>{
+            if(event.key==='Escape'){setMenu(null);menuOpener.current?.focus();return;}
+            if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !(event.target instanceof HTMLSelectElement)) {
+              event.preventDefault();
+              const items = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),select,summary')]
+                .filter(item => item.tagName === 'SUMMARY' || !item.closest('details:not([open])'));
+              const index = items.indexOf(document.activeElement as HTMLElement);
+              const offset = event.key === 'ArrowDown' ? 1 : -1;
+              items[(index + offset + items.length) % items.length]?.focus();
+            }
+          }}>
+            {contextPlace&&<CanvasPlaceMenuSummary place={contextPlace}/>}
+            {menu.dayId&&<button role="menuitem" onClick={()=>{setAddTargetDayId(menu.dayId!);setDayId(menu.dayId!);setSelectedId('');setReplaceTargetId('');setTab('ai');setDrawerOpen(true);setMenu(null);}}>이 날짜에 장소 추가</button>}
+            {contextRouteEdge&&<>
+              <button role="menuitem" onClick={()=>{setSelectedEdgeId(contextRouteEdge.id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setDrawerOpen(true);setMenu(null);}}>이동 시간 편집</button>
+              <button role="menuitem" onClick={()=>{setSelectedEdgeId(contextRouteEdge.id);startEdgeReconnect(contextRouteEdge.id);setMenu(null);}}>도착 장소 바꾸기</button>
+              <button role="menuitem" className="tw-menu-danger" onClick={()=>{remove();setMenu(null);}}>연결 삭제</button>
+            </>}
+            {menu.dayLinkId&&<button role="menuitem" className="tw-menu-danger" onClick={()=>{remove();setMenu(null);}}>날짜 연결 삭제</button>}
+            {contextNode&&<>
+              {contextNode.kind==='place'&&<button role="menuitem" onClick={()=>{setDrawerOpen(true);setMenu(null);}}>장소 정보</button>}
+              {contextNode.kind==='comment'&&<button role="menuitem" onClick={()=>{setDrawerOpen(true);setMenu(null);}}>댓글 편집</button>}
+              <button role="menuitem" onClick={()=>{copy();setMenu(null);}}>복사</button>
+              {hasClipboard&&<button role="menuitem" onClick={()=>{paste();setMenu(null);}}>붙여넣기</button>}
+              {contextNode.kind==='place'&&!contextNodeEdges.some(edge=>edge.source===contextNode.id)&&<button role="menuitem" onClick={()=>{startPlaceConnection(contextNode.id);setMenu(null);}}>여기서 장소 연결</button>}
+              {contextNode.kind==='place'&&contextNodeEdges.some(edge=>edge.source===contextNode.id)&&<button role="menuitem" onClick={()=>{const edge=contextNodeEdges.find(item=>item.source===contextNode.id);if(edge)startEdgeReconnect(edge.id);setMenu(null);}}>연결 바꾸기</button>}
+              {contextNode.kind==='place'&&contextNodeEdges.length>0&&<button role="menuitem" className="tw-menu-danger" onClick={()=>{publish(board.nodes,board.edges.filter(edge=>edge.source!==contextNode.id&&edge.target!==contextNode.id),'이 장소의 연결을 끊었어요.');setMenu(null);}}>장소 연결 끊기</button>}
+              <button role="menuitem" className="tw-menu-danger" onClick={()=>{remove();setMenu(null);}}>삭제</button>
+              <details className="tw-context-secondary"><summary>날짜와 색상</summary><label className="tw-context-day">여행 날짜<select className="text-input" value={contextNode.dayId} onChange={event=>{moveNode(contextNode.id,event.target.value);setMenu(null);}}>{doc?.days.map((item,index)=><option key={item.id} value={item.id}>{item.date??`${index+1}일차`}</option>)}</select></label><div className="tw-context-colors" aria-label="카드 색상">{colorOptions.map(([value,label])=><button type="button" key={value} aria-label={`${label} 색상`} title={`${label} 색상`} onClick={()=>{editNode(contextNode.id,model=>({...model,color:value}));setMenu(null);}}>●</button>)}</div></details>
+            </>}
+            {menu.dayId&&!contextNode&&<button role="menuitem" onClick={()=>runCommand('toggle-day-links')}>{dayLinksOn?'날짜 흐름선 숨기기':'날짜 흐름선 표시'}</button>}
+            {!contextNode&&!contextRouteEdge&&!menu.dayLinkId&&!menu.dayId&&<>
+              <button role="menuitem" onClick={()=>{addComment(undefined,discoveryDayId);setMenu(null);}}>댓글 추가</button>
+              {hasClipboard&&<button role="menuitem" onClick={()=>{paste();setMenu(null);}}>붙여넣기</button>}
+              <button role="menuitem" onClick={()=>runCommand('toggle-day-links')}>{dayLinksOn?'날짜 흐름선 숨기기':'날짜 흐름선 표시'}</button>
+            </>}
+            {sync.state&&['offline','error'].includes(sync.status)&&<button role="menuitem" onClick={()=>{sync.retry();setMenu(null);}}>저장 다시 시도</button>}
+            {!preview&&routes.hasIssue&&<button role="menuitem" onClick={()=>{routes.retry();setMenu(null);}}>이동 시간 다시 확인</button>}
+            {(sync.canUndo||sync.canRedo)&&<details className="tw-context-secondary"><summary>실행 기록</summary>{sync.canUndo&&<button role="menuitem" onClick={()=>{undo();setMenu(null);}}>실행 취소</button>}{sync.canRedo&&<button role="menuitem" onClick={()=>{redo();setMenu(null);}}>다시 실행</button>}</details>}
           </div>,document.body)}
-        </div><div className="tw-canvas-summary"><strong>전체 일정</strong><span>{doc?.days.length??0}일</span><span>장소 {totalPlaces}</span><span>댓글 {totalComments}</span><span>날짜 연결 {totalDayLinks}</span><span>장소 연결 {totalConnections}</span>{!preview&&routes.routeCount>0&&<span>이동 시간 {routes.routeCount}건</span>}{!preview&&routes.hasIssue&&<><span role="status">일부 이동 시간을 확인하지 못했어요.</span><button type="button" onClick={routes.retry}>다시 확인</button></>}</div>{message && <p className="tw-canvas-help" role="status">{message}</p>}
+        </div>{message&&<p className="tw-canvas-feedback" role="status">{message}</p>}
       </section>
       {drawerOpen&&<aside className="tw-place-drawer" aria-label="장소 및 카드 편집 패널" onKeyDown={event => { if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); closeDrawer(); } }}>
         <div className="tw-drawer-heading"><h2>{selectedModel?.kind==='place'?'장소 정보':selectedModel?.kind==='comment'?'공유 댓글':selectedRouteEdge?'이동 구간':replaceTargetId?'장소 바꾸기':'장소 찾기'}</h2><button type="button" onClick={closeDrawer} aria-label="장소 패널 닫기"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
         {selectedModel?.kind==='place'&&<PlaceInspector node={selectedModel} detail={placeDetails.get(selectedModel.contentid)} days={doc?.days??[]} onRetryDetail={()=>void retryPlaceDetail(selectedModel.contentid)} onBack={()=>{setSelectedId('');setReplaceTargetId('');setTab('ai');}} onReplace={()=>{setReplaceTargetId(selectedModel.id);setSelectedId('');setTab('search');setSearchMessage('');setDrawerOpen(true);}} onStartConnect={()=>startPlaceConnection(selectedModel.id)} onColor={color=>editNode(selectedModel.id,m=>({...m,color}))} onMove={next=>moveNode(selectedModel.id,next)} onDisconnect={()=>publish(board.nodes,board.edges.filter(e=>e.source!==selectedModel.id&&e.target!==selectedModel.id),'이 장소의 연결을 끊었어요.')}/>}
         {selectedModel?.kind==='comment'&&<section className="tw-inspector"><div className="tw-inspector-actions"><Button variant="secondary" onClick={()=>{setSelectedId('');setTab('ai');}}>장소 찾기로 돌아가기</Button></div><CanvasCommentEditor key={selectedModel.id} tripId={tripId} node={selectedModel} onCommit={(text,expectedText,force)=>sync.update(current=>({...current,nodes:current.nodes.map(node=>node.id===selectedModel.id&&node.kind==='comment'&&(force||node.text===expectedText)?{...node,text}:node)}))}/><label htmlFor="tw-comment-day">여행 날짜</label><select id="tw-comment-day" className="text-input" value={selectedModel.dayId} onChange={e=>moveNode(selectedModel.id,e.target.value)}>{doc?.days.map((item,index)=><option key={item.id} value={item.id}>{item.date??`${index+1}일차`}</option>)}</select><ColorPicker value={selectedModel.color} onChange={color=>editNode(selectedModel.id,m=>({...m,color}))}/><Button variant="secondary" onClick={remove}>댓글 삭제</Button></section>}
-        {!selectedModel&&selectedRouteEdge&&doc&&<CanvasEdgeEditor key={selectedEdgeKey} commonMode={transport} preference={selectedEdgePreference} onSave={override=>edgePrefs.set(selectedRouteEdge,doc,override)} storageError={edgePrefs.storageError} fromName={selectedEdgeName(selectedEdgeSource)} toName={selectedEdgeName(selectedEdgeTarget)} automaticLabel={routes.labels.get(selectedRouteEdge.id)??'시간 미확인'}/>}
+        {!selectedModel&&selectedRouteEdge&&doc&&selectedEdgeSource?.kind==='place'&&selectedEdgeTarget?.kind==='place'&&<>
+          <div className="tw-inspector-actions"><Button variant="secondary" onClick={()=>startEdgeReconnect(selectedRouteEdge.id)}>도착 장소 바꾸기</Button></div>
+          <CanvasEdgeEditor key={selectedEdgeKey} tripId={tripId} conditionsVersion={conditionsVersion} sourceContentid={selectedEdgeSource.contentid} targetContentid={selectedEdgeTarget.contentid} preview={preview} commonMode={transport} preference={selectedEdgePreference} onSave={override=>edgePrefs.set(selectedRouteEdge,doc,override)} storageError={edgePrefs.storageError} fromName={selectedEdgeName(selectedEdgeSource)} toName={selectedEdgeName(selectedEdgeTarget)} automaticLabel={routes.labels.get(selectedRouteEdge.id)??'시간 미확인'}/>
+          {!preview&&routes.hasIssue&&<Button variant="secondary" onClick={routes.retry}>이동 시간 다시 확인</Button>}
+        </>}
         {!selectedModel&&!selectedRouteEdge&&<div className="tw-discovery">
           {replaceTargetId&&<p className="tw-replace-target-note" role="status">현재 장소 · {replaceName}</p>}
           <div className="tw-discovery-tabs" role="tablist" aria-label="장소 찾기 방식"><button type="button" role="tab" aria-selected={tab==='ai'} onClick={()=>setTab('ai')}>AI 추천</button><button type="button" role="tab" aria-selected={tab==='search'} onClick={()=>setTab('search')}>직접 검색</button></div>

@@ -387,3 +387,41 @@ test('schema migration and downgrade rejections end the pending write with a cle
     assert.equal(attempts, 1, 'a rejected migration request is not retried as an unknown write outcome');
   }
 });
+
+test('a definite validation rejection accepts a later edit and retries with a fresh key', async () => {
+  const h = harness(); await h.engine.refresh();
+  const attempts=[];let server=h.read();
+  h.transport.save=async request=>{
+    attempts.push(structuredClone(request));
+    if(attempts.length===1)throw new CanvasHttpError(400,'VALIDATION_ERROR','저장 요청을 확인하지 못했어요.');
+    server=state(request.body,server.revision+1);return structuredClone(server);
+  };
+  h.engine.update(changePosition(88));await h.engine.save();
+  assert.equal(h.engine.getSnapshot().status,'error');
+  assert.equal(h.engine.getSnapshot().message,'저장 요청을 확인하지 못했어요.');
+  h.engine.update(changeOtherColor('sky'));
+  assert.equal(h.engine.getSnapshot().status,'saving');
+  assert.equal(h.engine.getSnapshot().message,'');
+  await h.engine.save();
+  assert.equal(attempts.length,2);
+  assert.notEqual(attempts[0].key,attempts[1].key,'a definitely rejected request gets a fresh idempotency key');
+  assert.equal(h.engine.getSnapshot().document.nodes[0].position.x,88);
+  assert.equal(h.engine.getSnapshot().document.nodes[1].color,'sky');
+});
+
+test('a definite undo rejection restores acknowledged state and leaves history usable', async () => {
+  const h=harness();await h.engine.refresh();
+  const originalSave=h.transport.save;let attempts=0;
+  h.transport.save=async request=>{attempts+=1;if(attempts===2)throw new CanvasHttpError(400,'VALIDATION_ERROR','요청을 확인해 주세요.');return originalSave(request);};
+  h.engine.update(changePosition(77));await h.engine.save();
+  const acknowledged=structuredClone(h.engine.getSnapshot().document);
+  assert.equal(h.engine.undo(),true);await h.engine.save();
+  assert.equal(h.engine.getSnapshot().status,'error');
+  assert.deepEqual(h.engine.getSnapshot().document,acknowledged,'rejected inverse is rolled back to server state');
+  assert.equal(h.engine.getSnapshot().canUndo,true);
+  assert.equal(h.engine.getSnapshot().canRedo,false);
+  assert.equal(h.engine.undo(),true);
+  await h.engine.save();
+  assert.deepEqual(h.engine.getSnapshot().document.nodes[0].position,{x:200,y:0});
+  assert.equal(h.engine.getSnapshot().canRedo,true);
+});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  canvasEdgeOverrideFromFields, canvasEdgePreferenceStorageKey, getCanvasEdgePreference,
+  canvasEdgeDraftModeKey, canvasEdgeOverrideFromFields, canvasEdgePreferenceStorageKey, getCanvasEdgePreference,
   parseCanvasEdgePreferenceStore, readCanvasEdgePreferenceStore, resolveCanvasEdgeTime,
   setCanvasEdgePreference, writeCanvasEdgePreferenceStore,
 } from '../src/features/workspace/canvasEdgePreferences.ts';
@@ -43,6 +43,14 @@ test('form values accept optional modes and integer minutes, rejecting decimals 
   assert.deepEqual(canvasEdgeOverrideFromFields('',''),{value:null,error:null});
   for(const value of ['0','1.5','-2','1441','abc'])assert.ok(canvasEdgeOverrideFromFields('car',value).error,`reject ${value}`);
   assert.ok(canvasEdgeOverrideFromFields('teleport','').error);
+});
+
+test('manual drafts stay associated with their effective mode across unsaved mode switches',()=>{
+  const drafts=new Map([[canvasEdgeDraftModeKey('car'),'35']]);
+  assert.equal(drafts.get(canvasEdgeDraftModeKey('walk'))??'','');
+  drafts.set(canvasEdgeDraftModeKey('walk'),'22');
+  assert.equal(drafts.get(canvasEdgeDraftModeKey('car')),'35');
+  assert.equal(drafts.get(canvasEdgeDraftModeKey(null))??'','');
 });
 
 test('storage reads tolerate invalid saved records and surface denied storage',()=>{

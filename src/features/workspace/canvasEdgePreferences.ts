@@ -99,7 +99,7 @@ export function setCanvasEdgePreference(
   return next;
 }
 
-export function resolveCanvasEdgeTime(preference: CanvasEdgePreference | null, commonMode: CanvasTravelMode): CanvasEdgeTimeResolution {
+export function resolveCanvasEdgeTime(preference: CanvasEdgeOverride | null, commonMode: CanvasTravelMode): CanvasEdgeTimeResolution {
   const mode = preference?.modeOverride ?? commonMode;
   if (preference?.manualMinutes !== null && preference?.manualMinutes !== undefined) return { mode, source: 'manual', minutes: preference.manualMinutes };
   if (preference?.modeOverride && preference.modeOverride !== commonMode) return { mode, source: 'required', minutes: null };
@@ -113,6 +113,8 @@ export function modeLabel(mode: CanvasTravelMode): string {
   if (mode === 'charter') return '전세버스';
   return '미정';
 }
+
+export function canvasEdgeDraftModeKey(mode: CanvasTravelMode): string { return mode ?? 'none'; }
 
 export function canvasEdgeOverrideFromFields(mode: string, minutes: string): { value: CanvasEdgeOverride | null; error: string | null } {
   const modeOverride: CanvasEdgeMode | null = mode === '' ? null : edgeModes.includes(mode as CanvasEdgeMode) ? mode as CanvasEdgeMode : null;

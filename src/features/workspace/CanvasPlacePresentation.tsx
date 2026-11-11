@@ -60,20 +60,24 @@ export function CanvasPlaceCardContent({ place, visitLabel, candidate, schedule 
   const minutes = stayMinutes(schedule, place?.estimatedStayMinutes);
   const clock = visitLabel?.replace(/^예상 시각 /u, '').replace(/ KST$/u, '');
   const price = priceText(place);
+  const categoryLabel = [placeCategory(place), candidate ? '후보' : ''].filter(Boolean).join(' · ');
   return <>
-    <div className="tw-place-identity">
-      <PlacePhoto place={place} className="tw-place-thumb" reserve />
-      <div className="tw-place-title">
-        <small>{[placeCategory(place), candidate ? '후보' : ''].filter(Boolean).join(' · ')}</small>
+    <div className="tw-stop-time" aria-label={`방문 시간 ${clock || '미정'}`}>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.6"/><path d="M10 6v4l2.6 1.7"/></svg>
+      {clock || '시간 미정'}
+    </div>
+    <div className="tw-stop-body">
+      <div className="tw-stop-heading">
+        {categoryLabel && <small>{categoryLabel}</small>}
         <strong>{place?.title || '장소 확인 중'}</strong>
         <p className="tw-place-address" title={place?.address ?? undefined}>{place?.address || '주소 정보 없음'}</p>
       </div>
+      <PlacePhoto place={place} className="tw-stop-picture" />
     </div>
-    <dl className="tw-visit-facts">
-      <div><dt>방문 시간</dt><dd>{clock || '미정'}</dd></div>
-      <div><dt>체류 시간</dt><dd>{minutes == null ? '미정' : `${minutes}분`}</dd></div>
-      <div><dt>가격</dt><dd title={price}>{price || '정보 없음'}</dd></div>
-    </dl>
+    <div className="tw-stop-foot">
+      <span aria-label={`체류 시간 ${minutes == null ? '미정' : minutes + '분'}`}>{minutes != null ? `체류 ${minutes}분` : '체류 미정'}</span>
+      <span className="tw-stop-fee" title={price}>{price || '요금 미확인'}</span>
+    </div>
   </>;
 }
 

@@ -45,6 +45,17 @@ test('route labels round up partial minutes and never invent a duration', () => 
   assert.equal(formatCanvasRouteLabel(null), '시간 미확인');
 });
 
+test('an explicit leg mode is sent as an optional route query and validated against the echoed result', async () => {
+  let captured;
+  const overrideInput={...input,mode:'car',modeOverride:'car'};
+  const route=await getCanvasRoute(overrideInput,undefined,{fetcher:async(path,init)=>{
+    captured={path,init};return new Response(JSON.stringify(result({mode:'car',durationSeconds:900})),{status:200});
+  }});
+  assert.equal(route.mode,'car');
+  assert.match(captured.path,/\?sourceContentid=-17&targetContentid=22&expectedConditionsVersion=3&mode=car$/u);
+  await assert.rejects(getCanvasRoute({...overrideInput,mode:'walk'},undefined,{fetcher:async()=>new Response(JSON.stringify(result()),{status:200})}),/경로 조회 정보를 확인/u);
+});
+
 test('route requests include only current-day directed place edges and deduplicate content pairs', () => {
   const day = id(1); const otherDay = id(2);
   const document = {
@@ -69,6 +80,20 @@ test('route requests include only current-day directed place edges and deduplica
   assert.deepEqual(requests[0].edgeIds, [id(20), id(21)]);
   assert.equal(collectCanvasRouteRequests(uuid, null, 'car', document, day).length, 0);
   assert.notEqual(canvasRouteKey({ ...input, sourceContentid: 22, targetContentid: -17 }), canvasRouteKey(input));
+});
+
+test('saved edge modes create effective-mode route requests without changing common-mode legs',()=>{
+  const day=id(1);const document={nodes:[
+    {id:id(10),kind:'place',dayId:day,contentid:101},
+    {id:id(11),kind:'place',dayId:day,contentid:202},
+  ],edges:[{id:id(20),source:id(10),target:id(11)},{id:id(21),source:id(10),target:id(11)}]};
+  const overrides=new Map([[id(20),'walk']]);
+  const requests=collectCanvasRouteRequests(uuid,8,'car',document,day,edgeId=>overrides.get(edgeId)??'car');
+  assert.equal(requests.length,2);
+  const walking=requests.find(request=>request.mode==='walk');const common=requests.find(request=>request.mode==='car');
+  assert.equal(walking.modeOverride,'walk');assert.deepEqual(walking.edgeIds,[id(20)]);
+  assert.equal(Object.hasOwn(common,'modeOverride'),false);assert.deepEqual(common.edgeIds,[id(21)]);
+  assert.notEqual(canvasRouteKey(walking),canvasRouteKey(common));
 });
 
 test('all-day canvas requests retain each day-owned route independently', () => {
