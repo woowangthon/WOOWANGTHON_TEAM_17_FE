@@ -36,16 +36,40 @@ const previewConditions: RoomDraft = {
 };
 type View = 'preparation' | 'canvas';
 
-function PreferenceImportanceChoice({
-  name, label, value, onChange,
-}: { name: 'avoidImportance' | 'foodImportance'; label: string; value: 'preferred' | 'required'; onChange: (value: 'preferred' | 'required') => void }) {
-  return <fieldset className="prep-importance-choice" aria-describedby="tw-importance-hint">
-    <legend>{label}</legend>
-    <div className="prep-importance-options">
-      <label className={value === 'preferred' ? 'is-selected' : ''}><input type="radio" name={name} value="preferred" checked={value === 'preferred'} onChange={() => onChange('preferred')} /><span>가능하면 반영</span></label>
-      <label className={value === 'required' ? 'is-selected' : ''}><input type="radio" name={name} value="required" checked={value === 'required'} onChange={() => onChange('required')} /><span>필수로 반영</span></label>
+type RankedPreferenceProps = {
+  field: 'avoid' | 'food';
+  label: string;
+  placeholder: string;
+  value: string;
+  importance: 'preferred' | 'required';
+  issue: string;
+  onChange: (value: string) => void;
+  onImportanceChange: (value: 'preferred' | 'required') => void;
+};
+
+function RankedPreferenceField({ field, label, placeholder, value, importance, issue, onChange, onImportanceChange }: RankedPreferenceProps) {
+  const inputId = `tw-${field}`;
+  const issueId = `${inputId}-issue`;
+  return <div className="field prep-preference-row">
+    <div className="prep-preference-heading">
+      <label htmlFor={inputId}>{label}</label>
+      {value.trim() && <fieldset className="prep-importance-choice" aria-describedby="tw-importance-hint">
+        <legend className="sr-only">{label} 반영 방식</legend>
+        <div className="prep-importance-options">
+          {([['preferred', '선호'], ['required', '필수']] as const).map(([mode, text]) =>
+            <label key={mode}>
+              <input type="radio" name={`${field}Importance`} value={mode} checked={importance === mode} onChange={() => onImportanceChange(mode)} />
+              <span>{text}</span>
+            </label>
+          )}
+        </div>
+      </fieldset>}
     </div>
-  </fieldset>;
+    <input id={inputId} className="text-input" maxLength={500} value={value} placeholder={placeholder}
+      aria-invalid={Boolean(issue)} aria-describedby={issue ? `${issueId} tw-importance-hint` : 'tw-importance-hint'}
+      onChange={event => onChange(event.target.value)} />
+    {issue && <p className="prep-personal-field-error" id={issueId} role="alert">{issue}</p>}
+  </div>;
 }
 
 export default function RoomPage() {
@@ -301,8 +325,8 @@ export default function RoomPage() {
   const issueMessage = (field: 'likes' | 'avoid' | 'food' | 'walking') => {
     if (!issueFor(field)) return '';
     if (field === 'food') return '장소 정보로 이 음식 조건을 확인할 수 없어요. 필수라면 방문할 식당에 확인해 주세요.';
-    if (field === 'avoid') return '장소 정보로 이 조건을 확인할 수 없어요. 단순한 선호라면 ‘가능하면 반영’을 선택해 주세요.';
-    if (field === 'likes') return '좋아하는 것과 피하고 싶은 것이 함께 있어요. 싫어하는 항목을 ‘피하고 싶은 장소나 활동’으로 옮겨 주세요.';
+    if (field === 'avoid') return '필수 조건을 장소 정보로 확인할 수 없어요. 선호라면 ‘선호’를 선택해 주세요.';
+    if (field === 'likes') return '좋아하는 것과 피하고 싶은 것이 함께 있어요. 싫어하는 항목을 ‘피하고 싶은 장소·활동’으로 옮겨 주세요.';
     return '걷기 제한을 선택하고 내 취향을 다시 저장해 주세요.';
   };
   const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '준비 완료', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
@@ -378,7 +402,7 @@ export default function RoomPage() {
               <div className="prep-date-fields"><Input id="start-date" label="여행 시작일" type="date" value={conditionForm.startDate} error={fieldErrors.startDate} onChange={(event) => updateCondition('startDate', event.target.value)} /><Input id="end-date" label="여행 마지막 날" type="date" value={conditionForm.endDate} error={fieldErrors.endDate} onChange={(event) => updateCondition('endDate', event.target.value)} /></div>
               <div className="prep-two-fields"><div className="prep-input-wrap"><Input id="people" label="예정 인원" type="number" min="1" max="50" value={conditionForm.expectedPeople} placeholder="인원" error={fieldErrors.expectedPeople} onChange={(event) => updateCondition('expectedPeople', event.target.value)} /><small>현재 참여 {people.length}명</small></div><Input id="budget" label="전체 여행 예산 (원)" type="number" min="1" max="1000000000" value={conditionForm.budget} placeholder="예산 입력" error={fieldErrors.budget} onChange={(event) => updateCondition('budget', event.target.value)} /></div>
               <fieldset className="prep-transport" id="transport" aria-describedby={fieldErrors.transport ? 'transport-error' : undefined}><legend>이동수단</legend><div className="prep-transport-options">{([['car', '자가용'], ['transit', '대중교통'], ['charter', '전세버스'], ['walk', '도보'], ['undecided', '미정']] as const).map(([value, label]) => <button type="button" className={`prep-transport-option ${conditionForm.transport === value ? 'is-selected' : ''}`} key={value} aria-pressed={conditionForm.transport === value} onClick={() => updateCondition('transport', value)}>{label}</button>)}</div>{fieldErrors.transport && <p className="field-error" id="transport-error" role="alert">{fieldErrors.transport}</p>}</fieldset>
-              <PreparationScheduleFields key={tripId ?? ''} tripId={tripId ?? ''} value={{ departureTime: conditionForm.departureTime }} departure={conditionForm.departure} returnRoute={conditionForm.returnRoute} departureError={fieldErrors.departure} departureTimeError={fieldErrors.departureTime} departureContentidError={fieldErrors.departureContentid} returnRouteError={fieldErrors.returnRoute} disabled={!canEdit || shared.saving} onChange={(key, value) => updateCondition(key, value)} onDepartureChange={value => updateCondition('departure', value)} onDepartureContentidChange={value => updateCondition('departureContentid', value)} onReturnRouteChange={value => updateCondition('returnRoute', value)} />
+              <PreparationScheduleFields key={`${tripId ?? ''}:${!canEdit || shared.saving ? 'locked' : 'editable'}`} tripId={tripId ?? ''} value={{ departureTime: conditionForm.departureTime }} departure={conditionForm.departure} returnRoute={conditionForm.returnRoute} departureError={fieldErrors.departure} departureTimeError={fieldErrors.departureTime} departureContentidError={fieldErrors.departureContentid} returnRouteError={fieldErrors.returnRoute} disabled={!canEdit || shared.saving} onChange={(key, value) => updateCondition(key, value)} onDepartureChange={value => updateCondition('departure', value)} onDepartureContentidChange={value => updateCondition('departureContentid', value)} onReturnRouteChange={value => updateCondition('returnRoute', value)} />
               {showLegacyAnchorGuide && <aside className="prep-schedule-hint" aria-label="기존 공통 일정 정보 안내"><p>기존 공통 정보에 장소와 시간이 지정되지 않았어요. 그대로 보관하거나 내 취향 원문으로 옮길 수 있어요.</p>{legacyLodgingNeedsAnchor && conditions.lodging.trim() && <p><strong>기존 공통 숙소 정보:</strong> {conditions.lodging}</p>}{legacyScheduleNeedsAnchor && conditions.fixedSchedule.trim() && <p><strong>기존 공통 약속 정보:</strong> {conditions.fixedSchedule}</p>}{legacyAnchorsMoved ? <p role="status">내 취향 원문으로 복사했어요. 조건 저장 후 내 취향에서 분석해 주세요.</p> : <Button variant="secondary" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onClick={moveLegacyAnchorsToPersonal}>내 취향으로 옮기기</Button>}</aside>}
             </fieldset>
             {canEdit && <div className="prep-condition-save">{(conditionMessage || (!rebaseRequired && shared.saveMessage)) && <span className="prep-condition-status" role="status">{conditionMessage || shared.saveMessage}</span>}<PreparationActionButton label="조건 저장" loading={shared.saving} loadingLabel="조건 저장 중" disabled={!conditionDirty || shared.saving} onClick={() => void saveConditions()} /></div>}
@@ -387,7 +411,7 @@ export default function RoomPage() {
           </section>
 
           <section className="prep-personal-section" aria-labelledby="tw-personal-title">
-            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title" tabIndex={-1}>내 취향</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
+            <header className="prep-section-heading"><div className="prep-title-line"><h2 id="tw-personal-title" tabIndex={-1}>정보 입력</h2><InfoTip label="개인 정보 안내" text="원문과 취향 입력은 본인에게만 표시돼요." /></div></header>
             {!isPreview && personalHook.state !== 'fatal' && personalHook.conditionsChangedNotice && <p className="prep-conditions-changed-notice" role="status">공통 여행 조건이 바뀌었어요. 최신 조건과 내 취향을 확인한 뒤 준비 완료를 눌러 주세요.</p>}
             {isPreview ? <p className="prep-personal-message">예시 입력이에요. 분석 기능은 연결되지 않았어요.</p> : personalHook.state === 'fatal' ? <p className="prep-personal-message" role="alert">접근 권한을 확인할 수 없어 개인 입력을 숨겼어요.</p> : null}
             {(!isPreview && personalHook.state === 'fatal') ? null : <>
@@ -402,10 +426,14 @@ export default function RoomPage() {
                 {(!isPreview && personalHook.state === 'ready' && personalHook.resultStatus === 'stale' && personalHook.phase === 'idle') && <p className="prep-stale-note" role="status">입력 내용이 바뀌었어요. 필요하면 다시 분석해 주세요.</p>}
                 {(personalHook.resultsVisible || isPreview) ? <>
                   <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
-                  <p className="prep-importance-hint" id="tw-importance-hint">선호하는 내용은 가능한 만큼 반영해요. 필수 조건은 장소 정보로 확인할 수 있어야 일정을 만들어요.</p>
+                  <p className="prep-importance-hint" id="tw-importance-hint">선호는 가능한 만큼 반영해요. 필수로 고른 조건은 장소 정보로 확인돼야 일정을 만들 수 있어요.</p>
                   <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
-                    <div className="field"><label htmlFor="tw-avoid">피하고 싶은 장소나 활동</label><input id="tw-avoid" className="text-input" maxLength={500} value={personal.avoid} placeholder="예: 계단이 많은 코스, 30분 넘는 도보" aria-invalid={Boolean(issueFor('avoid'))} aria-describedby={issueFor('avoid') ? 'tw-avoid-issue' : undefined} onChange={(event) => updatePersonal('avoid', event.target.value)} />{issueFor('avoid') && <p className="prep-personal-field-error" id="tw-avoid-issue" role="alert">{issueMessage('avoid')}</p>}{personal.avoid && <PreferenceImportanceChoice name="avoidImportance" label="피하기 반영 수준" value={personal.avoidImportance} onChange={value => updatePersonal('avoidImportance', value)} />}</div>
-                    <div className="field"><label htmlFor="tw-food">먹고 싶거나 피하고 싶은 음식</label><input id="tw-food" className="text-input" maxLength={500} value={personal.food} placeholder="예: 회는 먹고 싶고, 우유는 피하고 싶어요" aria-invalid={Boolean(issueFor('food'))} aria-describedby={issueFor('food') ? 'tw-food-issue' : undefined} onChange={(event) => updatePersonal('food', event.target.value)} />{issueFor('food') && <p className="prep-personal-field-error" id="tw-food-issue" role="alert">{issueMessage('food')}</p>}{personal.food && <PreferenceImportanceChoice name="foodImportance" label="식사 반영 수준" value={personal.foodImportance} onChange={value => updatePersonal('foodImportance', value)} />}</div>
+                    <RankedPreferenceField field="avoid" label="피하고 싶은 장소·활동" placeholder="예: 붐비는 시장, 가파른 등산로"
+                      value={personal.avoid} importance={personal.avoidImportance} issue={issueMessage('avoid')}
+                      onChange={value => updatePersonal('avoid', value)} onImportanceChange={value => updatePersonal('avoidImportance', value)} />
+                    <RankedPreferenceField field="food" label="음식 취향" placeholder="예: 회는 먹고 싶고, 우유는 피하고 싶어요"
+                      value={personal.food} importance={personal.foodImportance} issue={issueMessage('food')}
+                      onChange={value => updatePersonal('food', value)} onImportanceChange={value => updatePersonal('foodImportance', value)} />
                     <fieldset className="prep-walking" aria-describedby={issueFor('walking') ? 'tw-walking-issue' : undefined} aria-invalid={Boolean(issueFor('walking'))}><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div>{issueFor('walking') && <p className="prep-personal-field-error" id="tw-walking-issue" role="alert">{issueMessage('walking')}</p>}</fieldset>
                   </div>
                   {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
