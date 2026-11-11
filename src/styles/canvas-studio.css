@@ -173,23 +173,37 @@
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box;
   border: 1px solid var(--canvas-border); border-radius: 4px; background: var(--canvas-surface);
-  color: var(--canvas-muted); font-size: 15px; font-weight: 400; line-height: 1;
+  color: var(--canvas-muted); font-size: 15px; font-weight: 400; line-height: 1; pointer-events: none;
 }
-.tw-flow-canvas :is(.tw-handle, .tw-daylink-handle).react-flow__handle-left {
-  left: 0; right: auto; transform: translateY(-50%);
+.tw-flow-canvas .tw-handle { width: 12px; min-width: 12px; height: 28px; min-height: 28px; cursor: crosshair; }
+.tw-flow-canvas .tw-handle::before {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 28px; height: 28px;
+  transform: translate(-50%, -50%); pointer-events: auto;
 }
-.tw-flow-canvas :is(.tw-handle, .tw-daylink-handle).react-flow__handle-right {
-  right: 0; left: auto; transform: translateY(-50%);
+.tw-flow-canvas .tw-handle.react-flow__handle-left { left: -6px; right: auto; transform: translateY(-50%); }
+.tw-flow-canvas .tw-handle.react-flow__handle-right { right: -6px; left: auto; transform: translateY(-50%); }
+.tw-flow-canvas .tw-handle:is(.react-flow__handle-top, .react-flow__handle-bottom) {
+  width: 28px; min-width: 28px; height: 12px; min-height: 12px;
 }
-.tw-flow-canvas :is(.tw-handle, .tw-daylink-handle).react-flow__handle-top {
-  inset: 0 auto auto 50%; transform: translateX(-50%);
-}
-.tw-flow-canvas :is(.tw-handle, .tw-daylink-handle).react-flow__handle-bottom {
-  inset: auto auto 0 50%; transform: translateX(-50%);
-}
-.tw-flow-canvas .react-flow__node:is(:hover, :focus-within) :is(.tw-handle, .tw-daylink-handle),
-.tw-flow-canvas :is(.tw-handle, .tw-daylink-handle):is(.connectingfrom, .connectingto, .valid) { opacity: 1; }
-.tw-connection-grip:hover { border-color: var(--canvas-ink); color: var(--canvas-ink); }
+.tw-flow-canvas .tw-handle.react-flow__handle-top { inset: -6px auto auto 50%; transform: translateX(-50%); }
+.tw-flow-canvas .tw-handle.react-flow__handle-bottom { inset: auto auto -6px 50%; transform: translateX(-50%); }
+.tw-flow-canvas .tw-daylink-handle.react-flow__handle-left { left: 0; right: auto; transform: translateY(-50%); }
+.tw-flow-canvas .tw-daylink-handle.react-flow__handle-right { right: 0; left: auto; transform: translateY(-50%); }
+.tw-flow-canvas .tw-daylink-handle.react-flow__handle-top { inset: 0 auto auto 50%; transform: translateX(-50%); }
+.tw-flow-canvas .tw-daylink-handle.react-flow__handle-bottom { inset: auto auto 0 50%; transform: translateX(-50%); }
+.tw-flow-canvas .react-flow__node:is(:hover, :focus-within) :is(.tw-handle.source, .tw-daylink-handle),
+.tw-flow-canvas :is(.tw-handle, .tw-daylink-handle):is(.connectingfrom, .connectingto, .valid),
+.tw-flow-canvas .tw-place-node.is-link-start .tw-handle.source,
+.tw-flow-canvas .tw-place-node.is-link-target .tw-handle.target { opacity: 1; }
+.tw-handle:hover .tw-connection-grip, .tw-handle:focus-visible .tw-connection-grip { border-color: var(--canvas-ink); color: var(--canvas-ink); }
+.tw-place-node.is-link-target .tw-handle.target .tw-connection-grip { border-color: var(--color-accent-hover); background: var(--canvas-soft); color: var(--canvas-ink); }
+.tw-handle.target.react-flow__handle-right .tw-connection-grip { transform: translate(-50%, -50%) rotate(180deg); }
+.tw-handle.target.react-flow__handle-top .tw-connection-grip { transform: translate(-50%, -50%) rotate(90deg); }
+.tw-handle.target.react-flow__handle-bottom .tw-connection-grip { transform: translate(-50%, -50%) rotate(-90deg); }
+.has-same-side .tw-handle.source:is(.react-flow__handle-left, .react-flow__handle-right) { top: 68%; }
+.has-same-side .tw-handle.target:is(.react-flow__handle-left, .react-flow__handle-right) { top: 32%; }
+.has-same-side .tw-handle.source:is(.react-flow__handle-top, .react-flow__handle-bottom) { left: 68%; }
+.has-same-side .tw-handle.target:is(.react-flow__handle-top, .react-flow__handle-bottom) { left: 32%; }
 .tw-stop-time { display: flex; align-items: center; gap: 6px; padding-right: 30px; min-height: 20px; color: var(--canvas-ink); font-size: 13px; font-weight: 640; font-variant-numeric: tabular-nums; }
 .tw-stop-time svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--canvas-muted); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
 .tw-stop-body { display: flex; gap: 12px; margin-block: 12px 14px; align-items: flex-start; }
@@ -378,7 +392,7 @@
 .tw-menu-place strong, .tw-menu-place small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-menu-place small { color: var(--canvas-muted); }
 .tw-place-node.is-link-start { border-color: var(--canvas-ink); box-shadow: 0 0 0 2px var(--canvas-ink); }
-.tw-place-node.is-link-target { outline: 2px dashed var(--color-success); outline-offset: 3px; cursor: pointer; }
+.tw-place-node.is-link-target { outline: 2px solid var(--color-accent-hover); outline-offset: 3px; cursor: pointer; }
 .tw-place-node.is-link-target:hover { outline-style: solid; background: var(--canvas-soft); }
 .tw-edge-editor { display: grid; gap: 12px; min-width: 0; }
 .tw-leg-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; margin: 0; color: var(--canvas-ink); font-size: 18px; line-height: 1.4; }
@@ -394,9 +408,15 @@
 .tw-inspector details { padding-block: 9px; border-top: 1px solid var(--canvas-border); }
 .tw-inspector details summary { min-height: 40px; padding-block: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .tw-inspector details[open] > :not(summary) { margin-block: 6px; }
-.tw-place-link-mode { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 5px var(--space-4); border-bottom: 1px solid var(--canvas-border); background: var(--canvas-soft); color: var(--canvas-ink); font-size: 14px; }
-.tw-place-link-mode .btn { margin-inline-start: auto; min-height: 36px; padding-inline: 8px; }
-.tw-place-link-mode small { color: var(--canvas-muted); }
+.tw-place-link-mode {
+  position: absolute; z-index: 7; inset: 12px auto auto 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px 12px; width: max-content; max-width: calc(100% - 24px);
+  padding: 6px 12px; border: 1px solid var(--canvas-border); border-radius: 6px;
+  background: var(--canvas-surface); color: var(--canvas-ink); font-size: 13px; line-height: 1.5;
+}
+.tw-place-link-mode > span { min-width: 0; overflow-wrap: anywhere; }
+.tw-place-link-mode .btn { flex: none; min-height: 32px; padding-inline: 4px; }
+.tw-place-link-mode small { display: none; }
 @media (max-width: 700px) { .tw-place-link-mode { padding-inline: var(--space-2); } .tw-place-link-mode small { display: none; } }
 
 @media (max-width: 900px) {
@@ -416,7 +436,7 @@
   color: var(--canvas-ink); background: var(--canvas-surface); border: 1px solid var(--canvas-border);
   border-radius: 6px; font-size: 13px; line-height: 1.45; pointer-events: none;
 }
-.tw-flow-canvas .react-flow__edgelabel-renderer { z-index: 3; }
+.tw-flow-canvas .react-flow__edgelabel-renderer { z-index: 4; }
 .tw-route-edge-label {
   position: absolute; padding: 3px 6px; pointer-events: all; cursor: pointer;
   border: 1px solid var(--canvas-border); border-radius: 8px; background: var(--canvas-surface);
@@ -427,3 +447,5 @@
   .tw-canvas-panel-toggle > span { display: none; }
   .tw-canvas-feedback { top: 8px; }
 }
+
+.tw-flow-canvas .react-flow__edge.selected .react-flow__edgeupdater { fill: var(--canvas-surface); stroke: var(--canvas-ink); stroke-width: 1.5; }
