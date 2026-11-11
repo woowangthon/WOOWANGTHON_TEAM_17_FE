@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import AsyncState from '../components/ui/AsyncState';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -35,6 +35,18 @@ const previewConditions: RoomDraft = {
   lodging: '1박 필요', fixedSchedule: '둘째 날 18:00까지 청주역 복귀',
 };
 type View = 'preparation' | 'canvas';
+
+function PreferenceImportanceChoice({
+  name, label, value, onChange,
+}: { name: 'avoidImportance' | 'foodImportance'; label: string; value: 'preferred' | 'required'; onChange: (value: 'preferred' | 'required') => void }) {
+  return <fieldset className="prep-importance-choice" aria-describedby="tw-importance-hint">
+    <legend>{label}</legend>
+    <div className="prep-importance-options">
+      <label className={value === 'preferred' ? 'is-selected' : ''}><input type="radio" name={name} value="preferred" checked={value === 'preferred'} onChange={() => onChange('preferred')} /><span>가능하면 반영</span></label>
+      <label className={value === 'required' ? 'is-selected' : ''}><input type="radio" name={name} value="required" checked={value === 'required'} onChange={() => onChange('required')} /><span>필수로 반영</span></label>
+    </div>
+  </fieldset>;
+}
 
 export default function RoomPage() {
   const query = new URLSearchParams(window.location.search);
@@ -275,6 +287,9 @@ export default function RoomPage() {
     conditionsReady: shared.preparation.readiness.conditionsReady,
   } : null);
   const confirmedMemberCount = people.filter(member => member.preparationStatus === 'confirmed').length;
+  const participantCount = people.length;
+  const rosterSummary = `참여자 ${participantCount}명 중 ${confirmedMemberCount}명 준비 완료`;
+  const confirmedRatio = participantCount > 0 ? confirmedMemberCount / participantCount : 0;
   const sharedGenerationBlocker = sharedReadiness.blockers.join(' ');
   const resumableJob = ['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(generationStart.data?.latestJob?.status ?? '');
   const generationCtaBlocker = localGenerationBlocker || (sharedGenerationBlocker && !resumableJob ? sharedGenerationBlocker : '');
@@ -285,9 +300,9 @@ export default function RoomPage() {
   const issueFor = (field: 'likes' | 'avoid' | 'food' | 'walking') => generationStart.personalIssues?.find(issue => issue.field === field);
   const issueMessage = (field: 'likes' | 'avoid' | 'food' | 'walking') => {
     if (!issueFor(field)) return '';
-    if (field === 'food') return '장소·음식 정보로 이 필수 조건을 확인할 수 없어요. 조건을 구체적으로 고친 뒤 저장해 주세요.';
-    if (field === 'avoid') return '장소 정보로 이 항목을 반드시 피할 수 있는지 확인할 수 없어요. 단순한 선호라면 체크를 해제하고, 꼭 피해야 한다면 조건을 구체적으로 고쳐 주세요.';
-    if (field === 'likes') return '필수 조건과 선호를 구분해 장소 기준으로 구체적으로 적어 주세요.';
+    if (field === 'food') return '장소 정보로 이 음식 조건을 확인할 수 없어요. 필수라면 방문할 식당에 확인해 주세요.';
+    if (field === 'avoid') return '장소 정보로 이 조건을 확인할 수 없어요. 단순한 선호라면 ‘가능하면 반영’을 선택해 주세요.';
+    if (field === 'likes') return '좋아하는 것과 피하고 싶은 것이 함께 있어요. 싫어하는 항목을 ‘피하고 싶은 장소나 활동’으로 옮겨 주세요.';
     return '걷기 제한을 선택하고 내 취향을 다시 저장해 주세요.';
   };
   const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '준비 완료', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
@@ -315,12 +330,44 @@ export default function RoomPage() {
         <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
       </aside>}
       {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} preview={isPreview} startDate={conditions.startDate} endDate={conditions.endDate} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} handoff={canvasHandoff?.tripId === entry.trip.id ? canvasHandoff : null} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
-        <header className="prep-page-heading"><div className="prep-heading-info"><h1>{entry.trip.name || '여행 준비'}</h1><div className="prep-heading-meta" aria-label="저장된 여행 조건"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></div><div className="prep-participant-disclosure" ref={participantWrapRef}><button ref={participantTriggerRef} className="prep-participant-trigger" type="button" aria-expanded={participantsOpen} aria-controls={participantPanelId} onClick={() => setOpenParticipantRoomId(participantsOpen ? null : entry.trip.id)}><span>참여자 {people.length}명 · 준비 완료 {confirmedMemberCount}/{people.length}</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg></button>{participantsOpen && <section className="prep-participant-panel" id={participantPanelId} aria-label="참여자 준비 상태"><p className="prep-participant-summary">준비 완료 {confirmedMemberCount}/{people.length}명</p><ul className="prep-participant-list">{people.map((person) => {
-          const isOwn = person.id === entry.member.id;
-          const confirmed = person.preparationStatus === 'confirmed';
-          const memberStatus = confirmed ? '준비 완료' : '준비 중';
-          return <li className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}><span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : ''}</small></span><span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{memberStatus}</span></li>;
-        })}</ul></section>}</div></header>
+        <header className="prep-page-heading">
+          <div className="prep-heading-info">
+            <h1>{entry.trip.name || '여행 준비'}</h1>
+            <div className="prep-heading-meta" aria-label="저장된 여행 조건">
+              <span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span>
+              <span>{conditions.region || '지역 미정'}</span>
+            </div>
+          </div>
+          <div className="prep-participant-disclosure" ref={participantWrapRef}>
+            <button
+              ref={participantTriggerRef}
+              className="prep-participant-trigger"
+              type="button"
+              aria-label={rosterSummary}
+              title={rosterSummary}
+              aria-expanded={participantsOpen}
+              aria-controls={participantPanelId}
+              onClick={() => setOpenParticipantRoomId(participantsOpen ? null : entry.trip.id)}
+            >
+              <span>참여자</span>
+              <span className="prep-participant-donut" aria-hidden="true" style={{ '--roster-progress': `${confirmedRatio * 360}deg` } as CSSProperties} />
+              <span className="prep-participant-count">{confirmedMemberCount}/{participantCount}</span>
+              <svg className="prep-participant-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+            </button>
+            {participantsOpen && <section className="prep-participant-panel" id={participantPanelId} aria-label="참여자 준비 상태">
+              <ul className="prep-participant-list">
+                {people.map(person => {
+                  const isOwn = person.id === entry.member.id;
+                  const confirmed = person.preparationStatus === 'confirmed';
+                  return <li className="prep-participant" data-member-id={isOwn ? 'me' : person.id} key={person.id}>
+                    <span className="prep-person-name">{person.nickname}<small>{person.role === 'OWNER' ? '방장' : isOwn ? '나' : ''}</small></span>
+                    <span className={`prep-person-status ${confirmed ? 'is-confirmed' : ''}`}>{confirmed ? '준비 완료' : '준비 중'}</span>
+                  </li>;
+                })}
+              </ul>
+            </section>}
+          </div>
+        </header>
         {!isPreview && shared.message && shared.state === 'ready' && <div className="prep-shared-refresh-error" role="alert"><span>{shared.message}</span><Button variant="secondary" disabled={shared.refreshing} onClick={() => void shared.refresh()}>{shared.refreshing ? '새로고침 중…' : '다시 불러오기'}</Button></div>}
         <div className="prep-grid">
           <section className="prep-condition-section" aria-labelledby="tw-condition-title">
@@ -355,9 +402,10 @@ export default function RoomPage() {
                 {(!isPreview && personalHook.state === 'ready' && personalHook.resultStatus === 'stale' && personalHook.phase === 'idle') && <p className="prep-stale-note" role="status">입력 내용이 바뀌었어요. 필요하면 다시 분석해 주세요.</p>}
                 {(personalHook.resultsVisible || isPreview) ? <>
                   <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
+                  <p className="prep-importance-hint" id="tw-importance-hint">선호하는 내용은 가능한 만큼 반영해요. 필수 조건은 장소 정보로 확인할 수 있어야 일정을 만들어요.</p>
                   <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
-                    <div className="field"><label htmlFor="tw-avoid">피하고 싶은 것</label><input id="tw-avoid" className="text-input" maxLength={500} value={personal.avoid} placeholder="예: 긴 도보 이동" aria-invalid={Boolean(issueFor('avoid'))} aria-describedby={issueFor('avoid') ? 'tw-avoid-issue' : undefined} onChange={(event) => updatePersonal('avoid', event.target.value)} />{issueFor('avoid') && <p className="prep-personal-field-error" id="tw-avoid-issue" role="alert">{issueMessage('avoid')}</p>}{personal.avoid && <label className="prep-checkbox"><input type="checkbox" checked={personal.avoidImportance === 'required'} onChange={(event) => updatePersonal('avoidImportance', event.target.checked ? 'required' : 'preferred')} /><span>반드시 피해야 해요</span></label>}</div>
-                    <div className="field"><label htmlFor="tw-food">음식 취향</label><input id="tw-food" className="text-input" maxLength={500} value={personal.food} placeholder="예: 맵지 않은 음식, 유제품 제외" aria-invalid={Boolean(issueFor('food'))} aria-describedby={issueFor('food') ? 'tw-food-issue' : undefined} onChange={(event) => updatePersonal('food', event.target.value)} />{issueFor('food') && <p className="prep-personal-field-error" id="tw-food-issue" role="alert">{issueMessage('food')}</p>}{personal.food && <label className="prep-checkbox"><input type="checkbox" checked={personal.foodImportance === 'required'} onChange={(event) => updatePersonal('foodImportance', event.target.checked ? 'required' : 'preferred')} /><span>꼭 지켜야 하는 식사 조건이에요</span></label>}</div>
+                    <div className="field"><label htmlFor="tw-avoid">피하고 싶은 장소나 활동</label><input id="tw-avoid" className="text-input" maxLength={500} value={personal.avoid} placeholder="예: 계단이 많은 코스, 30분 넘는 도보" aria-invalid={Boolean(issueFor('avoid'))} aria-describedby={issueFor('avoid') ? 'tw-avoid-issue' : undefined} onChange={(event) => updatePersonal('avoid', event.target.value)} />{issueFor('avoid') && <p className="prep-personal-field-error" id="tw-avoid-issue" role="alert">{issueMessage('avoid')}</p>}{personal.avoid && <PreferenceImportanceChoice name="avoidImportance" label="피하기 반영 수준" value={personal.avoidImportance} onChange={value => updatePersonal('avoidImportance', value)} />}</div>
+                    <div className="field"><label htmlFor="tw-food">먹고 싶거나 피하고 싶은 음식</label><input id="tw-food" className="text-input" maxLength={500} value={personal.food} placeholder="예: 회는 먹고 싶고, 우유는 피하고 싶어요" aria-invalid={Boolean(issueFor('food'))} aria-describedby={issueFor('food') ? 'tw-food-issue' : undefined} onChange={(event) => updatePersonal('food', event.target.value)} />{issueFor('food') && <p className="prep-personal-field-error" id="tw-food-issue" role="alert">{issueMessage('food')}</p>}{personal.food && <PreferenceImportanceChoice name="foodImportance" label="식사 반영 수준" value={personal.foodImportance} onChange={value => updatePersonal('foodImportance', value)} />}</div>
                     <fieldset className="prep-walking" aria-describedby={issueFor('walking') ? 'tw-walking-issue' : undefined} aria-invalid={Boolean(issueFor('walking'))}><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div>{issueFor('walking') && <p className="prep-personal-field-error" id="tw-walking-issue" role="alert">{issueMessage('walking')}</p>}</fieldset>
                   </div>
                   {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
