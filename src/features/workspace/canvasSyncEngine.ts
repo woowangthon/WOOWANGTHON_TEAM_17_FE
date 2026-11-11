@@ -31,6 +31,7 @@ export class CanvasSyncEngine {
   private message = '';
   private pending: SaveRequest | null = null;
   private writing = false;
+  private writePromise: Promise<void> | null = null;
   private reading = false;
   private deferredRemote: CanvasState | null = null;
   private conflict: Conflict | null = null;
@@ -48,7 +49,7 @@ export class CanvasSyncEngine {
   private autoSave: boolean;
   private snapshot: CanvasSyncSnapshot;
 
-  constructor(tripId: string, options: { preview?: boolean; autoSave?: boolean; transport?: CanvasTransport } = {}) {
+  constructor(tripId: string, options: { preview?: boolean; autoSave?: boolean; transport?: CanvasTransport; initialState?: CanvasState } = {}) {
     this.tripId = tripId;
     this.preview = options.preview ?? false;
     this.autoSave = options.autoSave ?? true;
@@ -56,7 +57,11 @@ export class CanvasSyncEngine {
       load: (signal) => getCanvas(tripId, { signal }),
       save: (request) => saveCanvas(tripId, request.revision, request.body, request.key),
     };
-    if (this.preview) {
+    if (options.initialState?.tripId === tripId && !this.preview) {
+      this.acknowledged = options.initialState;
+      this.local = options.initialState.document;
+      this.status = 'saved';
+    } else if (this.preview) {
       const initial: CanvasState = { tripId, revision: 0, document: {
         schemaVersion: 3, days: [{ id: crypto.randomUUID(), date: null }], nodes: [], edges: [],
       }, places: [], sourcePlan: null, updatedAt: new Date().toISOString() };
@@ -80,6 +85,66 @@ export class CanvasSyncEngine {
     this.emit();
     this.schedule();
   };
+  acceptImportedStateAndWait = async (state: CanvasState, signal?: AbortSignal): Promise<void> => {
+    const assertActive = () => { if (signal?.aborted) throw new DOMException('Aborted', 'AbortError'); };
+    const wait = <T,>(promise: Promise<T>): Promise<T> => {
+      if (!signal) return promise;
+      return new Promise((resolve, reject) => {
+        if (signal.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+        const abort = () => { signal.removeEventListener('abort', abort); reject(new DOMException('Aborted', 'AbortError')); };
+        signal.addEventListener('abort', abort, { once: true });
+        promise.then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+      });
+    };
+    assertActive();
+    if (state.tripId !== this.tripId || this.preview) throw new CanvasHttpError(400, 'INVALID_IMPORT', '다른 여행방의 캔버스 상태예요.');
+    this.recoverSameRevisionReadFailure(state);
+    this.acceptImportedState(state);
+    if (this.writePromise) await wait(this.writePromise);
+    assertActive();
+    if (this.pending) {
+      // Retry the exact retained body and idempotency key before handing control off.
+      await wait(this.save());
+    }
+    assertActive();
+    await this.waitUntilSettled(state.revision, signal);
+  };
+  private recoverSameRevisionReadFailure(remote: CanvasState) {
+    if (this.status !== 'offline' || this.pending || this.writing || this.conflict || this.fatal
+      || !this.acknowledged || !this.local || remote.tripId !== this.tripId
+      || remote.revision !== this.acknowledged.revision
+      || !equal(remote.document, this.acknowledged.document)) return;
+    // A fresh explicit import GET may recover a failed poll at the exact same revision.
+    // Keep local edits, queued acknowledgements and history intact.
+    this.acknowledged = remote;
+    this.status = equal(this.local, remote.document) ? 'saved' : 'saving';
+    this.message = '';
+    this.emit();
+    this.schedule();
+  }
+  private waitUntilSettled(minimumRevision: number, signal?: AbortSignal): Promise<void> {
+    const done = () => {
+      if (this.conflict || this.status === 'offline' || this.status === 'error' || this.fatal) {
+        throw new CanvasHttpError(503, 'CANVAS_SYNC_UNRESOLVED', this.message || '캔버스의 저장 상태를 확인해 주세요.');
+      }
+      if (this.pending || this.writing || this.status === 'loading') return false;
+      if (!this.acknowledged || this.acknowledged.revision < minimumRevision) {
+        throw new CanvasHttpError(502, 'CANVAS_SYNC_UNRESOLVED', '가져온 캔버스의 최신 상태를 확인할 수 없어요.');
+      }
+      return true;
+    };
+    try { if (done()) return Promise.resolve(); } catch (error) { return Promise.reject(error); }
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+      const abort = () => { unsubscribe(); reject(new DOMException('Aborted', 'AbortError')); };
+      const unsubscribe = this.subscribe(() => {
+        try { if (done()) { cleanup(); resolve(); } }
+        catch (error) { cleanup(); reject(error); }
+      });
+      const cleanup = () => { unsubscribe(); signal?.removeEventListener('abort', abort); };
+      signal?.addEventListener('abort', abort, { once: true });
+    });
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private emit() {
     this.snapshot = this.buildSnapshot();
@@ -213,7 +278,7 @@ export class CanvasSyncEngine {
     this.message = error instanceof Error ? error.message : '연결을 확인하지 못했어요. 편집 내용은 화면에 남아 있어요.';
   }
 
-  save = async (): Promise<void> => {
+  private performSave = async (): Promise<void> => {
     if (this.preview || this.writing || this.conflict || this.fatal || !this.local || !this.acknowledged) return;
     if (!this.pending && equal(this.local, this.acknowledged.document)) {
       if (this.travel) this.completeTravel(this.travel);
@@ -276,6 +341,16 @@ export class CanvasSyncEngine {
       if (remote && !this.fatal) this.receive(remote);
       this.emit(); this.schedule();
     }
+  };
+
+  save = (): Promise<void> => {
+    // Preserve the public single-flight behavior: callers arriving mid-write do not queue behind it.
+    if (this.writing) return Promise.resolve();
+    if (this.writePromise) return this.writePromise;
+    const run = this.performSave();
+    this.writePromise = run;
+    void run.finally(() => { if (this.writePromise === run) this.writePromise = null; });
+    return run;
   };
 
   retry = () => {

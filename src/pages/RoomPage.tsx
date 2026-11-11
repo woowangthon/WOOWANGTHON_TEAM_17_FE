@@ -5,7 +5,7 @@ import Input from '../components/ui/Input';
 import CanvasPreview from '../features/workspace/CanvasPreview';
 import { usePersonalPreparation } from '../features/personal/usePersonalPreparation';
 import { useSharedPreparation } from '../features/room/useSharedPreparation';
-import { useGenerationStart } from '../features/generation/useGenerationStart';
+import { useGenerationStart, type GenerationCanvasHandoff } from '../features/generation/useGenerationStart';
 import { GenerationLoadingOverlay } from '../features/generation/GenerationLoadingOverlay';
 import ScheduleItemsEditor from '../features/personal/ScheduleItemsEditor';
 import PreparationScheduleFields from '../features/preparation/PreparationScheduleFields';
@@ -42,6 +42,7 @@ export default function RoomPage() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(isPreview ? 'ready' : tripId ? 'loading' : 'error');
   const [errorMessage, setErrorMessage] = useState('여행방 주소가 없어요. 시작 화면에서 방을 만들거나 초대 코드로 참여해 주세요.');
   const [view, setView] = useState<View>(query.get('view') === 'canvas' ? 'canvas' : 'preparation');
+  const [canvasHandoff, setCanvasHandoff] = useState<GenerationCanvasHandoff | null>(null);
   const [accessLostTripId, setAccessLostTripId] = useState<string | null>(null);
   const [conditions, setConditions] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
   const [conditionForm, setConditionForm] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
@@ -86,7 +87,7 @@ export default function RoomPage() {
     tripId,
     enabled: Boolean(!isPreview && status === 'ready' && entry?.member.role === 'OWNER' && shared.state === 'ready' && !fatalAccess),
     blockedReason: generationBlocker,
-    onStarted: () => changeView('canvas'),
+    onStarted: handoff => { setCanvasHandoff(handoff); changeView('canvas'); },
     onAccessLost: onGenerationAccessLost,
   });
 
@@ -282,7 +283,7 @@ export default function RoomPage() {
         <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className={view === 'preparation' ? 'is-selected' : ''} type="button" aria-current={view === 'preparation' ? 'page' : undefined} onClick={() => { changeView('preparation'); preparationRailRef.current?.focus(); }}><CheckIcon /><span>여행 준비</span></button><button className={view === 'canvas' ? 'is-selected' : ''} type="button" aria-current={view === 'canvas' ? 'page' : undefined} onClick={() => { changeView('canvas'); canvasRailRef.current?.focus(); }}><MapIcon /><span>일정 캔버스</span></button></nav>
         <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
       </aside>}
-      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} preview={isPreview} startDate={conditions.startDate} endDate={conditions.endDate} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
+      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} preview={isPreview} startDate={conditions.startDate} endDate={conditions.endDate} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} handoff={canvasHandoff?.tripId === entry.trip.id ? canvasHandoff : null} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
         <header className="prep-page-heading"><div className="prep-heading-info"><h1>{entry.trip.name || '여행 준비'}</h1><div className="prep-heading-meta" aria-label="저장된 여행 조건"><span>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '날짜 미정'}</span><span>{conditions.region || '지역 미정'}</span></div></div><div className="prep-participant-disclosure" ref={participantWrapRef}><button ref={participantTriggerRef} className="prep-participant-trigger" type="button" aria-expanded={participantsOpen} aria-controls={participantPanelId} onClick={() => setOpenParticipantRoomId(participantsOpen ? null : entry.trip.id)}><span>참여자 {people.length}명</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg></button>{participantsOpen && <section className="prep-participant-panel" id={participantPanelId} aria-label="참여자 준비 상태"><ul className="prep-participant-list">{people.map((person) => {
           const isOwn = person.id === entry.member.id;
           const confirmed = person.preparationStatus === 'confirmed';
@@ -346,6 +347,6 @@ export default function RoomPage() {
         </section>
       </section>}
     </div>}
-    <GenerationLoadingOverlay open={generationStart.overlayOpen} phase={generationStart.phase} message={generationStart.message || undefined} onRetry={generationStart.retryAction} onReturn={generationStart.returnAction} />
+    <GenerationLoadingOverlay open={generationStart.overlayOpen} phase={generationStart.phase} error={generationStart.error} message={generationStart.message || undefined} onRetry={generationStart.retryAction} onReturn={generationStart.returnAction} />
   </main>;
 }

@@ -5,8 +5,11 @@ import { CanvasHttpError, getCanvas, importPlanToCanvas } from '../workspace/can
 import { acceptImportedCanvasState } from '../workspace/useCanvasSync.ts';
 import { createGenerationCanvasImportController } from './generationCanvasImportController.ts';
 import { isGenerationAccessLost } from './generationAccess.ts';
+import type { GenerationLoadingPhase } from './generationProgress.ts';
+import { mayCompleteHandoff, waitForTwoPaints } from './generationHandoff.ts';
 
-type Options = { tripId: string | null; enabled: boolean; blockedReason?: string; onStarted: () => void; onAccessLost: () => void };
+export type GenerationCanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string };
+type Options = { tripId: string | null; enabled: boolean; blockedReason?: string; onStarted: (handoff: GenerationCanvasHandoff) => void; onAccessLost: () => void };
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
@@ -17,7 +20,7 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 }
 function jobPhase(job: Job): 'generating' | 'routing' {
   const phase = job.phase.toLowerCase();
-  return phase.includes('rout') || phase.includes('route') || phase.includes('validat') ? 'routing' : 'generating';
+  return phase.includes('rout') || phase.includes('route') || phase.includes('validat') || phase.includes('persist') ? 'routing' : 'generating';
 }
 
 /** Freshly checks readiness, resumes an active job, and imports only its completed plan. */
@@ -29,7 +32,8 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [retryAvailable, setRetryAvailable] = useState(false);
   const [returnAvailable, setReturnAvailable] = useState(false);
-  const [phase, setPhase] = useState<'checking'|'generating'|'routing'|'opening'>('checking');
+  const [phase, setPhase] = useState<GenerationLoadingPhase>('checking');
+  const [error, setError] = useState(false);
   const [personalIssues, setPersonalIssues] = useState<SelfDto['preparationIssues']>();
   const epoch = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -70,11 +74,27 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     const latest = await getCanvas(id, { signal });
     if (signal.aborted || own !== epoch.current) return;
     if (latest.revision < imported.revision) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '가져온 캔버스의 최신 상태를 확인할 수 없어요.');
+    await acceptImportedCanvasState(id, latest, signal);
+    if (!mayCompleteHandoff(signal, own, epoch.current, blockedReasonRef.current)) {
+      if (!signal.aborted && own === epoch.current && blockedReasonRef.current) {
+        setBusy(false); setOverlayOpen(false); setReturnAvailable(false); setError(false);
+        setMessage('생성한 일정은 캔버스에 담겼어요. 입력을 저장한 뒤 일정 캔버스를 열어 주세요.');
+      }
+      return;
+    }
     failedPlan.current = null;
-    acceptImportedCanvasState(id, latest);
-    setMessage(''); setOverlayOpen(false); setBusy(false); setReturnAvailable(false);
-    if (blockedReasonRef.current) setMessage('생성한 일정은 캔버스에 담겼어요. 입력을 저장한 뒤 일정 캔버스를 열어 주세요.');
-    else callbacks.current.onStarted();
+    setPhase('complete');
+    await waitForTwoPaints(signal);
+    if (signal.aborted || own !== epoch.current) return;
+    setBusy(false);
+    if (blockedReasonRef.current) {
+      setMessage('생성한 일정은 캔버스에 담겼어요. 입력을 저장한 뒤 일정 캔버스를 열어 주세요.');
+      setOverlayOpen(false); setReturnAvailable(false); setError(false);
+      return;
+    }
+    const handoff: GenerationCanvasHandoff = { tripId: id, planId, versionId, handoffId: crypto.randomUUID() };
+    setMessage(''); setOverlayOpen(false); setReturnAvailable(false); setError(false);
+    callbacks.current.onStarted(handoff);
   }, []);
 
   const processJob = useCallback(async (id: string, initialJob: Job, signal: AbortSignal, own: number) => {
@@ -114,7 +134,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
       const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : '';
       const knownStop = status >= 400 && status < 500 && code !== 'VERSION_CONFLICT';
       if (knownStop) { failedPlan.current = null; importer.current?.reset(); }
-      setMessage(error instanceof Error ? error.message : '일정 생성 상태를 확인하지 못했어요.'); setOverlayOpen(true); setRetryAvailable(!knownStop); setReturnAvailable(true); setBusy(false);
+      setMessage(error instanceof Error ? error.message : '일정 생성 상태를 확인하지 못했어요.'); setOverlayOpen(true); setRetryAvailable(!knownStop); setReturnAvailable(true); setError(true); setBusy(false);
     }
   }, []);
 
@@ -151,7 +171,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   useEffect(() => {
     epoch.current += 1; controller.current?.abort(); controller.current = null;
     starter.current?.reset(); importer.current?.reset(); processing.current = null; failedPlan.current = null;
-    setData(null); setBusy(false); setLoading(false); setMessage(''); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setPhase('checking'); setPersonalIssues(undefined); issueInputToken.current = null;
+    setData(null); setBusy(false); setLoading(false); setMessage(''); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setPhase('checking'); setError(false); setPersonalIssues(undefined); issueInputToken.current = null;
     if (enabled && tripId) void refresh();
     return () => { epoch.current += 1; controller.current?.abort(); controller.current = null; processing.current = null; };
   }, [enabled, tripId, refresh]);
@@ -159,7 +179,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   const start = useCallback(async () => {
     if (!enabled || !tripId || busy) return;
     if (blockedReason) { setMessage(blockedReason); return; }
-    setOverlayOpen(true); setRetryAvailable(false); setReturnAvailable(false); setPhase('checking'); setBusy(true); setMessage('');
+    setOverlayOpen(true); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setBusy(true); setMessage('');
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
     try {
       if (failedPlan.current) {
@@ -180,7 +200,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
 
   const retry = useCallback(async () => {
     if (!tripId || !enabled || busy) return;
-    setBusy(true); setOverlayOpen(true); setRetryAvailable(false); setReturnAvailable(false); setPhase('checking'); setMessage('');
+    setBusy(true); setOverlayOpen(true); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setMessage('');
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
     try {
       if (failedPlan.current) { await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, abort.signal, own); return; }
@@ -201,7 +221,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   }, [tripId, enabled, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
 
   const dismiss = useCallback(() => setOverlayOpen(false), []);
-  return { data, loading, busy, message, personalIssues, start, refresh, overlayOpen, phase, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
+  return { data, loading, busy, message, personalIssues, start, refresh, overlayOpen, phase, error, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
 }
 
 function readinessMessage(state: GenerationState): string {

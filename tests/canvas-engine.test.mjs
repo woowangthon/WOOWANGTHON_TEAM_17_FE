@@ -55,6 +55,93 @@ test('one write is in flight and edits after its snapshot survive its acknowledg
   h.transport.save = original;
 });
 
+test('a first shared engine can be seeded by imported state and keeps post-send edits', async () => {
+  const requests = [];
+  let finish;
+  const transport = {
+    load: async () => { throw new Error('unexpected read'); },
+    save: async request => {
+      requests.push(structuredClone(request));
+      await new Promise(resolve => { finish = resolve; });
+      return state(request.body, request.revision + 1);
+    },
+  };
+  const baseline = state(document(), 5);
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, transport, initialState: baseline });
+  assert.equal(engine.getSnapshot().state.revision, 5);
+  engine.update(changePosition(50));
+  const writing = engine.save();
+  engine.update(changeOtherColor('sky'));
+  const importedDocument = structuredClone(requests[0].body);
+  importedDocument.nodes.push({ id: id(8), kind: 'place', dayId: id(1), position: { x: 300, y: 0 }, color: 'default', contentid: 8, intent: 'route', source: { planId: id(70), versionId: id(71), nodeId: id(72) }, schedule: { startAt: null, endAt: null, locked: true } });
+  const imported = { ...state(importedDocument, 7), sourcePlan: { planId: id(70), versionId: id(71) } };
+  const accepted = engine.acceptImportedStateAndWait(imported);
+  finish();
+  await Promise.all([writing, accepted]);
+  const current = engine.getSnapshot();
+  assert.equal(current.document.nodes[0].position.x, 50);
+  assert.equal(current.document.nodes[1].color, 'sky');
+  assert.equal(current.document.nodes.some(node => node.id === id(8)), true);
+  assert.ok(current.state.revision >= 7);
+});
+
+test('unknown canvas outcome retries the same idempotency key before accepting import', async () => {
+  const requests = [];
+  let server = state(document(), 0);
+  const transport = {
+    load: async () => structuredClone(server),
+    save: async request => {
+      requests.push(structuredClone(request));
+      if (requests.length === 1) throw new Error('connection reset after send');
+      server = state(request.body, 1);
+      return structuredClone(server);
+    },
+  };
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, transport, initialState: server });
+  engine.update(changePosition(40));
+  await engine.save();
+  assert.equal(engine.getSnapshot().status, 'offline');
+  const importedDocument = structuredClone(requests[0].body);
+  importedDocument.nodes.push({ id: id(9), kind: 'place', dayId: id(1), position: { x: 400, y: 0 }, color: 'default', contentid: 9, intent: 'route', source: { planId: id(80), versionId: id(81), nodeId: id(82) }, schedule: { startAt: null, endAt: null, locked: true } });
+  await engine.acceptImportedStateAndWait({ ...state(importedDocument, 2), sourcePlan: { planId: id(80), versionId: id(81) } });
+  assert.equal(requests[1].key, requests[0].key);
+  assert.deepEqual(requests[1].body, requests[0].body);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 40);
+  assert.equal(engine.getSnapshot().document.nodes.some(node => node.id === id(9)), true);
+});
+
+test('an explicit same-revision handoff GET recovers a failed read without dropping local history', async () => {
+  const seeded = state(document(), 5);
+  let loads = 0;
+  const transport = {
+    load: async () => { loads += 1; if (loads === 1) throw new Error('temporary read failure'); return structuredClone(seeded); },
+    save: async request => state(request.body, request.revision + 1),
+  };
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, transport, initialState: seeded });
+  engine.update(changePosition(30));
+  await engine.refresh();
+  assert.equal(engine.getSnapshot().status, 'offline');
+  await engine.acceptImportedStateAndWait(seeded);
+  assert.equal(engine.getSnapshot().status, 'saving');
+  assert.equal(engine.getSnapshot().state.revision, 5);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 30);
+  assert.equal(engine.getSnapshot().canUndo, false);
+});
+
+test('an explicit same-revision handoff GET clears read-only offline status when there are no writes', async () => {
+  const seeded = state(document(), 5);
+  let reads = 0;
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, transport: {
+    load: async () => { if (++reads === 1) throw new Error('temporary read failure'); return structuredClone(seeded); },
+    save: async request => state(request.body, request.revision + 1),
+  }, initialState: seeded });
+  await engine.refresh();
+  assert.equal(engine.getSnapshot().status, 'offline');
+  await engine.acceptImportedStateAndWait(seeded);
+  assert.equal(engine.getSnapshot().status, 'saved');
+  assert.equal(engine.getSnapshot().message, '');
+});
+
 test('unknown write outcome retains its exact key and body before later edits are sent', async () => {
   const h = harness(); await h.engine.refresh();
   const original = h.transport.save; let uncertain;
