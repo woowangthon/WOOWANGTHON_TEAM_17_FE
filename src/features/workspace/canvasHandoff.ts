@@ -1,6 +1,7 @@
 import type { CanvasDocument } from './canvasModel.ts';
 
-export type CanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string };
+export type CanvasWarningCode = 'MEAL_SLOT_UNFILLED' | 'TRANSFER_TIME_ESTIMATED' | 'STAY_TIME_ESTIMATED';
+export type CanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string; warningCodes?: CanvasWarningCode[] };
 export type CanvasHandoffTarget = { dayId: string; nodeIds: string[]; matched: boolean };
 export type CanvasViewport = { x: number; y: number; zoom: number };
 export type CanvasViewMemory = { dayId: string; viewport: CanvasViewport | null };
@@ -43,7 +44,7 @@ export function resolveCanvasMountView(document: CanvasDocument, scope: string, 
   const cachedDayIsValid = Boolean(cached && document.days.some(day => day.id === cached.dayId));
   const dayId = cachedDayIsValid ? cached!.dayId : firstRouteDay(document);
   const viewport = cachedDayIsValid ? cached!.viewport : null;
-  const initialFitNodeIds = viewport ? [] : document.nodes.filter(node => node.kind === 'place' && node.dayId === dayId).map(node => node.id);
+  const initialFitNodeIds = viewport ? [] : document.days.map(day => `day-frame:${day.id}`);
   return { kind: 'restore', dayId, viewport, initialFitNodeIds };
 }
 

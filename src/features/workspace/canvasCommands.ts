@@ -4,7 +4,7 @@ export const canvasCommands: CanvasCommand[] = [
   { id:'undo', label:'실행 취소', icon:'↶', surface:'both' },
   { id:'redo', label:'다시 실행', icon:'↷', surface:'both' },
   { id:'add-comment', label:'댓글 추가', icon:'▤', surface:'toolbar' },
-  { id:'fit', label:'화면 맞춤', icon:'⌗', surface:'toolbar' },
+  { id:'fit', label:'전체 보기', icon:'⌗', surface:'toolbar' },
   { id:'toggle-drawer', label:'장소 패널', icon:'☰', surface:'toolbar' },
   { id:'copy', label:'복사', icon:'복사', surface:'context' },
   { id:'paste', label:'붙여넣기', icon:'붙여넣기', surface:'context' },

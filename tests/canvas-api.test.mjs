@@ -6,6 +6,11 @@ const fixture={tripId:'10000000-0000-4000-8000-000000000001',revision:1,document
 test('canvas response parser accepts the shared BE v3 place and comment fixture',()=>{
  const state=parseCanvasState(fixture);assert.ok(state);assert.equal(state.document.nodes[1].kind,'comment');assert.equal(state.document.nodes[0].contentid,101);assert.equal(state.places[0].address,null);
 });
+test('place stay estimate is optional, bounded, and never treated as a route duration',()=>{
+ const updated=structuredClone(fixture);updated.places[0].estimatedStayMinutes=75;assert.equal(parseCanvasState(updated)?.places[0].estimatedStayMinutes,75);
+ const legacy=parseCanvasState(fixture);assert.equal(legacy?.places[0].estimatedStayMinutes,undefined);
+ for(const invalid of [0,-1,1441,1.5,'60']){const bad=structuredClone(fixture);bad.places[0].estimatedStayMinutes=invalid;assert.equal(parseCanvasState(bad),null);}
+});
 test('canvas response parser rejects cross-room, unknown document fields, invalid date and non-HTTP homepage values',async()=>{
  const wrongRoom=structuredClone(fixture);wrongRoom.tripId='10000000-0000-4000-8000-000000000002';await assert.rejects(getCanvas(fixture.tripId,{fetcher:async()=>new Response(JSON.stringify(wrongRoom),{status:200})}),/캔버스 응답/u);const unknown=structuredClone(fixture);unknown.document.untrusted=true;assert.equal(parseCanvasState(unknown),null);const badDate=structuredClone(fixture);badDate.document.days[0].date='2026-02-31';assert.equal(parseCanvasState(badDate),null);const badUrl=structuredClone(fixture);badUrl.places[0].homepageUrl='javascript:alert(1)';assert.equal(parseCanvasState(badUrl)?.places[0].homepageUrl,null);
 });

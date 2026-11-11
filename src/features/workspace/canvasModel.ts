@@ -5,7 +5,7 @@ export type CanvasCommentNode = { id: string; kind: 'comment'; dayId: string; po
 export type CanvasNode = CanvasPlaceNode | CanvasCommentNode;
 export type CanvasEdge = { id: string; source: string; target: string };
 export type CanvasDocument = { schemaVersion: 3; days: CanvasDay[]; nodes: CanvasNode[]; edges: CanvasEdge[] };
-export type CanvasPlaceDetail = { contentid: number; title: string; address: string | null; adminCity: string | null; category: string | null; planningRole: string | null; coordinate: { latitude: number; longitude: number; crs: 'WGS84' } | null; overviewText: string | null; menuText: string | null; openingHoursText: string | null; closedDaysText: string | null; feeText: string | null; bookingText: string | null; parkingText: string | null; tel: string | null; homepageUrl: string | null };
+export type CanvasPlaceDetail = { contentid: number; title: string; address: string | null; adminCity: string | null; category: string | null; planningRole: string | null; coordinate: { latitude: number; longitude: number; crs: 'WGS84' } | null; overviewText: string | null; menuText: string | null; openingHoursText: string | null; closedDaysText: string | null; feeText: string | null; bookingText: string | null; parkingText: string | null; tel: string | null; homepageUrl: string | null; estimatedStayMinutes?: number | null };
 export type CanvasState = { tripId: string; revision: number; document: CanvasDocument; places: CanvasPlaceDetail[]; sourcePlan: { planId: string; versionId: string } | null; updatedAt: string };
 export type CanvasEdgeRef = Pick<CanvasEdge, 'source' | 'target'>;
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -43,8 +43,9 @@ export async function getSelfPreparationIssues(id: string, expectedConditionsVer
   const value = await request<SelfDto>(`${base(id)}/generation/preferences/me`, {}, signal, 6_000);
   if (value.conditionsVersion !== expectedConditionsVersion || !Array.isArray(value.preparationIssues)) return undefined;
   const fields = new Set(['likes', 'avoid', 'food', 'walking']);
-  if (value.preparationIssues.some(item => !item || !fields.has(item.field) || typeof item.code !== 'string')) throw new GenerationError(502, 'INVALID_RESPONSE', '개인 준비 상태를 확인할 수 없어요.');
-  return value.preparationIssues;
+  const issues = value.preparationIssues.filter(item => item?.code !== 'PERSONAL_SCHEDULE_NOT_SHARED');
+  if (issues.some(item => !item || !fields.has(item.field) || typeof item.code !== 'string')) throw new GenerationError(502, 'INVALID_RESPONSE', '개인 준비 상태를 확인할 수 없어요.');
+  return issues;
 }
 export const normalizeSelf = (id: string, cv: number, pv: number, signal?: AbortSignal) => request<SelfDto>(`${base(id)}/generation/preferences/me`, { method: 'POST', headers: { 'Idempotency-Key': uuid() }, body: JSON.stringify({ expectedConditionsVersion: cv, expectedPreferenceVersion: pv }) }, signal);
 export const putSelfReview = (id: string, body: unknown, signal?: AbortSignal) => request<SelfDto>(`${base(id)}/generation/preferences/me/review`, { method: 'PUT', body: JSON.stringify(body) }, signal);

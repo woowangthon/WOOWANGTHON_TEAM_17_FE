@@ -9,7 +9,7 @@ type RoutePlan = { scope: string; requests: CanvasRouteRequest[] };
 
 export function useCanvasRoutes(
   tripId: string, conditionsVersion: number | null, mode: CanvasTravelMode,
-  document: CanvasDocument | null, activeDayId: string, preview: boolean,
+  document: CanvasDocument | null, activeDayId: string | null, preview: boolean,
 ) {
   const planJson = JSON.stringify({
     scope: JSON.stringify([tripId, conditionsVersion, mode, preview]),

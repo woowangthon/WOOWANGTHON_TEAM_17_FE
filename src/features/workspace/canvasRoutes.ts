@@ -73,10 +73,10 @@ export function formatCanvasRouteLabel(route: CanvasRoute | null | undefined, lo
 export type CanvasRouteRequest = CanvasRouteInput & { edgeIds: string[] };
 export function collectCanvasRouteRequests(
   tripId: string, conditionsVersion: number | null, mode: CanvasTravelMode, document: { nodes: Array<{ id: string; kind: string; dayId: string; contentid?: number }>; edges: Array<{ id: string; source: string; target: string }> } | null,
-  activeDayId: string,
+  activeDayId: string | null,
 ): CanvasRouteRequest[] {
   if (!document || conditionsVersion === null || !validConditionsVersion(conditionsVersion)) return [];
-  const nodes = new Map(document.nodes.filter(node => node.kind === 'place' && node.dayId === activeDayId && validContentid(node.contentid)).map(node => [node.id, { dayId: node.dayId, contentid: node.contentid as number }]));
+  const nodes = new Map(document.nodes.filter(node => node.kind === 'place' && (activeDayId === null || node.dayId === activeDayId) && validContentid(node.contentid)).map(node => [node.id, { dayId: node.dayId, contentid: node.contentid as number }]));
   const byKey = new Map<string, CanvasRouteRequest>();
   for (const edge of document.edges) {
     const source = nodes.get(edge.source); const target = nodes.get(edge.target);

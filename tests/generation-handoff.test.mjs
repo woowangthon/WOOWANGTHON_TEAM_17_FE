@@ -81,6 +81,13 @@ test('mount resolution restores a consumed handoff cache, while a new handoff ov
   assert.deepEqual(remount, { kind: 'restore', dayId: id(2), viewport: { x: 55, y: 66, zoom: 1.4 }, initialFitNodeIds: [] });
 });
 
+test('a fresh canvas fits the complete day-world instead of focusing only its first route day', () => {
+  const scope = canvasViewScope(id(101), false);
+  const view = resolveCanvasMountView(doc, scope, null);
+  assert.equal(view.kind, 'restore');
+  assert.deepEqual(view.initialFitNodeIds, [`day-frame:${id(1)}`, `day-frame:${id(2)}`]);
+});
+
 test('a stale or aborted completion cannot hand off to the canvas', () => {
   const controller = new AbortController();
   assert.equal(mayCompleteHandoff(controller.signal, 3, 3), true);

@@ -7,8 +7,10 @@ import { createGenerationCanvasImportController } from './generationCanvasImport
 import { isGenerationAccessLost } from './generationAccess.ts';
 import type { GenerationLoadingPhase } from './generationProgress.ts';
 import { mayCompleteHandoff, waitForTwoPaints } from './generationHandoff.ts';
+import { readinessMessage } from './generationReadiness.ts';
 
-export type GenerationCanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string };
+export type GenerationPlanWarningCode = 'MEAL_SLOT_UNFILLED' | 'TRANSFER_TIME_ESTIMATED' | 'STAY_TIME_ESTIMATED';
+export type GenerationCanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string; warningCodes?: GenerationPlanWarningCode[] };
 type Options = { tripId: string | null; enabled: boolean; blockedReason?: string; onStarted: (handoff: GenerationCanvasHandoff) => void; onAccessLost: () => void };
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -21,6 +23,11 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 function jobPhase(job: Job): 'generating' | 'routing' {
   const phase = job.phase.toLowerCase();
   return phase.includes('rout') || phase.includes('route') || phase.includes('validat') || phase.includes('persist') ? 'routing' : 'generating';
+}
+function jobFailureMessage(code: string | null): string {
+  if (code === 'SCHEDULE_WINDOW_INFEASIBLE') return '확정된 약속과 실제 이동 시간을 포함하면 설정한 활동 종료 시각까지 일정을 마치기 어려워요. 약속 시간이나 활동 시간을 조정해 주세요.';
+  if (code === 'REQUIRED_PREFERENCE_UNSUPPORTED' || code === 'REQUIRED_PREFERENCE_UNSATISFIED' || code === 'UNSATISFIED') return '필수 취향 조건을 일정에 안전하게 반영할 수 없어요. 내 취향 항목을 확인해 주세요.';
+  return '일정 생성을 완료하지 못했어요. 준비 화면에서 다시 시작해 주세요.';
 }
 
 /** Freshly checks readiness, resumes an active job, and imports only its completed plan. */
@@ -35,6 +42,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   const [phase, setPhase] = useState<GenerationLoadingPhase>('checking');
   const [error, setError] = useState(false);
   const [personalIssues, setPersonalIssues] = useState<SelfDto['preparationIssues']>();
+  const [dismissedIssueFields, setDismissedIssueFields] = useState<Set<string>>(() => new Set());
   const epoch = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const starter = useRef<ReturnType<typeof createGenerationStartController> | null>(null);
@@ -42,8 +50,10 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   const blockedReasonRef = useRef(blockedReason);
   const processing = useRef<string | null>(null);
   const importer = useRef<ReturnType<typeof createGenerationCanvasImportController> | null>(null);
-  const failedPlan = useRef<{ planId: string; versionId: string } | null>(null);
+  const failedPlan = useRef<{ planId: string; versionId: string; warningCodes: GenerationPlanWarningCode[] } | null>(null);
   const issueInputToken = useRef<string | null>(null);
+  const readinessRevision = useRef(0);
+  const runReadinessRevision = useRef(0);
   starter.current ??= createGenerationStartController({
     getLatest: (id, signal) => getGeneration(id, signal),
     create: (id, token, version, key, signal) => createJob(id, token, version, key, signal),
@@ -60,23 +70,42 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     createKey: () => crypto.randomUUID(),
   });
   useEffect(() => { callbacks.current = { onStarted, onAccessLost }; }, [onAccessLost, onStarted]);
-  useEffect(() => { blockedReasonRef.current = blockedReason; }, [blockedReason]);
+  /* eslint-disable react/set-state-in-effect */
+  useEffect(() => {
+    const changed = blockedReasonRef.current !== blockedReason;
+    blockedReasonRef.current = blockedReason;
+    if (changed) {
+      readinessRevision.current += 1;
+      failedPlan.current = null;
+      importer.current?.reset();
+      setMessage(''); setError(false); setRetryAvailable(false); setReturnAvailable(false);
+      // A readiness edit invalidates stale request messages and the blocking overlay.
+      if (blockedReason) setOverlayOpen(false);
+    }
+  }, [blockedReason]);
+  /* eslint-enable react/set-state-in-effect */
   const acceptGenerationState = useCallback((next: GenerationState) => {
-    if (issueInputToken.current && issueInputToken.current !== next.inputToken) { issueInputToken.current = null; setPersonalIssues(undefined); }
+    if (issueInputToken.current && issueInputToken.current !== next.inputToken) { issueInputToken.current = null; setPersonalIssues(undefined); setDismissedIssueFields(new Set()); }
     setData(next);
   }, []);
 
-  const importCompletedPlan = useCallback(async (id: string, planId: string, versionId: string, signal: AbortSignal, own: number) => {
+  const importCompletedPlan = useCallback(async (id: string, planId: string, versionId: string, warningCodes: GenerationPlanWarningCode[], signal: AbortSignal, own: number) => {
     setPhase('opening');
-    failedPlan.current = { planId, versionId };
+    if (blockedReasonRef.current || runReadinessRevision.current !== readinessRevision.current) {
+      setBusy(false); setOverlayOpen(false); setReturnAvailable(false); setError(false);
+      setMessage('입력이 바뀌어 일정을 열지 않았어요. 변경 내용을 저장한 뒤 일정 만들기를 눌러 주세요.');
+      return;
+    }
+    failedPlan.current = { planId, versionId, warningCodes };
     const imported = await importer.current!.run(id, planId, versionId, signal);
     if (signal.aborted || own !== epoch.current) return;
     const latest = await getCanvas(id, { signal });
     if (signal.aborted || own !== epoch.current) return;
     if (latest.revision < imported.revision) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '가져온 캔버스의 최신 상태를 확인할 수 없어요.');
     await acceptImportedCanvasState(id, latest, signal);
-    if (!mayCompleteHandoff(signal, own, epoch.current, blockedReasonRef.current)) {
-      if (!signal.aborted && own === epoch.current && blockedReasonRef.current) {
+    if (!mayCompleteHandoff(signal, own, epoch.current, blockedReasonRef.current)
+        || runReadinessRevision.current !== readinessRevision.current) {
+      if (!signal.aborted && own === epoch.current && (blockedReasonRef.current || runReadinessRevision.current !== readinessRevision.current)) {
         setBusy(false); setOverlayOpen(false); setReturnAvailable(false); setError(false);
         setMessage('생성한 일정은 캔버스에 담겼어요. 입력을 저장한 뒤 일정 캔버스를 열어 주세요.');
       }
@@ -87,12 +116,12 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     await waitForTwoPaints(signal);
     if (signal.aborted || own !== epoch.current) return;
     setBusy(false);
-    if (blockedReasonRef.current) {
+    if (blockedReasonRef.current || runReadinessRevision.current !== readinessRevision.current) {
       setMessage('생성한 일정은 캔버스에 담겼어요. 입력을 저장한 뒤 일정 캔버스를 열어 주세요.');
       setOverlayOpen(false); setReturnAvailable(false); setError(false);
       return;
     }
-    const handoff: GenerationCanvasHandoff = { tripId: id, planId, versionId, handoffId: crypto.randomUUID() };
+    const handoff: GenerationCanvasHandoff = { tripId: id, planId, versionId, handoffId: crypto.randomUUID(), warningCodes };
     setMessage(''); setOverlayOpen(false); setReturnAvailable(false); setError(false);
     callbacks.current.onStarted(handoff);
   }, []);
@@ -110,7 +139,12 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
         if (signal.aborted || own !== epoch.current) return;
         setData(current => current ? { ...current, latestJob: job } : current);
       }
-      if (job.status !== 'SUCCEEDED' || !job.planId) throw new GenerationError(409, job.errorCode ?? 'GENERATION_FAILED', '일정 생성을 완료하지 못했어요. 준비 화면에서 다시 시작해 주세요.');
+      if (job.status !== 'SUCCEEDED' || !job.planId) throw new GenerationError(409, job.errorCode ?? 'GENERATION_FAILED', jobFailureMessage(job.errorCode));
+      if (blockedReasonRef.current || runReadinessRevision.current !== readinessRevision.current) {
+        setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false);
+        setMessage('입력이 바뀌어 일정을 열지 않았어요. 변경 내용을 저장한 뒤 일정 만들기를 눌러 주세요.');
+        return;
+      }
       setPhase('routing');
       const plan = await getPlan(id, job.planId, signal);
       if (signal.aborted || own !== epoch.current) return;
@@ -119,7 +153,12 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
         setData(current => current?.latestJob?.id === job.id && current.latestJob ? { ...current, latestJob: { ...current.latestJob, status: 'STALE' } } : current);
         throw new GenerationError(409, 'PLAN_STALE', '여행 조건이 바뀌어 생성한 일정을 가져오지 못했어요. 최신 조건으로 다시 만들어 주세요.');
       }
-      await importCompletedPlan(id, plan.planId, plan.versionId, signal, own);
+      const supportedWarnings = new Set<GenerationPlanWarningCode>(['MEAL_SLOT_UNFILLED', 'TRANSFER_TIME_ESTIMATED', 'STAY_TIME_ESTIMATED']);
+      const warnings = plan.document?.validation?.warnings;
+      const warningCodes = Array.isArray(warnings)
+        ? [...new Set(warnings.filter((code): code is GenerationPlanWarningCode => supportedWarnings.has(code as GenerationPlanWarningCode)))]
+        : [];
+      await importCompletedPlan(id, plan.planId, plan.versionId, warningCodes, signal, own);
     } finally {
       if (processing.current === initialJob.id) processing.current = null;
       if (own === epoch.current && !signal.aborted) setBusy(false);
@@ -141,8 +180,8 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
 
   const loadOwnIssues = useCallback(async (id: string, state: GenerationState, signal: AbortSignal, own: number) => {
     const codes = new Set(state.reasons.map(reason => reason.code));
-    if (!codes.has('REQUIRED_PREFERENCE_UNSUPPORTED') && !codes.has('UNSATISFIED')) return;
-    setPersonalIssues(undefined); issueInputToken.current = null;
+    if (!codes.has('REQUIRED_PREFERENCE_UNSUPPORTED') && !codes.has('REQUIRED_PREFERENCE_UNSATISFIED') && !codes.has('UNSATISFIED')) return;
+    setPersonalIssues(undefined); setDismissedIssueFields(new Set()); issueInputToken.current = null;
     try {
       const issues = await getSelfPreparationIssues(id, state.conditionsVersion, signal);
       if (signal.aborted || own !== epoch.current || !issues) return;
@@ -162,6 +201,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
       acceptGenerationState(next); setMessage('');
       if (next.latestJob && ['QUEUED','RUNNING'].includes(next.latestJob.status) && !blockedReasonRef.current) {
         setRetryAvailable(false);
+        runReadinessRevision.current = readinessRevision.current;
         void processJob(tripId, next.latestJob, abort.signal, own).catch(error => fail(error, own, abort.signal));
       }
       return next;
@@ -169,6 +209,8 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     finally { if (own === epoch.current) setLoading(false); }
   }, [enabled, tripId, processJob, fail, acceptGenerationState]);
 
+  // Reset all request-scoped state when the room scope changes.
+  /* eslint-disable react/set-state-in-effect */
   useEffect(() => {
     epoch.current += 1; controller.current?.abort(); controller.current = null;
     starter.current?.reset(); importer.current?.reset(); processing.current = null; failedPlan.current = null;
@@ -176,17 +218,19 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     if (enabled && tripId) void refresh();
     return () => { epoch.current += 1; controller.current?.abort(); controller.current = null; processing.current = null; };
   }, [enabled, tripId, refresh]);
+  /* eslint-enable react/set-state-in-effect */
 
   const start = useCallback(async () => {
     if (!enabled || !tripId || busy) return;
     if (failedPlan.current && blockedReasonRef.current) { setMessage(blockedReasonRef.current); return; }
     setLoading(false); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setBusy(true); setMessage('');
+    runReadinessRevision.current = readinessRevision.current;
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
     let showOperationOverlay = false;
     try {
       if (failedPlan.current) {
         showOperationOverlay = true; setOverlayOpen(true);
-        await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, abort.signal, own);
+        await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, failedPlan.current.warningCodes, abort.signal, own);
         return;
       }
       const result = await starter.current!.start(tripId, abort.signal, () => blockedReasonRef.current, () => {
@@ -205,12 +249,14 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
 
   const retry = useCallback(async () => {
     if (!tripId || !enabled || busy) return;
+    if (blockedReasonRef.current) { setMessage(blockedReasonRef.current); setOverlayOpen(false); return; }
     if (failedPlan.current && blockedReasonRef.current) { setMessage(blockedReasonRef.current); setOverlayOpen(false); return; }
     setLoading(false); setBusy(true); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setMessage('');
+    runReadinessRevision.current = readinessRevision.current;
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
     let showOperationOverlay = false;
     try {
-      if (failedPlan.current) { showOperationOverlay = true; setOverlayOpen(true); await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, abort.signal, own); return; }
+      if (failedPlan.current) { showOperationOverlay = true; setOverlayOpen(true); await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, failedPlan.current.warningCodes, abort.signal, own); return; }
       const fresh = await getGeneration(tripId, abort.signal);
       if (own !== epoch.current || abort.signal.aborted) return;
       acceptGenerationState(fresh);
@@ -228,17 +274,9 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   }, [tripId, enabled, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
 
   const dismiss = useCallback(() => setOverlayOpen(false), []);
-  return { data, loading, busy, message, personalIssues, start, refresh, overlayOpen, phase, error, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
-}
-
-export function readinessMessage(state: GenerationState): string {
-  const codes = new Set(state.reasons.map(reason => reason.code));
-  if (codes.has('CONDITIONS_INCOMPLETE')) return '여행 날짜와 예산 등 기본조건을 저장해 주세요.';
-  if (codes.has('MEMBER_COUNT_MISMATCH')) return '예정 인원과 현재 참여 인원을 맞춰 주세요.';
-  if (codes.has('PREFERENCES_UNCONFIRMED') || codes.has('PREPARATION_INCOMPLETE') || codes.has('REVIEW_REQUIRED')) return '참여자 모두 내 취향을 저장하고 준비 완료를 눌러야 해요.';
-  if (codes.has('REQUIRED_PREFERENCE_UNSUPPORTED') || codes.has('UNSATISFIED')) return '내 취향에 생성 조건으로 반영할 수 없는 필수 항목이 있어요. 내 취향 입력을 확인해 주세요.';
-  if (codes.has('DEPARTURE_UNRESOLVED')) return '출발 장소를 장소 검색에서 선택해 주세요.';
-  if (codes.has('RETURN_UNRESOLVED')) return '복귀 장소를 장소 검색에서 선택해 주세요.';
-  if (codes.has('LODGING_ANCHOR_REQUIRED') || codes.has('FIXED_SCHEDULE_ANCHOR_REQUIRED') || codes.has('COMMON_REVIEW_REQUIRED') || codes.has('LEGACY_ANCHOR_REQUIRED') || codes.has('LODGING_REVIEW_REQUIRED') || codes.has('FIXED_SCHEDULE_REVIEW_REQUIRED')) return '기존 숙소 또는 고정 약속 정보를 장소와 시간으로 확인해 주세요.';
-  return '여행 준비 상태를 확인하고 빠진 조건을 저장해 주세요.';
+  const clearPersonalIssue = useCallback((field?: NonNullable<SelfDto['preparationIssues']>[number]['field']) => {
+    setDismissedIssueFields(current => field ? new Set([...current, field]) : new Set(['likes', 'avoid', 'food', 'walking']));
+  }, []);
+  const visiblePersonalIssues = personalIssues?.filter(issue => !dismissedIssueFields.has(issue.field));
+  return { data, loading, busy, message, personalIssues: visiblePersonalIssues, clearPersonalIssue, start, refresh, overlayOpen, phase, error, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
 }

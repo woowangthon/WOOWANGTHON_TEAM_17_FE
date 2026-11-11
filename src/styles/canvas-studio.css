@@ -13,10 +13,11 @@
 .tw-canvas-header h1 { margin: 0; font-size: 19px; line-height: 1.3; }
 .tw-canvas-header p { margin: 2px 0 0; color: var(--canvas-muted); font-size: 12px; }
 .tw-canvas-toolbar { display: flex; gap: 4px; }
-.tw-canvas-toolbar button, .tw-day-pack > button, .tw-drawer-heading > button { display: inline-grid; min-width: 44px; min-height: 44px; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--canvas-ink); font-size: 18px; }
-.tw-canvas-toolbar button:hover, .tw-day-pack > button:hover, .tw-drawer-heading > button:hover { border-color: var(--canvas-border); background: var(--canvas-soft); }
-.tw-canvas-toolbar button:disabled, .tw-day-pack > button:disabled { background: var(--color-disabled-bg); color: var(--color-disabled-text); cursor: not-allowed; }
+.tw-canvas-toolbar button, .tw-drawer-heading > button { display: inline-grid; min-width: 44px; min-height: 44px; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--canvas-ink); font-size: 18px; }
+.tw-canvas-toolbar button:hover, .tw-drawer-heading > button:hover { border-color: var(--canvas-border); background: var(--canvas-soft); }
+.tw-canvas-toolbar button:disabled { background: var(--color-disabled-bg); color: var(--color-disabled-text); cursor: not-allowed; }
 .tw-preview-banner, .tw-sync-status { display: flex; min-height: 32px; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; padding: 4px 20px; border-bottom: 1px solid var(--canvas-border); color: var(--canvas-muted); background: var(--canvas-surface); font-size: 12px; }
+.tw-canvas-plan-notes { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 7px 20px; border-bottom: 1px solid var(--canvas-border); background: var(--canvas-surface); color: var(--canvas-muted); font-size: 12px; }
 .tw-sync-status span { margin-left: auto; }
 .tw-sync-status.status-offline, .tw-sync-status.status-conflict { color: var(--color-warning); }
 .tw-sync-status.status-error { color: var(--color-danger); }
@@ -25,12 +26,16 @@
 .tw-flow-area { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
 .tw-canvas-topline { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 12px; border-bottom: 1px solid var(--canvas-border); background: var(--canvas-surface); }
 .tw-canvas-topline > span { flex: none; color: var(--canvas-muted); font-size: 12px; }
-.tw-day-pack { display: flex; align-items: center; gap: 4px; }
-.tw-day-pack > button { min-width: 40px; min-height: 40px; font-size: 18px; }
-.tw-day-pack .text-input { width: auto; min-width: 124px; min-height: 40px; border: 1px solid var(--canvas-border); border-radius: 6px; background: var(--canvas-surface); color: var(--canvas-ink); }
+.tw-canvas-topline > strong { font-size: 13px; }
 .tw-flow-canvas { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; background: var(--canvas-surface); }
 .tw-flow-canvas .react-flow__pane { cursor: grab; }
 .tw-flow-canvas .react-flow__pane:active { cursor: grabbing; }
+.tw-flow-canvas .react-flow__node-dayFrame { z-index: -1 !important; }
+.tw-canvas-day-frame { width: 100%; height: 100%; padding: 14px; overflow: hidden; border: 1px solid var(--canvas-border); border-radius: 14px; background: var(--canvas-soft); color: var(--canvas-ink); }
+.tw-canvas-day-frame header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--canvas-border); }
+.tw-day-frame-focus { min-height: 44px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--canvas-ink); font-size: 17px; font-weight: 700; text-align: left; cursor: pointer; }
+.tw-day-frame-focus:hover, .tw-day-frame-focus:focus-visible { background: var(--canvas-surface); outline: 2px solid var(--color-accent-hover); outline-offset: 1px; }
+.tw-canvas-day-frame header span { color: var(--canvas-muted); font-size: 12px; }
 .tw-place-node, .tw-comment-node { width: 224px; padding: 12px; border: 1px solid var(--canvas-border); border-radius: 9px; background: var(--canvas-surface); box-shadow: var(--canvas-node-shadow); color: var(--canvas-ink); }
 .tw-place-node.is-selected, .tw-comment-node.is-selected { border-color: var(--color-accent-hover); box-shadow: 0 0 0 2px var(--canvas-soft); }
 .tw-place-node.color-lime, .tw-comment-node.color-lime { background: var(--canvas-card-lime); }
@@ -41,6 +46,7 @@
 .tw-node-meta { display: flex; justify-content: space-between; color: var(--canvas-muted); font-size: 11px; }
 .tw-place-node strong { display: block; margin-top: 8px; overflow-wrap: anywhere; font-size: 15px; }
 .tw-place-node small { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--canvas-muted); font-size: 12px; }
+.tw-place-node .tw-place-schedule { color: var(--canvas-ink); font-weight: 650; }
 .tw-place-node p, .tw-comment-node p { margin: 8px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 13px; }
 .tw-comment-node { min-height: 92px; }
 .tw-comment-node > span { color: var(--canvas-muted); font-size: 11px; }
@@ -98,7 +104,6 @@
 .tw-place-drawer { position: absolute; inset: auto 10px 10px; width: auto; height: min(64dvh,560px); max-height: 70dvh; border: 1px solid var(--canvas-border); border-radius: 10px; box-shadow: none; }
   .prep-workspace:has(.tw-canvas-embedded) { height: calc(100dvh - 56px); }
   .prep-workspace:has(.tw-canvas-embedded) .tw-canvas-shell, .prep-workspace:has(.tw-canvas-embedded) .tw-canvas-embedded .tw-canvas-shell { height: auto; min-height: 0; }
-  .tw-day-pack .text-input { min-width: 112px; font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { .tw-canvas-embedded *, .tw-canvas-embedded *::before, .tw-canvas-embedded *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 .tw-canvas-header h1, .tw-drawer-heading h2, .tw-inspector h3 { text-wrap: balance; }
@@ -112,7 +117,4 @@
   .tw-canvas-toolbar { margin-left: auto; }
   .tw-canvas-toolbar button { min-width: 44px; min-height: 44px; }
   .tw-canvas-topline { flex-wrap: wrap; }
-  .tw-day-pack { max-width: 100%; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px 44px; }
-  .tw-day-pack .text-input { min-width: 0; width: 100%; }
-  .tw-day-pack > button { min-width: 44px; min-height: 44px; }
 }

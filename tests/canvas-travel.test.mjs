@@ -71,6 +71,25 @@ test('route requests include only current-day directed place edges and deduplica
   assert.notEqual(canvasRouteKey({ ...input, sourceContentid: 22, targetContentid: -17 }), canvasRouteKey(input));
 });
 
+test('all-day canvas requests retain each day-owned route independently', () => {
+  const first = id(1); const second = id(2);
+  const document = {
+    nodes: [
+      { id: id(10), kind: 'place', dayId: first, contentid: 101 },
+      { id: id(11), kind: 'place', dayId: first, contentid: 202 },
+      { id: id(12), kind: 'place', dayId: second, contentid: 303 },
+      { id: id(13), kind: 'place', dayId: second, contentid: 404 },
+    ],
+    edges: [
+      { id: id(20), source: id(10), target: id(11) },
+      { id: id(21), source: id(12), target: id(13) },
+      { id: id(22), source: id(11), target: id(12) },
+    ],
+  };
+  const allDays = collectCanvasRouteRequests(uuid, 8, 'car', document, null);
+  assert.deepEqual(allDays.map(request => [request.sourceContentid, request.targetContentid]), [[101, 202], [303, 404]]);
+});
+
 test('GET route sends saved conditions version and enforces credentials and no-store', async () => {
   let captured;
   const route = await getCanvasRoute(input, undefined, { fetcher: async (path, init) => {

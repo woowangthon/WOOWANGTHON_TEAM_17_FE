@@ -103,6 +103,13 @@
 .prep-schedule-item-actions > span { color: var(--prep-muted); font-size: 12px; }
 .prep-schedule-place-result { display: flex; min-height: 44px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: var(--space-1) var(--space-2); border: 1px solid var(--prep-line); border-radius: 6px; background: var(--prep-paper); color: var(--prep-ink); font: inherit; text-align: left; cursor: pointer; }
 .prep-schedule-place-result > span { color: var(--prep-muted); font-size: 12px; }
+.prep-schedule-place-results { display: grid; gap: 7px; margin: 9px 0 0; padding: 0; list-style: none; }
+.prep-departure-search { position: relative; }
+.prep-room-shell .prep-condition-fields .prep-departure-search input { padding-inline-end: 48px; }
+.prep-search-icon { position: absolute; inset-inline-end: 3px; inset-block: 3px; width: 42px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--prep-ink); cursor: pointer; }
+.prep-search-icon:hover:not(:disabled) { background: var(--prep-soft); }
+.prep-search-icon:disabled { opacity: .5; cursor: default; }
+.prep-schedule-search-status { margin: 7px 0 0; color: var(--prep-muted); font-size: 12px; }
 @media (max-width: 420px) { .prep-schedule-departure { grid-template-columns: minmax(0, 1fr); } .prep-schedule-fields .prep-two-fields { grid-template-columns: minmax(0, 1fr); } }
 .prep-optional { margin-left: var(--space-0); color: var(--prep-muted); font-size: 12px; font-weight: 400; }
 .prep-region-picker { min-width: 0; margin-bottom: var(--tw-space-20); }
@@ -143,6 +150,7 @@
 .prep-walking > div { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .prep-walking button { min-height: 42px; padding: 0 var(--space-2); border: 1px solid var(--prep-line); border-radius: 7px; background: var(--prep-paper); color: var(--prep-ink); font: inherit; font-size: 13px; cursor: pointer; }
 .prep-walking button.is-selected { border-color: var(--color-accent-hover); background: var(--prep-soft); }
+.prep-personal-field-error { margin: var(--space-1) 0 0; color: var(--color-danger); font-size: 12px; line-height: 1.5; }
 .prep-confirm-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--tw-space-20); padding-top: var(--space-3); border-top: 1px solid var(--prep-line); }
 .prep-confirm-row > span { color: var(--prep-muted); font-size: 13px; }
 .prep-readonly-values { display: grid; gap: 0; margin: 0; }
@@ -335,6 +343,7 @@
 .prep-participant-trigger svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .prep-participant-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
 .prep-participant-panel { position: absolute; top: calc(100% + var(--space-1)); right: 0; width: min(360px, calc(100dvi - 32px)); max-height: min(320px, 50dvh); overflow: auto; overscroll-behavior: contain; padding: var(--space-1) var(--space-2); border: 1px solid var(--prep-line); border-radius: 8px; background: var(--prep-paper); box-shadow: 0 8px 24px color-mix(in srgb, var(--prep-ink) 14%, transparent); }
+.prep-participant-summary { margin: 0; padding: var(--space-1) 0; border-bottom: 1px solid var(--prep-line); color: var(--prep-muted); font-size: 12px; }
 .prep-participant-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
 .prep-participant { display: grid; min-width: 0; max-width: none; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; border: 0; border-bottom: 1px solid var(--prep-line); }
 .prep-participant:last-child { border-bottom: 0; }
@@ -352,7 +361,7 @@
   .prep-page-heading { align-items: stretch; flex-direction: column; gap: var(--space-1); }
   .prep-heading-info { align-self: stretch; }
   .prep-participant-disclosure { width: 100%; }
-  .prep-participant-trigger { margin-left: auto; }
+  .prep-participant-trigger { max-width: 100%; margin-left: auto; white-space: normal; text-align: right; }
   .prep-participant-panel { width: min(360px, 100%); }
   .prep-topbar .tw-topbar-actions .prep-copy-wrap .btn { display: inline-flex; min-height: 40px; padding: 0 var(--space-1); font-size: 12px; white-space: nowrap; }
 }
