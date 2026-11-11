@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canvasDocumentPosition, canvasFrameNodePosition, dayLabel, ensureCanvasDateRange, frameForPoint, layoutCanvasDayFrames, resolveCanvasDrop } from '../src/features/workspace/canvasDayFrames.ts';
+import { parseCanvasDocument } from '../src/features/workspace/canvasModel.ts';
+import { arrangeDayPlaces, canvasDayTone, canvasDocumentPosition, canvasFrameNodePosition, dayLabel, ensureCanvasDateRange, frameForPoint, layoutCanvasDayFrames, materializeProjectedDay, resolveCanvasDrop } from '../src/features/workspace/canvasDayFrames.ts';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const makeDocument = (days, nodes = []) => ({ schemaVersion: 3, days, nodes, edges: [] });
@@ -153,4 +154,58 @@ test('a drop into another bounded day frame changes ownership and returns local 
 test('day labels show chronological trip day and concise month/day', () => {
   assert.equal(dayLabel({ id: id(1), date: '2026-11-06' }, 0), '1일차 · 11월 6일');
   assert.equal(dayLabel({ id: id(2), date: null }, 1), '2일차');
+});
+
+test('an imported three-place row projects cards to a balanced two over one layout with an inverse',()=>{
+  const days=[{id:id(1),date:null}];
+  const source={planId:id(70),versionId:id(71),nodeId:id(72)};
+  const nodes=[
+    {id:id(40),kind:'place',dayId:days[0].id,position:{x:100,y:100},color:'default',contentid:1,intent:'route',source:{...source,nodeId:id(72)},schedule:{startAt:null,endAt:null,locked:true}},
+    {id:id(41),kind:'place',dayId:days[0].id,position:{x:370,y:100},color:'default',contentid:2,intent:'route',source:{...source,nodeId:id(73)},schedule:{startAt:null,endAt:null,locked:true}},
+    {id:id(42),kind:'place',dayId:days[0].id,position:{x:370,y:285},color:'default',contentid:3,intent:'route',source:{...source,nodeId:id(74)},schedule:{startAt:null,endAt:null,locked:true}},
+  ];
+  const sizes=new Map([[id(40),{width:300,height:220}],[id(41),{width:380,height:520}],[id(42),{width:560,height:320}]]);
+  const frame=layoutCanvasDayFrames(makeDocument(days,nodes),sizes).get(days[0].id);
+  const [first,second,third]=nodes.map(node=>canvasFrameNodePosition(node,frame));
+  assert.equal(first.y,second.y);assert.ok(third.y>first.y);
+  assert.ok(Math.abs((third.x+sizes.get(id(42)).width/2)-((first.x+second.x+sizes.get(id(41)).width)/2))<=1,'bottom place is centered under the top row');
+  assert.ok(third.y>=first.y+sizes.get(id(40)).height+28,'bottom row clears the taller top card');
+  assert.ok(first.x>=0&&first.y>=72);
+  const moved=canvasDocumentPosition({x:third.x+10,y:third.y},frame,nodes[2]);assert.deepEqual(moved,{x:84,y:548},'inverse materializes the bottom card display position plus the 10px drag');
+  const original=makeDocument(days,nodes);
+  const materialized=materializeProjectedDay(original,days[0].id,sizes,nodes[2].id);
+  const dragged={...materialized,nodes:materialized.nodes.map(node=>node.id===nodes[2].id?{...node,position:moved}:node)};
+  const saved=parseCanvasDocument(dragged);assert.ok(saved);
+  const stableFrame=layoutCanvasDayFrames(saved,sizes).get(days[0].id);
+  assert.deepEqual(canvasFrameNodePosition(saved.nodes[0],stableFrame),first,'the left card stays put after save');
+  assert.deepEqual(canvasFrameNodePosition(saved.nodes[1],stableFrame),second,'the right card stays put after save');
+  assert.deepEqual(canvasFrameNodePosition(saved.nodes[2],stableFrame),{x:third.x+10,y:third.y},'the moved bottom card retains its 10px drag after save');
+});
+
+test('explicit frame coordinates remain exact while automatic frames avoid them',()=>{
+  const days=[{id:id(1),date:null,position:{x:200,y:100}},{id:id(2),date:null},{id:id(3),date:null}];
+  const frames=layoutCanvasDayFrames(makeDocument(days));
+  assert.deepEqual(frames.get(id(1)).position,{x:200,y:100});
+  const a=frames.get(id(1)),b=frames.get(id(2)),c=frames.get(id(3));
+  for(const [left,right] of [[a,b],[a,c],[b,c]])assert.ok(left.position.x+left.width+36<=right.position.x||right.position.x+right.width+36<=left.position.x||left.position.y+left.height+36<=right.position.y||right.position.y+right.height+36<=left.position.y);
+});
+
+test('day tones are stable across renders and stay within the six approved accents',()=>{
+  const tones=['lime','sky','rose','amber','sage','lavender'];
+  assert.ok(tones.includes(canvasDayTone(id(1))));assert.equal(canvasDayTone(id(1)),canvasDayTone(id(1)));
+  assert.deepEqual(new Set(Array.from({length:6},(_,index)=>canvasDayTone(id(index+1)))).size,6);
+});
+
+test('explicit arrange balances cards by measured size, preserves IDs, other dates and comments',()=>{
+  const days=[{id:id(1),date:null},{id:id(2),date:null}];
+  const nodes=[
+    {id:id(50),kind:'place',dayId:id(1),position:{x:500,y:700},color:'default',contentid:1,intent:'candidate'},
+    {id:id(51),kind:'place',dayId:id(1),position:{x:900,y:80},color:'default',contentid:2,intent:'route'},
+    {id:id(52),kind:'place',dayId:id(1),position:{x:1200,y:80},color:'default',contentid:3,intent:'route'},
+    {id:id(53),kind:'comment',dayId:id(1),position:{x:-40,y:900},color:'default',text:'leave me'},
+    {id:id(54),kind:'place',dayId:id(2),position:{x:77,y:88},color:'default',contentid:4,intent:'candidate'},
+  ];
+  const doc=makeDocument(days,nodes);const arranged=arrangeDayPlaces(doc,id(1),new Map([[id(50),{width:300,height:200}],[id(51),{width:260,height:280}],[id(52),{width:400,height:160}]]));
+  assert.deepEqual(arranged.nodes.slice(0,3).map(node=>node.id),nodes.slice(0,3).map(node=>node.id));
+  const [a,b,c]=arranged.nodes.slice(0,3).map(node=>node.position);assert.equal(a.y,b.y);assert.ok(c.y>=a.y+280+28);assert.ok(c.x>a.x);assert.deepEqual(arranged.nodes[3].position,nodes[3].position);assert.deepEqual(arranged.nodes[4].position,nodes[4].position);assert.equal(arranged.days[0].id,days[0].id);
 });

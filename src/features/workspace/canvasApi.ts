@@ -10,20 +10,28 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const nullableText = (value: unknown) => value === null || typeof value === 'string';
 const exactKeys=(value:Record<string,unknown>,keys:string[])=>Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 const placeKeys=['contentid','title','address','adminCity','category','planningRole','coordinate','overviewText','menuText','openingHoursText','closedDaysText','feeText','bookingText','parkingText','tel','homepageUrl'];
+const optionalPlaceKeys=['estimatedStayMinutes','imageUrl','firstimage','priceLabel'];
+function safeHttpUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try { const parsed = new URL(value); return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null; }
+  catch { return null; }
+}
 function parsePlace(value: unknown): CanvasPlaceDetail | null {
   const hasEstimatedStay = isRecord(value) && Object.hasOwn(value, 'estimatedStayMinutes');
-  if (!isRecord(value)||!(exactKeys(value,placeKeys)||hasEstimatedStay&&exactKeys(value,[...placeKeys,'estimatedStayMinutes']))) return null;
+  if (!isRecord(value) || !placeKeys.every(key => Object.hasOwn(value, key))
+    || Object.keys(value).some(key => !placeKeys.includes(key) && !optionalPlaceKeys.includes(key))) return null;
   const strings = ['title'] as const; if (!strings.every((key) => typeof value[key] === 'string') || typeof value.contentid !== 'number' || !Number.isInteger(value.contentid) || value.contentid < -2147483648 || value.contentid > 2147483647) return null;
   const nullable = ['address','adminCity','category','planningRole','overviewText','menuText','openingHoursText','closedDaysText','feeText','bookingText','parkingText','tel','homepageUrl'];
-  if (!nullable.every((key) => nullableText(value[key]))) return null;
+  if (!nullable.every((key) => nullableText(value[key]))
+    || ['imageUrl','firstimage','priceLabel'].some(key => Object.hasOwn(value, key) && !nullableText(value[key]))) return null;
   const estimatedStay = value.estimatedStayMinutes;
   if (hasEstimatedStay && !(estimatedStay === null || (typeof estimatedStay === 'number' && Number.isInteger(estimatedStay) && estimatedStay >= 1 && estimatedStay <= 1440))) return null;
   let coordinate: CanvasPlaceDetail['coordinate'] = null;
   if (value.coordinate !== null) { if (!isRecord(value.coordinate) || !exactKeys(value.coordinate,['latitude','longitude','crs']) || typeof value.coordinate.latitude !== 'number' || !Number.isFinite(value.coordinate.latitude) || Math.abs(value.coordinate.latitude)>90 || typeof value.coordinate.longitude !== 'number' || !Number.isFinite(value.coordinate.longitude) || Math.abs(value.coordinate.longitude)>180 || value.coordinate.crs !== 'WGS84') return null; coordinate = { latitude: value.coordinate.latitude, longitude: value.coordinate.longitude, crs: 'WGS84' }; }
-  const homepage = value.homepageUrl;
-  let safeHomepage:string|null=null;
-  if(typeof homepage==='string'){try{const parsed=new URL(homepage);if(parsed.protocol==='https:'||parsed.protocol==='http:')safeHomepage=parsed.href;}catch{/* Invalid external URL is omitted from the UI. */}}
-  return { contentid: value.contentid, title: value.title as string, address: value.address as string | null, adminCity: value.adminCity as string | null, category: value.category as string | null, planningRole: value.planningRole as string | null, coordinate, overviewText: value.overviewText as string | null, menuText: value.menuText as string | null, openingHoursText: value.openingHoursText as string | null, closedDaysText: value.closedDaysText as string | null, feeText: value.feeText as string | null, bookingText: value.bookingText as string | null, parkingText: value.parkingText as string | null, tel: value.tel as string | null, homepageUrl: safeHomepage, ...(hasEstimatedStay ? { estimatedStayMinutes: estimatedStay as number | null } : {}) };
+  const safeHomepage = safeHttpUrl(value.homepageUrl);
+  const hasImage = Object.hasOwn(value, 'imageUrl') || Object.hasOwn(value, 'firstimage');
+  const safeImage = safeHttpUrl(value.imageUrl ?? value.firstimage);
+  return { contentid: value.contentid, title: value.title as string, address: value.address as string | null, adminCity: value.adminCity as string | null, category: value.category as string | null, planningRole: value.planningRole as string | null, coordinate, overviewText: value.overviewText as string | null, menuText: value.menuText as string | null, openingHoursText: value.openingHoursText as string | null, closedDaysText: value.closedDaysText as string | null, feeText: value.feeText as string | null, ...(Object.hasOwn(value, 'priceLabel') ? { priceLabel: value.priceLabel as string | null } : {}), bookingText: value.bookingText as string | null, parkingText: value.parkingText as string | null, tel: value.tel as string | null, homepageUrl: safeHomepage, ...(hasImage ? { imageUrl: safeImage } : {}), ...(hasEstimatedStay ? { estimatedStayMinutes: estimatedStay as number | null } : {}) };
 }
 export function parseCanvasState(value: unknown): CanvasState | null {
   if (!isRecord(value) || !exactKeys(value,['tripId','revision','document','places','sourcePlan','updatedAt']) || !isCanonicalCanvasUuid(value.tripId) || !Number.isInteger(value.revision) || (value.revision as number) < 0 || !Array.isArray(value.places) || !value.places.every((x) => parsePlace(x)) || !(value.sourcePlan === null || (isRecord(value.sourcePlan) && exactKeys(value.sourcePlan,['planId','versionId'])&&isCanonicalCanvasUuid(value.sourcePlan.planId)&&isCanonicalCanvasUuid(value.sourcePlan.versionId))) || typeof value.updatedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(value.updatedAt) || Number.isNaN(Date.parse(value.updatedAt))) return null;
@@ -34,10 +42,10 @@ export function parseCanvasState(value: unknown): CanvasState | null {
 }
 async function request(path: string, init: RequestInit, options: Options): Promise<unknown> {
   let response: Response;
-  try { const fetcher = options.fetcher ?? ((input: RequestInfo | URL, config?: RequestInit) => globalThis.fetch(input, config)); response = await fetcher(path, { ...init, credentials: 'include', cache: 'no-store', signal: options.signal }); }
+  try { const fetcher = options.fetcher ?? ((input: RequestInfo | URL, config?: RequestInit) => globalThis.fetch(input, config)); const headers = new Headers(init.headers); headers.set('X-Canvas-Version', '4'); response = await fetcher(path, { ...init, headers, credentials: 'include', cache: 'no-store', signal: options.signal }); }
   catch (error) { if (error instanceof DOMException && error.name === 'AbortError') throw error; throw new CanvasHttpError(0, 'NETWORK_ERROR', '서버에 연결하지 못했어요. 입력은 이 화면에 보관하고 있어요.'); }
   const body = await response.json().catch(() => null);
-  if (!response.ok) { const code = isRecord(body) && isRecord(body.error) && typeof body.error.code === 'string' ? body.error.code : 'CANVAS_UNAVAILABLE'; const message = code === 'VERSION_CONFLICT' ? '다른 참여자가 먼저 저장했어요.' : code === 'PLACE_NOT_FOUND' ? '장소 정보를 찾지 못했어요.' : response.status >= 500 ? '캔버스 서버를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.' : '요청을 처리하지 못했어요.'; throw new CanvasHttpError(response.status, code, message, isRecord(body) ? parseCanvasState(body.current) ?? undefined : undefined); }
+  if (!response.ok) { const code = isRecord(body) && isRecord(body.error) && typeof body.error.code === 'string' ? body.error.code : 'CANVAS_UNAVAILABLE'; const message = code === 'VERSION_CONFLICT' ? '다른 참여자가 먼저 저장했어요.' : code === 'SCHEMA_VERSION_CONFLICT' ? '저장하지 못했어요. 새로고침한 뒤 다시 시도해 주세요.' : code === 'SCHEMA_MIGRATION_REQUIRED' ? 'DB에 날짜 편집 저장 업데이트(005)가 필요해요. 관리자에게 확인해 주세요.' : code === 'PLACE_NOT_FOUND' ? '장소 정보를 찾지 못했어요.' : response.status >= 500 ? '캔버스 서버를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.' : '요청을 처리하지 못했어요.'; throw new CanvasHttpError(response.status, code, message, isRecord(body) ? parseCanvasState(body.current) ?? undefined : undefined); }
   return body;
 }
 const pathFor = (tripId: string) => `/api/v1/trips/${encodeURIComponent(tripId)}`;

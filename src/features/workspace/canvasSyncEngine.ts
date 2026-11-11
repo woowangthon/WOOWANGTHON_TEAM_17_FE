@@ -326,7 +326,8 @@ export class CanvasSyncEngine {
             else { this.local = merged.document; this.settleMergedDraft(); }
           }
         } catch (readError) { this.failure(readError); }
-      } else if (error instanceof CanvasHttpError && [400, 404, 415, 422].includes(error.status)
+      } else if (error instanceof CanvasHttpError && ([400, 404, 415, 422].includes(error.status)
+        || error.code === 'SCHEMA_VERSION_CONFLICT' || error.code === 'SCHEMA_MIGRATION_REQUIRED')
         && error.code !== 'TRIP_NOT_ACCESSIBLE') {
         // A validation/unknown-place rejection proves there was no write.
         this.pending = null;

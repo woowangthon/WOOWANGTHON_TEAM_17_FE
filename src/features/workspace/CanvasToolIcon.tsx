@@ -12,6 +12,7 @@ const paths: Record<CanvasCommandId, string> = {
   paste: 'M8 4H4v17h16V4h-4M8 2h8v4H8V2Z',
   disconnect: 'm4 4 16 16M7 12l-2 2a4 4 0 0 0 5 6l3-3m-2-10 3-3a4 4 0 0 1 6 5l-2 2',
   delete: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7',
+  'arrange-day': 'M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v5H4zM14 15h6v5h-6z',
 };
 
 export default function CanvasToolIcon({ command }: { command: CanvasCommandId }) {

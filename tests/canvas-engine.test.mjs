@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CanvasSyncEngine } from '../src/features/workspace/canvasSyncEngine.ts';
 import { CanvasHttpError } from '../src/features/workspace/canvasApi.ts';
+import { moveDayFrame } from '../src/features/workspace/canvasModel.ts';
 
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const trip = id(99);
@@ -53,6 +54,30 @@ test('one write is in flight and edits after its snapshot survive its acknowledg
   assert.equal(h.engine.getSnapshot().document.nodes[0].position.x, 10);
   assert.equal(h.engine.getSnapshot().canUndo, true);
   h.transport.save = original;
+});
+
+test('undoing and redoing the first v3 day move keeps an absent position absent', async () => {
+  const h = harness(); await h.engine.refresh();
+  assert.equal(h.engine.update(current => moveDayFrame(current, id(1), { x: -40, y: 120 })), true);
+  await h.engine.save();
+  assert.equal(h.read().document.schemaVersion, 4);
+  assert.deepEqual(h.read().document.days[0].position, { x: -40, y: 120 });
+  h.remote(doc => { doc.nodes[0].color = 'sky'; });
+  await h.engine.refresh();
+
+  assert.equal(h.engine.undo(), true);
+  await h.engine.save();
+  const undone = h.engine.getSnapshot().document;
+  assert.equal(undone.schemaVersion, 4);
+  assert.equal(Object.hasOwn(undone.days[0], 'position'), false);
+  assert.equal(undone.nodes[0].color, 'sky', 'same-day independent edit survives the inverse');
+  assert.deepEqual(h.read().document, undone);
+
+  assert.equal(h.engine.redo(), true);
+  await h.engine.save();
+  assert.deepEqual(h.engine.getSnapshot().document.days[0].position, { x: -40, y: 120 });
+  assert.equal(h.engine.getSnapshot().document.nodes[0].color, 'sky');
+  assert.deepEqual(h.read().document, h.engine.getSnapshot().document);
 });
 
 test('a first shared engine can be seeded by imported state and keeps post-send edits', async () => {
@@ -344,4 +369,21 @@ test('undo cannot delete a node that another editor has newly connected', async 
   assert.equal(h.engine.undo(), false);
   assert.equal(h.engine.getSnapshot().document.nodes.length, 3);
   assert.equal(h.engine.getSnapshot().document.edges.length, 1);
+});
+
+test('schema migration and downgrade rejections end the pending write with a clear message', async () => {
+  for (const [status, code, expected] of [
+    [503, 'SCHEMA_MIGRATION_REQUIRED', 'DB에 날짜 편집 저장 업데이트(005)가 필요해요. 관리자에게 확인해 주세요.'],
+    [409, 'SCHEMA_VERSION_CONFLICT', '저장하지 못했어요. 새로고침한 뒤 다시 시도해 주세요.'],
+  ]) {
+    const h = harness(); await h.engine.refresh();
+    let attempts = 0;
+    h.transport.save = async () => { attempts += 1; throw new CanvasHttpError(status, code, expected); };
+    h.engine.update(changePosition(88));
+    await h.engine.save();
+    assert.equal(h.engine.getSnapshot().status, 'error');
+    assert.equal(h.engine.getSnapshot().message, expected);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(attempts, 1, 'a rejected migration request is not retried as an unknown write outcome');
+  }
 });

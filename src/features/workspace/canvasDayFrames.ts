@@ -1,4 +1,4 @@
-import type { CanvasDay, CanvasDocument, CanvasNode } from './canvasModel.ts';
+import type { CanvasDay, CanvasDocument, CanvasNode, CanvasPlaceNode } from './canvasModel.ts';
 
 export type CanvasFrameLayout = {
   dayId: string;
@@ -7,6 +7,7 @@ export type CanvasFrameLayout = {
   scale: { x: number; y: number };
   width: number;
   height: number;
+  projectedNodePositions?: ReadonlyMap<string, { x: number; y: number }>;
   connectorToNext?: { points: Array<{ x: number; y: number }> };
 };
 
@@ -24,6 +25,14 @@ const ESTIMATED_COMMENT_BASE_HEIGHT = 84;
 const ESTIMATED_COMMENT_INNER_WIDTH = 196;
 
 export type CanvasMeasuredSize = { width: number; height: number };
+export type CanvasDayTone = 'lime' | 'sky' | 'rose' | 'amber' | 'sage' | 'lavender';
+const DAY_TONES: CanvasDayTone[] = ['lime', 'sky', 'rose', 'amber', 'sage', 'lavender'];
+
+export function canvasDayTone(dayId: string): CanvasDayTone {
+  let hash = 0x811c9dc5;
+  for (const char of dayId) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 0x01000193) >>> 0; }
+  return DAY_TONES[hash % DAY_TONES.length];
+}
 
 export function ensureCanvasDateRange(
   document: CanvasDocument,
@@ -47,14 +56,15 @@ export function ensureCanvasDateRange(
   if (!dates.length || dates.length > 31) return positioned;
   const ids = new Set<string>();
   const days: CanvasDay[] = dates.map((date, index) => {
-    let id = positioned.days[index]?.id ?? stableDateId(date);
+    const previous = positioned.days[index];
+    let id = previous?.id ?? stableDateId(date);
     while (ids.has(id)) id = stableDateId(`${date}:${ids.size}`);
     ids.add(id);
-    return { id, date };
+    return { id, date, ...(previous?.position ? { position: previous.position } : {}) };
   });
   for (const extra of positioned.days.slice(dates.length)) {
     const dayDate = extra.date && !dates.includes(extra.date) ? extra.date : null;
-    days.push({ id: extra.id, date: dayDate });
+    days.push({ id: extra.id, date: dayDate, ...(extra.position ? { position: extra.position } : {}) });
   }
   if (JSON.stringify(days) === JSON.stringify(positioned.days)) return positioned;
   return { ...positioned, days };
@@ -86,6 +96,18 @@ function validMeasuredSize(size: CanvasMeasuredSize | undefined): size is Canvas
   return Boolean(size && Number.isFinite(size.width) && size.width > 0 && Number.isFinite(size.height) && size.height > 0);
 }
 
+function isUnmodifiedImportedThreePlaceRoute(frameNodes: CanvasNode[], placeNodes: CanvasPlaceNode[]): boolean {
+  if (frameNodes.length !== 3 || placeNodes.length !== 3 || placeNodes.some(node => node.intent !== 'route' || !node.source)) return false;
+  const source = placeNodes[0].source!;
+  if (placeNodes.some(node => node.source!.planId !== source.planId || node.source!.versionId !== source.versionId)) return false;
+  const [first, second, third] = placeNodes;
+  const near = (left: number, right: number) => Math.abs(left - right) <= 1;
+  if (!near(second.position.x - first.position.x, 270) || !near(second.position.y, first.position.y)) return false;
+  const importedLinear = near(third.position.x - second.position.x, 270) && near(third.position.y, second.position.y);
+  const importedSnake = near(third.position.x, second.position.x) && near(third.position.y - second.position.y, 185);
+  return importedLinear || importedSnake;
+}
+
 export function layoutCanvasDayFrames(
   document: CanvasDocument,
   measuredSizes?: ReadonlyMap<string, CanvasMeasuredSize>,
@@ -104,10 +126,32 @@ export function layoutCanvasDayFrames(
     const minY = bounds.length ? Math.min(0, ...bounds.map(item => item.top)) : 0;
     const maxX = bounds.length ? Math.max(0, ...bounds.map(item => item.right)) : 0;
     const maxY = bounds.length ? Math.max(0, ...bounds.map(item => item.bottom)) : 0;
-    const width = bounds.length ? Math.max(FRAME_WIDTH, maxX - minX + FRAME_PADDING * 2) : FRAME_WIDTH;
-    const height = bounds.length ? Math.max(EMPTY_FRAME_HEIGHT, HEADER_HEIGHT + FRAME_PADDING * 2 + maxY - minY) : EMPTY_FRAME_HEIGHT;
+    const placeNodes = frameNodes.filter((node): node is CanvasPlaceNode => node.kind === 'place');
+    const alignedGeneratedThree = isUnmodifiedImportedThreePlaceRoute(frameNodes, placeNodes);
+    let projectedNodePositions: Map<string, { x: number; y: number }> | undefined;
+    let projectedWidth = 0;
+    let projectedHeight = 0;
+    if (alignedGeneratedThree) {
+      const orderedPlaces = [...placeNodes].sort((left, right) => left.position.x - right.position.x || left.position.y - right.position.y);
+      const cards = orderedPlaces.map(node => ({ node, size: validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node) }));
+      const gap = 28;
+      const left = FRAME_PADDING;
+      const top = HEADER_HEIGHT + FRAME_PADDING;
+      const firstRowHeight = Math.max(cards[0].size.height, cards[1].size.height);
+      const bottomY = top + firstRowHeight + gap;
+      const totalWidth = cards[0].size.width + gap + cards[1].size.width;
+      projectedWidth = Math.max(FRAME_WIDTH, totalWidth + FRAME_PADDING * 2, Math.max(...cards.map(card => card.size.width)) + FRAME_PADDING * 2);
+      projectedHeight = bottomY + cards[2].size.height + FRAME_PADDING;
+      projectedNodePositions = new Map([
+        [cards[0].node.id, { x: left, y: top }],
+        [cards[1].node.id, { x: left + cards[0].size.width + gap, y: top }],
+        [cards[2].node.id, { x: (projectedWidth - cards[2].size.width) / 2, y: bottomY }],
+      ]);
+    }
+    const width = projectedNodePositions ? projectedWidth : bounds.length ? Math.max(FRAME_WIDTH, maxX - minX + FRAME_PADDING * 2) : FRAME_WIDTH;
+    const height = projectedNodePositions ? projectedHeight : bounds.length ? Math.max(EMPTY_FRAME_HEIGHT, HEADER_HEIGHT + FRAME_PADDING * 2 + maxY - minY) : EMPTY_FRAME_HEIGHT;
     rowHeights.set(row, Math.max(rowHeights.get(row) ?? 0, height));
-    return { day, index, row, width, height, minX, minY };
+    return { day, index, row, width, height, minX, minY, projectedNodePositions };
   });
   const rowY = new Map<number, number>();
   for (let row = 0; row < Math.ceil(document.days.length / FRAME_COLUMNS); row += 1) {
@@ -117,15 +161,29 @@ export function layoutCanvasDayFrames(
   for (const group of daySizes) {
     const origin = { x: group.minX - FRAME_PADDING, y: group.minY - HEADER_HEIGHT - FRAME_PADDING };
     const scale = { x: 1, y: 1 };
-    const x = daySizes.filter(item => item.row === group.row && item.index < group.index).reduce((sum, item) => sum + item.width + FRAME_GAP_X, 0);
+    let x = daySizes.filter(item => item.row === group.row && item.index < group.index).reduce((sum, item) => sum + item.width + FRAME_GAP_X, 0);
     layouts.set(group.day.id, {
       dayId: group.day.id,
-      position: { x, y: rowY.get(group.row) ?? 0 },
+      position: group.day.position ? { x: group.day.position.x, y: group.day.position.y } : { x, y: rowY.get(group.row) ?? 0 },
       origin,
       scale,
       width: group.width,
       height: group.height,
+      ...(group.projectedNodePositions ? { projectedNodePositions: group.projectedNodePositions } : {}),
     });
+  }
+  const placed = daySizes.filter(group => Boolean(group.day.position)).map(group => layouts.get(group.day.id)!);
+  for (const group of daySizes.filter(item => !item.day.position)) {
+    const frame = layouts.get(group.day.id)!;
+    while (true) {
+      const overlaps = placed.filter(other => frame.position.x < other.position.x + other.width + FRAME_GAP_X
+        && frame.position.x + frame.width + FRAME_GAP_X > other.position.x
+        && frame.position.y < other.position.y + other.height + FRAME_GAP_Y
+        && frame.position.y + frame.height + FRAME_GAP_Y > other.position.y);
+      if (!overlaps.length) break;
+      frame.position.y = Math.max(...overlaps.map(other => other.position.y + other.height + FRAME_GAP_Y));
+    }
+    placed.push(frame);
   }
   for (let index = 0; index < daySizes.length - 1; index += 1) {
     const current = daySizes[index];
@@ -155,11 +213,67 @@ export function layoutCanvasDayFrames(
 }
 
 export function canvasFrameNodePosition(node: CanvasNode, frame: CanvasFrameLayout): { x: number; y: number } {
+  const projected = frame.projectedNodePositions?.get(node.id);
+  if (projected) return { ...projected };
   return { x: (node.position.x - frame.origin.x) * frame.scale.x, y: (node.position.y - frame.origin.y) * frame.scale.y };
 }
 
-export function canvasDocumentPosition(nodePosition: { x: number; y: number }, frame: CanvasFrameLayout): { x: number; y: number } {
+export function canvasDocumentPosition(nodePosition: { x: number; y: number }, frame: CanvasFrameLayout, anchor?: CanvasNode): { x: number; y: number } {
+  const projected = anchor && frame.projectedNodePositions?.get(anchor.id);
+  if (projected) return { x: nodePosition.x / frame.scale.x + frame.origin.x, y: nodePosition.y / frame.scale.y + frame.origin.y };
   return { x: nodePosition.x / frame.scale.x + frame.origin.x, y: nodePosition.y / frame.scale.y + frame.origin.y };
+}
+
+export function materializeProjectedDay(document: CanvasDocument, dayId: string, measuredSizes?: ReadonlyMap<string, CanvasMeasuredSize>, preserveNodeId?: string): CanvasDocument {
+  const frame = layoutCanvasDayFrames(document, measuredSizes).get(dayId);
+  if (!frame?.projectedNodePositions) return document;
+  return {
+    ...document,
+    nodes: document.nodes.map(node => {
+      const displayed = frame.projectedNodePositions!.get(node.id);
+      if (!displayed || node.id === preserveNodeId) return node;
+      return { ...node, position: canvasDocumentPosition(displayed, frame) };
+    }),
+  };
+}
+
+export function arrangeDayPlaces(document: CanvasDocument, dayId: string, measuredSizes?: ReadonlyMap<string, CanvasMeasuredSize>): CanvasDocument | null {
+  if (!document.days.some(day => day.id === dayId)) return null;
+  const places = document.nodes.filter((node): node is CanvasPlaceNode => node.kind === 'place' && node.dayId === dayId);
+  if (!places.length) return null;
+  const columns = places.length === 1 ? 1 : 2;
+  const gapX = 28;
+  const gapY = 28;
+  const sizes = places.map(node => validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node));
+  const rowGroups: Array<{ start: number; count: number; width: number; height: number }> = [];
+  for (let start = 0; start < places.length; start += columns) {
+    const count = Math.min(columns, places.length - start);
+    const row = sizes.slice(start, start + count);
+    rowGroups.push({ start, count, width: row.reduce((sum, size) => sum + size.width, 0) + gapX * (count - 1), height: Math.max(...row.map(size => size.height)) });
+  }
+  const untouched = document.nodes.filter(node => node.dayId === dayId && node.kind !== 'place');
+  const commentBounds = untouched.map(node => {
+    const size = validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node);
+    return { left: node.position.x, top: node.position.y, right: node.position.x + size.width, bottom: node.position.y + size.height };
+  });
+  const minX = commentBounds.length ? Math.min(0, ...commentBounds.map(bound => bound.left)) : 0;
+  const minY = commentBounds.length ? Math.min(0, ...commentBounds.map(bound => bound.top)) : 0;
+  const origin = { x: minX - FRAME_PADDING, y: minY - HEADER_HEIGHT - FRAME_PADDING };
+  const commentWidth = commentBounds.length ? Math.max(0, ...commentBounds.map(bound => bound.right - origin.x)) + FRAME_PADDING : 0;
+  const frameWidth = Math.max(FRAME_WIDTH, ...rowGroups.map(row => row.width + FRAME_PADDING * 2), commentWidth);
+  const positions = new Map<string, { x: number; y: number }>();
+  let cursorY = HEADER_HEIGHT + FRAME_PADDING;
+  for (const row of rowGroups) {
+    const centerRow = row.count === 1 && places.length > 1;
+    let x = centerRow || row.count === 2 ? (frameWidth - row.width) / 2 : FRAME_PADDING;
+    for (let offset = 0; offset < row.count; offset += 1) {
+      positions.set(places[row.start + offset].id, { x: x + origin.x, y: cursorY + origin.y });
+      x += sizes[row.start + offset].width + gapX;
+    }
+    cursorY += row.height + gapY;
+  }
+  return { ...document, nodes: document.nodes.map(node => node.dayId === dayId && positions.has(node.id)
+    ? { ...node, position: positions.get(node.id)! } : node) };
 }
 
 export function frameForPoint(layouts: Map<string, CanvasFrameLayout>, point: { x: number; y: number }): CanvasFrameLayout | null {
@@ -170,11 +284,12 @@ export function frameForPoint(layouts: Map<string, CanvasFrameLayout>, point: { 
   return null;
 }
 
-export function resolveCanvasDrop(point: { x: number; y: number }, layouts: Map<string, CanvasFrameLayout>, fallbackDayId: string): { dayId: string; position: { x: number; y: number } } | null {
+export function resolveCanvasDrop(point: { x: number; y: number }, layouts: Map<string, CanvasFrameLayout>, fallbackDayId: string, anchor?: CanvasNode): { dayId: string; position: { x: number; y: number } } | null {
   const fallback = layouts.get(fallbackDayId);
   const destination = frameForPoint(layouts, point) ?? fallback;
   if (!destination) return null;
-  return { dayId: destination.dayId, position: canvasDocumentPosition({ x: point.x - destination.position.x, y: point.y - destination.position.y }, destination) };
+  const inverseAnchor = anchor?.dayId === destination.dayId ? anchor : undefined;
+  return { dayId: destination.dayId, position: canvasDocumentPosition({ x: point.x - destination.position.x, y: point.y - destination.position.y }, destination, inverseAnchor) };
 }
 
 export function dayLabel(day: CanvasDay, index: number): string {
