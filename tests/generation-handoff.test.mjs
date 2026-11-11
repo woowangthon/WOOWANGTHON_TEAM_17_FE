@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generationStageProgress } from '../src/features/generation/generationProgress.ts';
 import { mayCompleteHandoff, waitForTwoPaints } from '../src/features/generation/generationHandoff.ts';
-import { canvasViewScope, chooseHandoffTarget, consumeHandoff, firstRouteDay, hasConsumedHandoff, hasFittedHandoff, markHandoffFitted, readCanvasView, resolveCanvasMountView, writeCanvasView } from '../src/features/workspace/canvasHandoff.ts';
+import { canvasCommentDraftKey, canvasSourceKey, canvasViewScope, chooseHandoffTarget, consumeHandoff, firstRouteDay, hasConsumedHandoff, hasFittedHandoff, markHandoffFitted, readCanvasView, resolveCanvasMountView, writeCanvasView } from '../src/features/workspace/canvasHandoff.ts';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const doc = {
@@ -56,6 +56,17 @@ test('canvas view cache restores day and viewport within its room and preview sc
   const copy = readCanvasView(shared);
   copy.viewport.x = 0;
   assert.equal(readCanvasView(shared).viewport.x, 42);
+});
+
+test('a newly imported source has separate view, discovery, and comment-draft identity', () => {
+  const manual = canvasSourceKey(null);
+  const first = canvasSourceKey({ planId: id(110), versionId: id(111) });
+  const second = canvasSourceKey({ planId: id(110), versionId: id(112) });
+  assert.notEqual(first, manual);
+  assert.notEqual(first, second);
+  assert.notEqual(canvasViewScope(id(113), false, manual), canvasViewScope(id(113), false, first));
+  assert.notEqual(canvasCommentDraftKey(id(113), manual, id(114)), canvasCommentDraftKey(id(113), first, id(114)));
+  assert.notEqual(canvasCommentDraftKey(id(113), first, id(114)), canvasCommentDraftKey(id(113), second, id(114)));
 });
 
 test('consumed handoff is scoped to a shared or preview canvas and will not reselect on remount', () => {

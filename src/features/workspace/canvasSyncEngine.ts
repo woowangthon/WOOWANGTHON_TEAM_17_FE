@@ -18,6 +18,7 @@ export type CanvasSyncSnapshot = {
   message: string;
   canUndo: boolean;
   canRedo: boolean;
+  sourceEpoch: number;
 };
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const authorizationFailure = (error: unknown) => error instanceof CanvasHttpError
@@ -31,6 +32,7 @@ export class CanvasSyncEngine {
   private message = '';
   private pending: SaveRequest | null = null;
   private writing = false;
+  private writingRequest: SaveRequest | null = null;
   private writePromise: Promise<void> | null = null;
   private reading = false;
   private deferredRemote: CanvasState | null = null;
@@ -41,6 +43,7 @@ export class CanvasSyncEngine {
   private travel: Travel | null = null;
   private fatal = false;
   private accessEpoch = 0;
+  private sourceEpoch = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Set<() => void>();
   private tripId: string;
@@ -55,9 +58,10 @@ export class CanvasSyncEngine {
     this.autoSave = options.autoSave ?? true;
     this.transport = options.transport ?? {
       load: (signal) => getCanvas(tripId, { signal }),
-      save: (request) => saveCanvas(tripId, request.revision, request.body, request.key),
+      save: (request) => saveCanvas(tripId, request.revision, request.expectedSourcePlan, request.body, request.key),
     };
     if (options.initialState?.tripId === tripId && !this.preview) {
+      this.sourceEpoch = options.initialState.sourcePlan ? 1 : 0;
       this.acknowledged = options.initialState;
       this.local = options.initialState.document;
       this.status = 'saved';
@@ -79,9 +83,11 @@ export class CanvasSyncEngine {
     const idle = (this.status === 'saved' || rejectedTravelSettled) && !this.pending && !this.writing && !this.conflict
       && !this.travel && this.queued.length === 0;
     return { state: this.acknowledged, document: this.local, status: this.status, message: this.message,
-      canUndo: idle && this.past.length > 0, canRedo: idle && this.future.length > 0 };
+      canUndo: idle && this.past.length > 0, canRedo: idle && this.future.length > 0, sourceEpoch: this.sourceEpoch };
   }
   getSnapshot = () => this.snapshot;
+  getSourceEpoch = () => this.sourceEpoch;
+  isCurrentSource = (epoch: number) => epoch === this.sourceEpoch;
   acceptImportedState = (state: CanvasState) => {
     if (state.tripId !== this.tripId || this.preview) return;
     this.receive(state);
@@ -90,32 +96,43 @@ export class CanvasSyncEngine {
   };
   acceptImportedStateAndWait = async (state: CanvasState, signal?: AbortSignal): Promise<void> => {
     const assertActive = () => { if (signal?.aborted) throw new DOMException('Aborted', 'AbortError'); };
-    const wait = <T,>(promise: Promise<T>): Promise<T> => {
-      if (!signal) return promise;
-      return new Promise((resolve, reject) => {
-        if (signal.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
-        const abort = () => { signal.removeEventListener('abort', abort); reject(new DOMException('Aborted', 'AbortError')); };
-        signal.addEventListener('abort', abort, { once: true });
-        promise.then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
-      });
-    };
     assertActive();
     if (state.tripId !== this.tripId || this.preview) throw new CanvasHttpError(400, 'INVALID_IMPORT', '다른 여행방의 캔버스 상태예요.');
     this.recoverSameRevisionReadFailure(state);
     this.acceptImportedState(state);
-    if (this.writePromise) await wait(this.writePromise);
+    const epoch = this.sourceEpoch;
+    const accessEpoch = this.accessEpoch;
+    const waitForCurrentSourceWrite = (promise: Promise<void>) => new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => { unsubscribe(); signal?.removeEventListener('abort', abort); };
+      const finish = (callback: () => void) => { if (settled) return; settled = true; cleanup(); callback(); };
+      const abort = () => finish(() => reject(new DOMException('Aborted', 'AbortError')));
+      const onState = () => {
+        if (signal?.aborted) abort();
+        else if (this.accessEpoch !== accessEpoch || this.fatal) finish(() => reject(new CanvasHttpError(403, 'TRIP_NOT_ACCESSIBLE', this.message || '여행방 접근 권한을 확인해 주세요.')));
+        else if (this.sourceEpoch !== epoch) finish(resolve);
+      };
+      const unsubscribe = this.subscribe(onState);
+      signal?.addEventListener('abort', abort, { once: true });
+      onState();
+      if (!settled) promise.then(() => finish(resolve), error => finish(() => reject(error)));
+    });
+    if (this.writePromise && this.pending && equal(this.pending.expectedSourcePlan, state.sourcePlan)) await waitForCurrentSourceWrite(this.writePromise);
     assertActive();
-    if (this.pending) {
+    if (this.sourceEpoch !== epoch) return;
+    if (this.pending && equal(this.pending.expectedSourcePlan, state.sourcePlan)) {
       // Retry the exact retained body and idempotency key before handing control off.
-      await wait(this.save());
+      await waitForCurrentSourceWrite(this.save());
     }
     assertActive();
+    if (this.sourceEpoch !== epoch) return;
     await this.waitUntilSettled(state.revision, signal);
   };
   private recoverSameRevisionReadFailure(remote: CanvasState) {
     if (this.status !== 'offline' || this.pending || this.writing || this.conflict || this.fatal
       || !this.acknowledged || !this.local || remote.tripId !== this.tripId
       || remote.revision !== this.acknowledged.revision
+      || !equal(remote.sourcePlan, this.acknowledged.sourcePlan)
       || !equal(remote.document, this.acknowledged.document)) return;
     // A fresh explicit import GET may recover a failed poll at the exact same revision.
     // Keep local edits, queued acknowledgements and history intact.
@@ -193,12 +210,17 @@ export class CanvasSyncEngine {
   }
   private receive(remote: CanvasState) {
     if (remote.tripId !== this.tripId || (this.acknowledged && remote.revision <= this.acknowledged.revision)) return;
+    if (this.acknowledged && !equal(this.acknowledged.sourcePlan, remote.sourcePlan)) {
+      this.replaceSource(remote);
+      return;
+    }
     if (this.pending || this.writing) {
       if (!this.deferredRemote || remote.revision > this.deferredRemote.revision) this.deferredRemote = remote;
       return;
     }
     if (!this.acknowledged || !this.local) {
-      this.acknowledged = remote; this.local = remote.document; this.status = 'saved'; this.message = ''; this.fatal = false;
+      if (remote.sourcePlan) this.replaceSource(remote);
+      else { this.acknowledged = remote; this.local = remote.document; this.status = 'saved'; this.message = ''; this.fatal = false; }
       return;
     }
     if (this.conflict) {
@@ -222,6 +244,28 @@ export class CanvasSyncEngine {
     this.acknowledged = remote;
     this.local = merged.document;
     this.settleMergedDraft();
+  }
+
+  private replaceSource(remote: CanvasState) {
+    this.sourceEpoch += 1;
+    this.reading = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.pending = null;
+    this.writing = false;
+    this.writingRequest = null;
+    this.writePromise = null;
+    this.deferredRemote = null;
+    this.conflict = null;
+    this.queued = [];
+    this.past = [];
+    this.future = [];
+    this.travel = null;
+    this.acknowledged = remote;
+    this.local = remote.document;
+    this.status = 'saved';
+    this.message = '';
+    this.fatal = false;
   }
 
   update = (next: CanvasDocument | ((current: CanvasDocument) => CanvasDocument)): boolean => {
@@ -254,18 +298,19 @@ export class CanvasSyncEngine {
     this.reading = true;
     const revision = this.acknowledged?.revision ?? -1;
     const accessEpoch = this.accessEpoch;
+    const sourceEpoch = this.sourceEpoch;
     try {
       const remote = await this.transport.load(signal);
-      if (signal?.aborted || accessEpoch !== this.accessEpoch) return;
+      if (signal?.aborted || accessEpoch !== this.accessEpoch || sourceEpoch !== this.sourceEpoch) return;
       if (remote.tripId !== this.tripId) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '다른 여행방의 응답을 적용하지 않았어요.');
       this.receive(remote);
       this.emit(); this.schedule();
     } catch (error) {
-      if (signal?.aborted || accessEpoch !== this.accessEpoch) return;
+      if (signal?.aborted || accessEpoch !== this.accessEpoch || sourceEpoch !== this.sourceEpoch) return;
       if (!authorizationFailure(error) && (this.acknowledged?.revision ?? -1) > revision) return;
       this.failure(error);
       this.emit();
-    } finally { this.reading = false; }
+    } finally { if (sourceEpoch === this.sourceEpoch) this.reading = false; }
   };
 
   private failure(error: unknown) {
@@ -273,8 +318,9 @@ export class CanvasSyncEngine {
       this.accessEpoch += 1;
       this.fatal = true; this.status = 'error'; this.local = null; this.acknowledged = null;
       this.pending = null; this.conflict = null; this.queued = []; this.past = []; this.future = [];
-      this.travel = null; this.deferredRemote = null;
+      this.travel = null; this.deferredRemote = null; this.writing = false; this.writingRequest = null; this.reading = false;
       this.message = '여행방 접근 권한을 확인해 주세요. 여행 시작 화면에서 다시 참여할 수 있어요.';
+      this.emit();
       return;
     }
     // A failed read cannot release a conflict or an unresolved write.
@@ -289,15 +335,17 @@ export class CanvasSyncEngine {
       this.queued = []; this.status = 'saved'; this.emit(); return;
     }
     if (!this.pending) {
-      this.pending = { ...reserveCanvasSave(null, this.local, this.acknowledged.revision, this.acknowledged.document),
+      this.pending = { ...reserveCanvasSave(null, this.local, this.acknowledged.revision, this.acknowledged.document, this.acknowledged.sourcePlan),
         actionIds: this.queued.map((action) => action.id), travel: this.travel };
     }
     const request = this.pending;
-    this.writing = true; this.status = 'saving'; this.message = ''; this.emit();
+    const sourceEpoch = this.sourceEpoch;
+    const accessEpoch = this.accessEpoch;
+    this.writing = true; this.writingRequest = request; this.status = 'saving'; this.message = ''; this.emit();
     try {
       const saved = await this.transport.save(request);
-      if (this.pending !== request) return;
-      if (saved.tripId !== this.tripId || saved.revision <= request.revision) {
+      if (sourceEpoch !== this.sourceEpoch || accessEpoch !== this.accessEpoch || this.pending !== request) return;
+      if (saved.tripId !== this.tripId || saved.revision <= request.revision || !equal(saved.sourcePlan, request.expectedSourcePlan)) {
         throw new CanvasHttpError(502, 'INVALID_RESPONSE', '저장 결과를 확인하지 못했어요. 같은 요청으로 다시 확인해 주세요.');
       }
       this.pending = null;
@@ -314,13 +362,21 @@ export class CanvasSyncEngine {
       if (!merged.document) this.setConflict(request.body, local, saved);
       else { this.local = merged.document; this.settleMergedDraft(); this.message = ''; }
     } catch (error) {
-      if (this.pending !== request) return;
+      if (sourceEpoch !== this.sourceEpoch || accessEpoch !== this.accessEpoch || this.pending !== request) return;
       if (error instanceof CanvasHttpError && error.code === 'VERSION_CONFLICT') {
         // This response proves the PUT did not write; a rebased body gets a new key.
         this.pending = null;
         try {
           const remote = error.current ?? await this.transport.load();
+          if (sourceEpoch !== this.sourceEpoch || accessEpoch !== this.accessEpoch || this.writingRequest !== request) return;
           if (remote.tripId !== this.tripId) throw new Error('여행방 응답을 확인해 주세요.');
+          if (!equal(remote.sourcePlan, this.acknowledged?.sourcePlan)) {
+            if (this.acknowledged && remote.revision > this.acknowledged.revision) {
+              this.replaceSource(remote);
+              this.emit(); this.schedule();
+            }
+            return;
+          }
           if (request.travel) this.invalidTravel(remote);
           else {
             const local = this.local ?? request.body;
@@ -329,7 +385,9 @@ export class CanvasSyncEngine {
             if (!merged.document) this.setConflict(request.base, local, remote);
             else { this.local = merged.document; this.settleMergedDraft(); }
           }
-        } catch (readError) { this.failure(readError); }
+        } catch (readError) {
+          if (sourceEpoch === this.sourceEpoch && accessEpoch === this.accessEpoch && this.writingRequest === request) this.failure(readError);
+        }
       } else if (error instanceof CanvasHttpError && ([400, 404, 413, 415, 422].includes(error.status)
         || error.code === 'SCHEMA_VERSION_CONFLICT' || error.code === 'SCHEMA_MIGRATION_REQUIRED')
         && error.code !== 'TRIP_NOT_ACCESSIBLE') {
@@ -341,11 +399,14 @@ export class CanvasSyncEngine {
         this.message = error.message;
       } else this.failure(error); // Unknown outcomes retain the exact pending body/key.
     } finally {
-      this.writing = false;
-      const remote = this.deferredRemote;
-      this.deferredRemote = null;
-      if (remote && !this.fatal) this.receive(remote);
-      this.emit(); this.schedule();
+      if (sourceEpoch === this.sourceEpoch && this.writingRequest === request) {
+        this.writing = false;
+        this.writingRequest = null;
+        const remote = this.deferredRemote;
+        this.deferredRemote = null;
+        if (remote && !this.fatal) this.receive(remote);
+        this.emit(); this.schedule();
+      }
     }
   };
 

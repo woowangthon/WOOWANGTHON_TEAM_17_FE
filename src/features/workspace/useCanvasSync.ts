@@ -35,8 +35,17 @@ export function useCanvasSync(tripId: string, preview: boolean) {
       window.removeEventListener('focus', refresh);
     };
   }, [engine, preview]);
-  return { ...snapshot, update: engine.update, updateLatest: engine.update, retry: engine.retry,
-    resolve: engine.resolve, undo: engine.undo, redo: engine.redo };
+  const sourceEpoch = snapshot.sourceEpoch;
+  return useMemo(() => {
+    const isCurrentSource = () => engine.isCurrentSource(sourceEpoch);
+    return { ...snapshot, sourceEpoch, isCurrentSource,
+      update: (next: Parameters<typeof engine.update>[0]) => isCurrentSource() && engine.update(next),
+      updateLatest: (next: Parameters<typeof engine.update>[0]) => isCurrentSource() && engine.update(next),
+      retry: () => { if (isCurrentSource()) engine.retry(); },
+      resolve: (choice: 'local' | 'remote') => { if (isCurrentSource()) engine.resolve(choice); },
+      undo: () => isCurrentSource() && engine.undo(),
+      redo: () => isCurrentSource() && engine.redo() };
+  }, [engine, snapshot, sourceEpoch]);
 }
 
 export async function acceptImportedCanvasState(tripId: string, state: CanvasState, signal?: AbortSignal): Promise<void> {

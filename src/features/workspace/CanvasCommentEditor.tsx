@@ -1,19 +1,21 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
 import type { CanvasCommentNode } from './canvasModel';
+import { canvasCommentDraftKey } from './canvasHandoff.ts';
 
 type Buffer = { base: string; value: string };
 const drafts = new Map<string, Buffer>();
 const placeholder = '댓글을 입력해 주세요';
 
-export default function CanvasCommentEditor({ tripId, node, focusRequest = 0, focusReady = true, onCommit }: {
+export default function CanvasCommentEditor({ tripId, sourceScope = 'manual', node, focusRequest = 0, focusReady = true, onCommit }: {
   tripId: string;
+  sourceScope?: string;
   node: CanvasCommentNode;
   focusRequest?: number;
   focusReady?: boolean;
   onCommit: (text: string, expectedText: string, force: boolean) => boolean;
 }) {
-  const key = `${tripId}:${node.id}`;
+  const key = canvasCommentDraftKey(tripId, sourceScope, node.id);
   const inputId = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);

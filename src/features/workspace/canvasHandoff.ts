@@ -12,8 +12,14 @@ export type CanvasMountView =
 const viewMemory = new Map<string, CanvasViewMemory>();
 const consumedHandoffs = new Set<string>();
 const fittedHandoffs = new Set<string>();
-export function canvasViewScope(tripId: string, preview: boolean): string {
-  return `${preview ? 'preview' : 'shared'}:${tripId}`;
+export function canvasSourceKey(sourcePlan: { planId: string; versionId: string } | null | undefined): string {
+  return sourcePlan ? `plan:${sourcePlan.planId}:version:${sourcePlan.versionId}` : 'manual';
+}
+export function canvasViewScope(tripId: string, preview: boolean, sourceKey = 'manual'): string {
+  return `${preview ? 'preview' : 'shared'}:${tripId}:${sourceKey}`;
+}
+export function canvasCommentDraftKey(tripId: string, sourceKey: string, nodeId: string): string {
+  return `${tripId}:${sourceKey}:${nodeId}`;
 }
 export function readCanvasView(scope: string): CanvasViewMemory | null {
   const value = viewMemory.get(scope);

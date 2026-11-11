@@ -31,9 +31,10 @@ test('plan import sends version, current revision and stable idempotency key and
 });
 
 test('canvas save advertises v4 while retaining the idempotency key',async()=>{
- const body=structuredClone(fixture);body.revision=2;let call;
- await saveCanvas(fixture.tripId,1,fixture.document,'60000000-0000-4000-8000-000000000001',{fetcher:async(path,init)=>{call={path,init};return new Response(JSON.stringify(body),{status:200});}});
+ const body=structuredClone(fixture);body.revision=2;const sourcePlan={planId:'40000000-0000-4000-8000-000000000001',versionId:'50000000-0000-4000-8000-000000000001'};body.sourcePlan=sourcePlan;let call;
+ await saveCanvas(fixture.tripId,1,sourcePlan,fixture.document,'60000000-0000-4000-8000-000000000001',{fetcher:async(path,init)=>{call={path,init};return new Response(JSON.stringify(body),{status:200});}});
  assert.equal(call.init.headers.get('X-Canvas-Version'),'4');assert.equal(call.init.headers.get('Idempotency-Key'),'60000000-0000-4000-8000-000000000001');assert.equal(call.init.headers.get('Content-Type'),'application/json');
+ assert.deepEqual(JSON.parse(call.init.body),{expectedRevision:1,expectedSourcePlan:sourcePlan,document:fixture.document});
 });
 
 test('schema readiness and legacy downgrade errors have specific actionable messages',async()=>{
@@ -45,6 +46,6 @@ test('schema readiness and legacy downgrade errors have specific actionable mess
 test('only a rejected v4 canvas write receives the stale local backend repair hint',async()=>{
  const key='60000000-0000-4000-8000-000000000001';
  const v4=structuredClone(fixture.document);v4.schemaVersion=4;v4.dayLinks=[];
- await assert.rejects(saveCanvas(fixture.tripId,1,v4,key,{fetcher:async()=>new Response(JSON.stringify({error:{code:'VALIDATION_ERROR'}}),{status:400})}),error=>error.code==='VALIDATION_ERROR'&&error.message.includes('run.py')&&error.message.includes('보관 중'));
- await assert.rejects(saveCanvas(fixture.tripId,1,fixture.document,key,{fetcher:async()=>new Response(JSON.stringify({error:{code:'VALIDATION_ERROR'}}),{status:400})}),error=>error.code==='VALIDATION_ERROR'&&!error.message.includes('run.py'));
+ await assert.rejects(saveCanvas(fixture.tripId,1,null,v4,key,{fetcher:async()=>new Response(JSON.stringify({error:{code:'VALIDATION_ERROR'}}),{status:400})}),error=>error.code==='VALIDATION_ERROR'&&error.message.includes('run.py')&&error.message.includes('보관 중'));
+ await assert.rejects(saveCanvas(fixture.tripId,1,null,fixture.document,key,{fetcher:async()=>new Response(JSON.stringify({error:{code:'VALIDATION_ERROR'}}),{status:400})}),error=>error.code==='VALIDATION_ERROR'&&!error.message.includes('run.py'));
 });

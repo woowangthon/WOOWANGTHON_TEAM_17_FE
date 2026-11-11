@@ -8,7 +8,7 @@ const doc=()=>({schemaVersion:3,days:[{id:id(1),date:null}],nodes:[2,3].map((n,i
 const state=document=>({tripId:id(99),revision:2,document,places:[],sourcePlan:null,updatedAt:'2026-11-11T00:00:00Z'});
 
 test('pending idempotency request retains identical body, revision and key after unknown outcome',()=>{
- const base=doc(),body=structuredClone(base);body.nodes[0].position.x=12;const request=reserveCanvasSave(null,body,1,base);const retry=reserveCanvasSave(request,doc(),9,doc());assert.equal(retry,request);assert.equal(retry.key,request.key);assert.equal(retry.revision,1);assert.deepEqual(retry.body,body);
+ const base=doc(),body=structuredClone(base),sourcePlan={planId:id(81),versionId:id(82)};body.nodes[0].position.x=12;const request=reserveCanvasSave(null,body,1,base,sourcePlan);sourcePlan.versionId=id(83);const retry=reserveCanvasSave(request,doc(),9,doc(),null);assert.equal(retry,request);assert.equal(retry.key,request.key);assert.equal(retry.revision,1);assert.deepEqual(retry.body,body);assert.deepEqual(retry.expectedSourcePlan,{planId:id(81),versionId:id(82)});
 });
 test('an edit made while save is in flight survives the acknowledgement for the sent snapshot',()=>{
  const base=doc(),sent=structuredClone(base);sent.nodes[0].position.x=15;const request={body:sent,revision:1,key:id(77),base};const saved=state(sent);const afterSend=structuredClone(sent);afterSend.nodes[1].color='sky';const merged=reconcileCanvasSave(request,afterSend,saved);assert.equal(merged.conflicts.length,0);assert.equal(merged.document.nodes[0].position.x,15);assert.equal(merged.document.nodes[1].color,'sky');

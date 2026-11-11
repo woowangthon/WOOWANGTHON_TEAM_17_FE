@@ -9,8 +9,8 @@ const trip = id(99);
 const document = () => ({ schemaVersion: 3, days: [{ id: id(1), date: null }], nodes: [2, 3].map((n) => ({
   id: id(n), kind: 'place', dayId: id(1), position: { x: n * 100, y: 0 }, color: 'default', contentid: n, intent: 'candidate',
 })), edges: [] });
-const state = (doc, revision = 0) => ({ tripId: trip, revision, document: structuredClone(doc), places: [],
-  sourcePlan: null, updatedAt: '2026-11-11T00:00:00.000Z' });
+const state = (doc, revision = 0, sourcePlan = null) => ({ tripId: trip, revision, document: structuredClone(doc), places: [],
+  sourcePlan, updatedAt: '2026-11-11T00:00:00.000Z' });
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -80,7 +80,7 @@ test('undoing and redoing the first v3 day move keeps an absent position absent'
   assert.deepEqual(h.read().document, h.engine.getSnapshot().document);
 });
 
-test('a first shared engine can be seeded by imported state and keeps post-send edits', async () => {
+test('a higher-revision source import replaces an in-flight old-source draft atomically', async () => {
   const requests = [];
   let finish;
   const transport = {
@@ -99,18 +99,22 @@ test('a first shared engine can be seeded by imported state and keeps post-send 
   engine.update(changeOtherColor('sky'));
   const importedDocument = structuredClone(requests[0].body);
   importedDocument.nodes.push({ id: id(8), kind: 'place', dayId: id(1), position: { x: 300, y: 0 }, color: 'default', contentid: 8, intent: 'route', source: { planId: id(70), versionId: id(71), nodeId: id(72) }, schedule: { startAt: null, endAt: null, locked: true } });
-  const imported = { ...state(importedDocument, 7), sourcePlan: { planId: id(70), versionId: id(71) } };
+  const imported = state(importedDocument, 7, { planId: id(70), versionId: id(71) });
+  let acceptedDone = false;
   const accepted = engine.acceptImportedStateAndWait(imported);
+  void accepted.then(() => { acceptedDone = true; });
+  await accepted;
+  assert.equal(acceptedDone, true, 'handoff does not wait for the retired old-source PUT');
   finish();
-  await Promise.all([writing, accepted]);
+  await writing;
   const current = engine.getSnapshot();
-  assert.equal(current.document.nodes[0].position.x, 50);
-  assert.equal(current.document.nodes[1].color, 'sky');
+  assert.deepEqual(current.document, imported.document);
   assert.equal(current.document.nodes.some(node => node.id === id(8)), true);
-  assert.ok(current.state.revision >= 7);
+  assert.equal(current.state.revision, 7);
+  assert.equal(engine.getSourceEpoch(), 1);
 });
 
-test('unknown canvas outcome retries the same idempotency key before accepting import', async () => {
+test('a source-changing import retires unknown old-source writes without replaying them', async () => {
   const requests = [];
   let server = state(document(), 0);
   const transport = {
@@ -128,10 +132,10 @@ test('unknown canvas outcome retries the same idempotency key before accepting i
   assert.equal(engine.getSnapshot().status, 'offline');
   const importedDocument = structuredClone(requests[0].body);
   importedDocument.nodes.push({ id: id(9), kind: 'place', dayId: id(1), position: { x: 400, y: 0 }, color: 'default', contentid: 9, intent: 'route', source: { planId: id(80), versionId: id(81), nodeId: id(82) }, schedule: { startAt: null, endAt: null, locked: true } });
-  await engine.acceptImportedStateAndWait({ ...state(importedDocument, 2), sourcePlan: { planId: id(80), versionId: id(81) } });
-  assert.equal(requests[1].key, requests[0].key);
-  assert.deepEqual(requests[1].body, requests[0].body);
-  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 40);
+  const imported = state(importedDocument, 2, { planId: id(80), versionId: id(81) });
+  await engine.acceptImportedStateAndWait(imported);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(engine.getSnapshot().document, imported.document);
   assert.equal(engine.getSnapshot().document.nodes.some(node => node.id === id(9)), true);
 });
 
@@ -424,4 +428,186 @@ test('a definite undo rejection restores acknowledged state and leaves history u
   await h.engine.save();
   assert.deepEqual(h.engine.getSnapshot().document.nodes[0].position,{x:200,y:0});
   assert.equal(h.engine.getSnapshot().canRedo,true);
+});
+
+test('the first null to plan source transition fences saves with the acknowledged source', async () => {
+  const initial = state(document(), 4);
+  const requests = [];
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport: {
+    load: async () => initial,
+    save: async request => { requests.push(structuredClone(request)); return state(request.body, 5); },
+  } });
+  engine.update(changePosition(11)); await engine.save();
+  assert.equal(requests[0].revision, 4);
+  assert.equal(requests[0].expectedSourcePlan, null);
+  const imported = state(document(), 6, { planId: id(30), versionId: id(31) });
+  engine.acceptImportedState(imported);
+  assert.equal(engine.getSourceEpoch(), 1);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 200);
+  assert.equal(engine.getSnapshot().canUndo, false);
+});
+
+test('a late old-source 409 cannot replay, fail, or clobber edits on the imported source', async () => {
+  const initial = state(document(), 5);
+  const gate = deferred(); const requests = []; let loads = 0;
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport: {
+    load: async () => { loads += 1; return initial; },
+    save: async request => { requests.push(structuredClone(request)); return gate.promise; },
+  } });
+  engine.update(changePosition(20)); const oldWrite = engine.save();
+  const importedDoc = document(); importedDoc.nodes[0].position.x = 700;
+  const imported = state(importedDoc, 8, { planId: id(40), versionId: id(41) });
+  engine.acceptImportedState(imported);
+  assert.equal(engine.getSnapshot().state.revision, 8, 'source replacement happens before write deferral');
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 700);
+  engine.update(changeOtherColor('rose'));
+  const newRequests = [];
+  engine['transport'].save = async request => { newRequests.push(structuredClone(request)); return state(request.body, 9, imported.sourcePlan); };
+  await engine.save();
+  assert.equal(newRequests[0].expectedSourcePlan.planId, id(40));
+  assert.equal(newRequests[0].revision, 8);
+  assert.equal(engine.getSnapshot().status, 'saved');
+  gate.reject(new CanvasHttpError(409, 'VERSION_CONFLICT', 'late conflict'));
+  await oldWrite;
+  assert.equal(loads, 0, 'the obsolete conflict does not trigger a replay GET');
+  assert.equal(requests.length, 1);
+  assert.equal(engine.getSnapshot().state.revision, 9);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 700);
+  assert.equal(engine.getSnapshot().document.nodes[1].color, 'rose');
+});
+
+test('a replay GET already in flight cannot apply its old source after replacement', async () => {
+  const initial = state(document(), 5); const gate = deferred(); let replayStarted;
+  const replay = new Promise(resolve => { replayStarted = resolve; });
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport: {
+    load: async () => { replayStarted(); return gate.promise; },
+    save: async () => { throw new CanvasHttpError(409, 'VERSION_CONFLICT', 'conflict'); },
+  } });
+  engine.update(changePosition(20)); const oldWrite = engine.save();
+  await replay;
+  const importedDoc = document(); importedDoc.nodes[0].position.x = 750;
+  const imported = state(importedDoc, 9, { planId: id(42), versionId: id(43) });
+  engine.acceptImportedState(imported);
+  gate.resolve(state(document(), 6));
+  await oldWrite;
+  assert.equal(engine.getSnapshot().state.revision, 9);
+  assert.deepEqual(engine.getSnapshot().state.sourcePlan, imported.sourcePlan);
+  assert.deepEqual(engine.getSnapshot().document, imported.document);
+});
+
+test('a source-changing 409 reload replaces the old draft instead of rebasing it', async () => {
+  const sourceA = { planId: id(70), versionId: id(71) };
+  const sourceB = { planId: id(72), versionId: id(73) };
+  const initial = state(document(), 5, sourceA);
+  const boardB = document(); boardB.nodes[0].position.x = 900;
+  const imported = state(boardB, 8, sourceB);
+  let writes = 0;
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport: {
+    load: async () => imported,
+    save: async () => { writes += 1; throw new CanvasHttpError(409, 'VERSION_CONFLICT', 'conflict'); },
+  } });
+  engine.update(current => ({ ...current, nodes: [...current.nodes, { id: id(90), kind: 'comment', dayId: id(1), position: { x: 400, y: 200 }, color: 'default', text: 'old manual note' }] }));
+  await engine.save();
+  assert.equal(engine.getSnapshot().state.revision, 8);
+  assert.deepEqual(engine.getSnapshot().state.sourcePlan, sourceB);
+  assert.deepEqual(engine.getSnapshot().document, boardB);
+  assert.equal(engine.getSnapshot().document.nodes.some(node => node.kind === 'comment'), false);
+  assert.equal(engine.getSourceEpoch(), 2);
+  assert.equal(engine.getSnapshot().canUndo, false);
+  assert.equal(writes, 1);
+});
+
+test('a handoff waiting on a write exits when that source is retired', async () => {
+  const sourceA = { planId: id(74), versionId: id(75) };
+  const initial = state(document(), 5, sourceA); const gate = deferred(); let oldRequest;
+  const transport = {
+    load: async () => initial,
+    save: async request => { oldRequest = structuredClone(request); return gate.promise; },
+  };
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport });
+  engine.update(changePosition(25));
+  const oldWrite = engine.save();
+  const handoff = engine.acceptImportedStateAndWait(state(document(), 5, sourceA));
+  let handoffDone = false;
+  void handoff.then(() => { handoffDone = true; });
+  const boardB = document(); boardB.nodes[0].position.x = 880;
+  const imported = state(boardB, 8, { planId: id(76), versionId: id(77) });
+  engine.acceptImportedState(imported);
+  await handoff;
+  assert.equal(handoffDone, true);
+  assert.deepEqual(engine.getSnapshot().document, boardB);
+  engine.update(changeOtherColor('rose'));
+  const nextRequests = [];
+  transport.save = async request => { nextRequests.push(structuredClone(request)); return state(request.body, 9, imported.sourcePlan); };
+  await engine.save();
+  gate.resolve(state(oldRequest.body, 6, sourceA));
+  await oldWrite;
+  assert.equal(nextRequests[0].revision, 8);
+  assert.deepEqual(nextRequests[0].expectedSourcePlan, imported.sourcePlan);
+  assert.equal(engine.getSnapshot().state.revision, 9);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 880);
+  assert.equal(engine.getSnapshot().document.nodes[1].color, 'rose');
+});
+
+test('a handoff retry on an unknown request also exits when its source is retired', async () => {
+  const sourceA = { planId: id(78), versionId: id(79) };
+  const initial = state(document(), 5, sourceA); const retryGate = deferred(); const newWriteGate = deferred(); let retryStarted; const calls = [];
+  const started = new Promise(resolve => { retryStarted = resolve; });
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport: {
+    load: async () => initial,
+    save: async request => {
+      calls.push(structuredClone(request));
+      if (calls.length === 1) throw new CanvasHttpError(0, 'NETWORK_ERROR', 'lost response');
+      if (calls.length === 2) { retryStarted(); return retryGate.promise; }
+      return newWriteGate.promise;
+    },
+  } });
+  engine.update(changePosition(35)); await engine.save();
+  assert.equal(engine.getSnapshot().status, 'offline');
+  const handoff = engine.acceptImportedStateAndWait(initial);
+  await started;
+  const boardB = document(); boardB.nodes[0].position.x = 890;
+  const imported = state(boardB, 8, { planId: id(80), versionId: id(81) });
+  engine.acceptImportedState(imported);
+  engine.update(changeOtherColor('rose'));
+  const newWrite = engine.save();
+  const handoffSettled = await Promise.race([handoff.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))]);
+  assert.equal(handoffSettled, true, 'the retired handoff does not wait for a new-source user write');
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].key, calls[0].key);
+  assert.deepEqual(calls[1].body, calls[0].body);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 890);
+  assert.equal(engine.getSnapshot().document.nodes[1].color, 'rose');
+  newWriteGate.resolve(state(calls[2].body, 9, imported.sourcePlan));
+  await newWrite;
+  retryGate.resolve(state(calls[1].body, 6, sourceA));
+  await new Promise(setImmediate);
+  assert.equal(engine.getSnapshot().state.revision, 9);
+  assert.equal(engine.getSnapshot().document.nodes[0].position.x, 890);
+  assert.equal(engine.getSnapshot().document.nodes[1].color, 'rose');
+});
+
+test('lower-revision responses cannot roll source identity backward', async () => {
+  const initial = state(document(), 5);
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: initial, transport: { load: async () => initial, save: async request => state(request.body, 6) } });
+  const imported = state(document(), 8, { planId: id(50), versionId: id(51) });
+  engine.acceptImportedState(imported);
+  engine.acceptImportedState(state(document(), 7));
+  assert.equal(engine.getSnapshot().state.revision, 8);
+  assert.deepEqual(engine.getSnapshot().state.sourcePlan, imported.sourcePlan);
+});
+
+test('a source change clears conflicts and undo history', async () => {
+  const h = harness(); await h.engine.refresh();
+  h.engine.update(changePosition(10)); await h.engine.save();
+  h.engine.update(changePosition(20));
+  h.remote(changePosition(30)); await h.engine.refresh();
+  assert.equal(h.engine.getSnapshot().status, 'conflict');
+  const next = state(document(), h.read().revision + 1, { planId: id(60), versionId: id(61) });
+  h.engine.acceptImportedState(next);
+  const snapshot = h.engine.getSnapshot();
+  assert.equal(snapshot.status, 'saved');
+  assert.equal(snapshot.canUndo, false);
+  assert.equal(snapshot.canRedo, false);
+  assert.deepEqual(snapshot.document, next.document);
 });

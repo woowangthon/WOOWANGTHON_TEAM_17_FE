@@ -12,7 +12,7 @@ import { retainRecommendationRequest, type RecommendationRequest } from './canva
 import { useCanvasSync } from './useCanvasSync';
 import { useCanvasRoutes } from './useCanvasRoutes.ts';
 import type { CanvasTravelMode } from './canvasRoutes.ts';
-import { canvasViewScope, consumeHandoff, firstRouteDay, hasFittedHandoff, markHandoffFitted, readCanvasView, resolveCanvasMountView, writeCanvasView, type CanvasHandoff, type CanvasViewMemory, type CanvasViewport } from './canvasHandoff.ts';
+import { canvasSourceKey, canvasViewScope, consumeHandoff, firstRouteDay, hasFittedHandoff, markHandoffFitted, readCanvasView, resolveCanvasMountView, writeCanvasView, type CanvasHandoff, type CanvasViewMemory, type CanvasViewport } from './canvasHandoff.ts';
 import { canvasDayTone, canvasDocumentPosition, canvasFrameNodePosition, ensureCanvasDateRange, frameForPoint, layoutCanvasDayFrames, materializeProjectedDay, dayLabel, resolveCanvasDrop, type CanvasFrameLayout } from './canvasDayFrames.ts';
 import { CanvasPlaceCardContent, CanvasPlaceCandidate, CanvasPlaceMenuSummary, CanvasPlaceOverview } from './CanvasPlacePresentation';
 import { CanvasEdgeEditor } from './CanvasEdgeEditor.tsx';
@@ -26,6 +26,7 @@ const OpenCanvasMenu=createContext<(id:string,element:HTMLElement)=>void>(()=>{}
 const SelectRouteEdge=createContext<(id:string)=>void>(()=>{});
 type CommentCanvasContextValue = {
   tripId: string;
+  sourceScope: string;
   focusRequest: { id: string; sequence: number };
   menuOpen: boolean;
   editingId: string;
@@ -33,7 +34,7 @@ type CommentCanvasContextValue = {
   commit: (id: string, text: string, expectedText: string, force: boolean) => boolean;
 };
 const CommentCanvasContext = createContext<CommentCanvasContextValue>({
-  tripId: '', focusRequest: { id: '', sequence: 0 }, menuOpen: false, editingId: '', requestEdit: () => {}, commit: () => false,
+  tripId: '', sourceScope: '', focusRequest: { id: '', sequence: 0 }, menuOpen: false, editingId: '', requestEdit: () => {}, commit: () => false,
 });
 type PlaceConnectionCanvasContextValue = { mode: boolean; startId: string; start: (id:string)=>void; finish: (id:string)=>void };
 const PlaceConnectionCanvasContext=createContext<PlaceConnectionCanvasContextValue>({mode:false,startId:'',start:()=>{},finish:()=>{}});
@@ -202,7 +203,7 @@ function CommentCard({ id, data, selected }: NodeProps<FlowNode>) {
       {!editing && <button type="button" className="nodrag nopan"
         onClick={event => { event.stopPropagation(); comments.requestEdit(id); }}>댓글 편집</button>}
     </header>
-    {editing ? <CanvasCommentEditor key={id} tripId={comments.tripId} node={model}
+    {editing ? <CanvasCommentEditor key={id} tripId={comments.tripId} sourceScope={comments.sourceScope} node={model}
       focusReady={nodesInitialized && !comments.menuOpen} focusRequest={focusRequest}
       onCommit={(text, expectedText, force) => comments.commit(id, text, expectedText, force)} />
       : <p className="tw-comment-body">{model.text}</p>}
@@ -220,12 +221,20 @@ function boardOf(doc: CanvasDocument, details: Map<number,CanvasPlaceDetail>): B
 function docOf(nodes: FlowNode[], edges: Edge[], base: CanvasDocument): CanvasDocument { return { ...base, nodes:nodes.filter(n=>n.type!=='dayFrame').map((n)=>n.data.model), edges:edges.filter(edge=>edge.type!=='dayOrder').map(({id,source,target})=>({id,source,target})) }; }
 
 
-export default function CanvasPreview({ tripId, preview = false, startDate, endDate, conditionsVersion = null, transport = null, handoff }: { tripId:string; preview?:boolean; startDate?:string|null; endDate?:string|null; conditionsVersion?:number|null; transport?:CanvasTravelMode; handoff?:CanvasHandoff|null }) {
-  const sync = useCanvasSync(tripId, preview); const doc = sync.document;
-  const viewScope=canvasViewScope(tripId,preview); const savedView=readCanvasView(viewScope);
+type CanvasPreviewProps = { tripId:string; preview?:boolean; startDate?:string|null; endDate?:string|null; conditionsVersion?:number|null; transport?:CanvasTravelMode; handoff?:CanvasHandoff|null };
+export default function CanvasPreview(props: CanvasPreviewProps) {
+  const sync = useCanvasSync(props.tripId, props.preview ?? false);
+  const sourceKey = canvasSourceKey(sync.state?.sourcePlan);
+  return <CanvasPreviewSource key={`${props.tripId}:${props.preview ? 'preview' : 'shared'}:${sync.sourceEpoch}:${sourceKey}`} {...props} sync={sync} sourceKey={sourceKey} />;
+}
+function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, conditionsVersion = null, transport = null, handoff, sync, sourceKey }: CanvasPreviewProps & { sync: ReturnType<typeof useCanvasSync>; sourceKey: string }) {
+  const doc = sync.document;
+  const sourceScope = canvasViewScope(tripId,preview,sourceKey);
+  const [isCurrentSource] = useState(() => sync.isCurrentSource);
+  const viewScope=canvasViewScope(tripId,preview,sourceKey); const savedView=readCanvasView(viewScope);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const closeDrawer = () => { setDrawerOpen(false); drawerTrigger.current?.focus(); };
-  const initialDiscovery=discoveryMemory.get(tripId); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [feedback,setFeedback]=useState({text:'',isError:false}); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [editingCommentId,setEditingCommentId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
+  const initialDiscovery=discoveryMemory.get(sourceScope); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [feedback,setFeedback]=useState({text:'',isError:false}); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [editingCommentId,setEditingCommentId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
   const message = feedback.text;
   const setMessage = useCallback((text: string) => setFeedback({ text, isError: false }), []);
   const reportProblem = useCallback((text: string) => setFeedback({ text, isError: true }), []);
@@ -285,12 +294,12 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const routes=useCanvasRoutes(tripId,conditionsVersion,transport,doc??null,null,preview,effectiveModeForEdge);
   useEffect(()=>{if((aiPlace||aiAlternatives.length)&&!recommendationContextMatches){setAiPlace(null);setAiAlternatives([]);}},[aiAlternatives.length,aiPlace,recommendationContextMatches]);
   useEffect(()=>{
-    if(!doc)return;
+    if(!doc||!isCurrentSource())return;
     const dated=ensureCanvasDateRange(doc,startDate,endDate,Boolean(sync.state?.sourcePlan));
     if(dated!==doc)sync.update(dated);
   },[doc,endDate,startDate,sync.state?.sourcePlan,sync.update]);
   const placeDetails=useMemo(()=>{const combined=new Map((sync.state?.places??[]).map(place=>[place.contentid,place]));for(const [id,place] of details)combined.set(id,place);return combined;},[sync.state,details]);
-  useEffect(()=>{ if(!doc||preview) return; const missing=[...new Set(doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid))].filter(id=>!placeDetails.has(id)&&!triedDetails.current.has(id)); if(!missing.length)return; const attemptedDetails=triedDetails.current;missing.forEach(id=>attemptedDetails.add(id)); const ctrl=new AbortController();let settled=false; void Promise.all(missing.map(id=>getPlaceDetail(tripId,id,ctrl.signal).then(p=>[id,p] as const).catch(()=>null))).then(items=>{settled=true;if(ctrl.signal.aborted)return;const successful=items.filter((item):item is readonly [number,CanvasPlaceDetail]=>item!==null);if(successful.length)setDetails(old=>{const next=new Map(old);for(const [id,place] of successful)next.set(id,place);return next;});}); return ()=>{ctrl.abort();if(!settled)for(const id of missing)attemptedDetails.delete(id);}; },[doc,placeDetails,preview,tripId]);
+  useEffect(()=>{ if(!doc||preview) return; const missing=[...new Set(doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid))].filter(id=>!placeDetails.has(id)&&!triedDetails.current.has(id)); if(!missing.length)return; const attemptedDetails=triedDetails.current;missing.forEach(id=>attemptedDetails.add(id)); const ctrl=new AbortController();let settled=false; void Promise.all(missing.map(id=>getPlaceDetail(tripId,id,ctrl.signal).then(p=>[id,p] as const).catch(()=>null))).then(items=>{settled=true;if(ctrl.signal.aborted||!isCurrentSource())return;const successful=items.filter((item):item is readonly [number,CanvasPlaceDetail]=>item!==null);if(successful.length)setDetails(old=>{const next=new Map(old);for(const [id,place] of successful)next.set(id,place);return next;});}); return ()=>{ctrl.abort();if(!settled)for(const id of missing)attemptedDetails.delete(id);}; },[doc,placeDetails,preview,tripId,isCurrentSource]);
   const board=useMemo(()=>doc?boardOf(doc,placeDetails):{nodes:[],edges:[]},[doc,placeDetails]);
   const frameLayouts=useMemo(()=>doc?layoutCanvasDayFrames(doc,measuredSizes):new Map<string,CanvasFrameLayout>(),[doc,measuredSizes]);
   const dayLinks=useMemo(()=>doc?getDayLinks(doc):[],[doc]);
@@ -370,7 +379,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const contextPlace=contextNode?.kind==='place'?placeDetails.get(contextNode.contentid):undefined;
   const contextNodeEdges=contextNode?doc?.edges.filter(edge=>edge.source===contextNode.id||edge.target===contextNode.id)??[]:[];
   const contextRouteEdge=menu?.edgeId?doc?.edges.find(edge=>edge.id===menu.edgeId):undefined;
-  const publish=(nextNodes:FlowNode[],nextEdges:Edge[],note:string):boolean=>{if(!doc)return false;const materialized=doc.days.reduce((current,day)=>materializeProjectedDay(current,day.id,measuredSizes),doc);const normalizedNodes=nextNodes.filter(node=>node.type!=='dayFrame').map(node=>{const original=doc.nodes.find(item=>item.id===node.id);const normalized=materialized.nodes.find(item=>item.id===node.id);const unchangedPosition=original&&node.data.model.dayId===original.dayId&&JSON.stringify(node.data.model.position)===JSON.stringify(original.position);return unchangedPosition&&normalized?{...node,data:{...node.data,model:{...node.data.model,position:normalized.position}}}:node;});const proposed=docOf(normalizedNodes,nextEdges,materialized);let conflictPaths:string[]=[];const updated=sync.update(current=>{const merged=mergeCanvasDocuments(doc,proposed,current);conflictPaths=merged.conflicts;return merged.document??current;});if(!updated&&conflictPaths.length){reportProblem(`다른 참여자의 변경과 겹쳐 이 편집을 보류했어요: ${conflictPaths.slice(0,3).join(', ')}`);return false;}if(updated)setMessage(note);return updated;};
+  const publish=(nextNodes:FlowNode[],nextEdges:Edge[],note:string):boolean=>{if(!doc||!isCurrentSource())return false;const materialized=doc.days.reduce((current,day)=>materializeProjectedDay(current,day.id,measuredSizes),doc);const normalizedNodes=nextNodes.filter(node=>node.type!=='dayFrame').map(node=>{const original=doc.nodes.find(item=>item.id===node.id);const normalized=materialized.nodes.find(item=>item.id===node.id);const unchangedPosition=original&&node.data.model.dayId===original.dayId&&JSON.stringify(node.data.model.position)===JSON.stringify(original.position);return unchangedPosition&&normalized?{...node,data:{...node.data,model:{...node.data.model,position:normalized.position}}}:node;});const proposed=docOf(normalizedNodes,nextEdges,materialized);let conflictPaths:string[]=[];const updated=sync.update(current=>{const merged=mergeCanvasDocuments(doc,proposed,current);conflictPaths=merged.conflicts;return merged.document??current;});if(!updated&&conflictPaths.length){reportProblem(`다른 참여자의 변경과 겹쳐 이 편집을 보류했어요: ${conflictPaths.slice(0,3).join(', ')}`);return false;}if(updated)setMessage(note);return updated;};
   const editNode=(id:string,update:(model:CanvasNode)=>CanvasNode,note='변경 사항을 저장하고 있어요.')=>{const nodes=board.nodes.map(n=>n.id===id?{...n,data:{...n.data,model:update(n.data.model)}}:n);publish(nodes,board.edges,note);};
   const moveNode=(nodeId:string,nextDay:string)=>{if(!doc)return;const model=board.nodes.find(n=>n.id===nodeId)?.data.model;if(!model||model.dayId===nextDay)return;const from=frameLayouts.get(model.dayId);const to=frameLayouts.get(nextDay);if(!to)return;const local=from?canvasFrameNodePosition(model,from):model.position;const position=canvasDocumentPosition(local,to);const edges=model.kind==='place'?board.edges.filter(e=>e.source!==nodeId&&e.target!==nodeId):board.edges;const nodes=board.nodes.map(n=>n.id===nodeId?{...n,data:{...n.data,model:{...model,dayId:nextDay,position}}}:n);publish(nodes,edges,model.kind==='place'?'날짜를 옮기고 기존 연결을 함께 제거했어요.':'댓글 날짜를 옮겼어요.');changeDay(nextDay);};
   const connect=(connection:Pick<Connection,'source'|'target'>):boolean=>{
@@ -443,6 +452,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const updateCanvas = sync.update;
   const commitComment = useCallback((id: string, text: string, expectedText: string, force: boolean) => {
     let alreadyCurrent = false;
+    if (!isCurrentSource()) return false;
     const updated = updateCanvas(current => {
       const existing = current.nodes.find((node): node is CanvasCommentNode => node.id === id && node.kind === 'comment');
       if (!existing || (!force && existing.text !== expectedText)) return current;
@@ -456,10 +466,10 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
       };
     });
     return updated || alreadyCurrent;
-  }, [updateCanvas]);
+  }, [updateCanvas, isCurrentSource]);
   const commentCanvasContext = useMemo<CommentCanvasContextValue>(() => ({
-    tripId, focusRequest: commentFocusRequest, menuOpen: Boolean(menu), editingId: editingCommentId, requestEdit: requestCommentEdit, commit: commitComment,
-  }), [tripId, commentFocusRequest, menu, editingCommentId, requestCommentEdit, commitComment]);
+    tripId, sourceScope, focusRequest: commentFocusRequest, menuOpen: Boolean(menu), editingId: editingCommentId, requestEdit: requestCommentEdit, commit: commitComment,
+  }), [tripId, sourceScope, commentFocusRequest, menu, editingCommentId, requestCommentEdit, commitComment]);
   const addPlace=(place:CanvasPlaceDetail,position?:{x:number;y:number},targetDay=activeDayId)=>{if(!doc)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasPlaceNode={id:crypto.randomUUID(),kind:'place',dayId:placed.dayId,position:placed.position,color:'default',contentid:place.contentid,intent:'candidate'};const updated=sync.update(current=>{if(current.nodes.length>=500||!current.days.some(item=>item.id===placed.dayId))return current;const normalized=materializeProjectedDay(current,placed.dayId,measuredSizes);return {...normalized,nodes:[...normalized.nodes,model]};});if(!updated){reportProblem('날짜가 바뀌었거나 캔버스가 가득 차 장소를 추가하지 못했어요.');return;}setDetails(m=>new Map(m).set(place.contentid,place));setMessage(`${place.title}을 검토용 후보로 추가했어요.`);selectCard(model.id);setDayId(model.dayId);setAddTargetDayId(model.dayId);};
   const choosePlace=async(contentid:number,targetDay:string,targetNodeId:string)=>{
     if(targetDay!==discoveryDayId||targetNodeId!==replaceTargetId){setSearchMessage('날짜나 교체 대상이 바뀌었어요. 현재 선택에 맞는 후보를 다시 확인해 주세요.');return;}
@@ -468,7 +478,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     setBusy(true);setSearchMessage('');
     try{
       const full=await getPlaceDetail(tripId,contentid,controller.signal);
-      if(controller.signal.aborted||sequence!==placeChoiceSequence.current)return;
+      if(controller.signal.aborted||sequence!==placeChoiceSequence.current||!isCurrentSource())return;
       if(currentTargetRef.current.dayId!==targetDay||currentTargetRef.current.replaceTargetId!==targetNodeId){setSearchMessage('날짜나 교체 대상이 바뀌어 선택을 취소했어요.');return;}
       if(targetNodeId){
         let replaced=false;let vanished=false;
@@ -486,16 +496,19 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
         if(!doc?.days.some(day=>day.id===targetDay)){setSearchMessage('선택한 날짜가 더 이상 없어요. 날짜 그룹을 다시 선택해 주세요.');return;}
         addPlace(full,undefined,targetDay);
       }
-    }catch(error){if(!controller.signal.aborted&&sequence===placeChoiceSequence.current)setSearchMessage(error instanceof Error?error.message:'장소 정보를 불러오지 못했어요.');}
-    finally{if(sequence===placeChoiceSequence.current){setBusy(false);if(abort.current===controller)abort.current=null;}}
+    }catch(error){if(!controller.signal.aborted&&sequence===placeChoiceSequence.current&&isCurrentSource())setSearchMessage(error instanceof Error?error.message:'장소 정보를 불러오지 못했어요.');}
+    finally{if(sequence===placeChoiceSequence.current&&isCurrentSource()){setBusy(false);if(abort.current===controller)abort.current=null;}}
   };
   const retryPlaceDetail=async(contentid:number)=>{
     triedDetails.current.delete(contentid);
+    const controller=new AbortController();abort.current?.abort();abort.current=controller;
     try{
-      const detail=await getPlaceDetail(tripId,contentid);
+      const detail=await getPlaceDetail(tripId,contentid,controller.signal);
+      if(controller.signal.aborted||!isCurrentSource())return;
       setDetails(previous=>new Map(previous).set(contentid,detail));
       setMessage('장소 상세 정보를 다시 불러왔어요.');
-    }catch(error){reportProblem(error instanceof Error?error.message:'장소 상세 정보를 불러오지 못했어요.');}
+    }catch(error){if(!controller.signal.aborted&&isCurrentSource())reportProblem(error instanceof Error?error.message:'장소 상세 정보를 불러오지 못했어요.');}
+    finally{if(abort.current===controller&&isCurrentSource())abort.current=null;}
   };
   const addComment=(position?:{x:number;y:number},targetDay=discoveryDayId)=>{if(!doc||doc.nodes.length>=500||!targetDay)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasCommentNode={id:crypto.randomUUID(),kind:'comment',dayId:placed.dayId,position:placed.position,color:'default',text:'댓글을 입력해 주세요'};const newNode:FlowNode={id:model.id,type:'comment',parentId:`day-frame:${model.dayId}`,position:canvasFrameNodePosition(model,frameLayouts.get(model.dayId)!),data:{model}};publish([...allFrameNodes.filter(node=>node.type!=='dayFrame'),newNode],board.edges,'공유 댓글 카드를 추가했어요.');selectCard(model.id);setEditingCommentId(model.id);setDrawerOpen(false);setCommentFocusRequest(current=>({id:model.id,sequence:current.sequence+1}));setDayId(model.dayId);setAddTargetDayId(model.dayId);};
   const copy=()=>{
@@ -601,11 +614,11 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
       cancelPlaceConnection('시작 장소가 바뀌어 장소 연결을 취소했어요.', true);
     }
   },[doc,placeConnectionMode,placeConnectionStartId,reconnectEdgeId]);
-  const runSearch=async()=>{abort.current?.abort();const controller=new AbortController();abort.current=controller;setBusy(true);setSearchMessage('');setResults([]);try{const found=await searchPlaces(tripId,query,controller.signal);if(controller.signal.aborted)return;setResults(found);setSearchMessage(found.length?'':`“${query.trim()}” 검색 결과가 없어요.`);}catch(error){if(!controller.signal.aborted)setSearchMessage(error instanceof Error?error.message:'장소 검색에 실패했어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
-  const askAI=async()=>{if(busy||!prompt.trim()||!discoveryDayId||!doc||(pendingRecommendation.current&&!recommendationContextMatches))return;const exclude=doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid);const hadPending=Boolean(pendingRecommendation.current);if(!hadPending){recommendationContext.current={dayId:discoveryDayId,replaceTargetId};setAiPlace(null);setAiAlternatives([]);}pendingRecommendation.current=retainRecommendationRequest(pendingRecommendation.current,prompt.trim(),discoveryDayId,exclude);if(!hadPending)setRecommendationPending(true);const request=pendingRecommendation.current;const requestContext={...recommendationContext.current};const controller=new AbortController();abort.current?.abort();abort.current=controller;setBusy(true);try{const result=await recommendPlace(tripId,request.prompt,request.dayId,request.exclude,request.key,controller.signal);if(controller.signal.aborted)return;pendingRecommendation.current=null;setRecommendationPending(false);if(requestContext.dayId===currentTargetRef.current.dayId&&requestContext.replaceTargetId===currentTargetRef.current.replaceTargetId){setAiPlace(result.place);setAiAlternatives(result.alternatives);setTab('ai');setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');}else{setAiPlace(null);setAiAlternatives([]);reportProblem('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');}}catch(error){if(!controller.signal.aborted)reportProblem(error instanceof Error?error.message:'추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
+  const runSearch=async()=>{if(!isCurrentSource())return;abort.current?.abort();const controller=new AbortController();abort.current=controller;setBusy(true);setSearchMessage('');setResults([]);try{const found=await searchPlaces(tripId,query,controller.signal);if(controller.signal.aborted||!isCurrentSource())return;setResults(found);setSearchMessage(found.length?'':`“${query.trim()}” 검색 결과가 없어요.`);}catch(error){if(!controller.signal.aborted&&isCurrentSource())setSearchMessage(error instanceof Error?error.message:'장소 검색에 실패했어요.');}finally{if(abort.current===controller&&isCurrentSource()){abort.current=null;setBusy(false);}}};
+  const askAI=async()=>{if(!isCurrentSource()||busy||!prompt.trim()||!discoveryDayId||!doc||(pendingRecommendation.current&&!recommendationContextMatches))return;const exclude=doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid);const hadPending=Boolean(pendingRecommendation.current);if(!hadPending){recommendationContext.current={dayId:discoveryDayId,replaceTargetId};setAiPlace(null);setAiAlternatives([]);}pendingRecommendation.current=retainRecommendationRequest(pendingRecommendation.current,prompt.trim(),discoveryDayId,exclude);if(!hadPending)setRecommendationPending(true);const request=pendingRecommendation.current;const requestContext={...recommendationContext.current};const controller=new AbortController();abort.current?.abort();abort.current=controller;setBusy(true);try{const result=await recommendPlace(tripId,request.prompt,request.dayId,request.exclude,request.key,controller.signal);if(controller.signal.aborted||!isCurrentSource())return;pendingRecommendation.current=null;setRecommendationPending(false);if(requestContext.dayId===currentTargetRef.current.dayId&&requestContext.replaceTargetId===currentTargetRef.current.replaceTargetId){setAiPlace(result.place);setAiAlternatives(result.alternatives);setTab('ai');setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');}else{setAiPlace(null);setAiAlternatives([]);reportProblem('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');}}catch(error){if(!controller.signal.aborted&&isCurrentSource())reportProblem(error instanceof Error?error.message:'추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');}finally{if(abort.current===controller&&isCurrentSource()){abort.current=null;setBusy(false);}}};
   useEffect(()=>()=>abort.current?.abort(),[]);
   useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),4200);return()=>window.clearTimeout(timeout);},[message]);
-  useEffect(()=>{discoveryMemory.set(tripId,{tab,query,results,prompt,aiPlace,aiAlternatives,pending:pendingRecommendation.current,context:recommendationContext.current});},[tripId,tab,query,results,prompt,aiPlace,aiAlternatives,recommendationPending]);
+  useEffect(()=>{discoveryMemory.set(sourceScope,{tab,query,results,prompt,aiPlace,aiAlternatives,pending:pendingRecommendation.current,context:recommendationContext.current});},[sourceScope,tab,query,results,prompt,aiPlace,aiAlternatives,recommendationPending]);
   useEffect(() => {
     if (!menu) return;
     const focusTimer = window.setTimeout(() => menuRef.current?.querySelector<HTMLElement>('button:not(:disabled),select,summary')?.focus(), 0);
