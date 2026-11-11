@@ -87,12 +87,13 @@ function DayOrderEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, 
 function RouteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, selected, label }: EdgeProps<FlowEdge>) {
   const select = useContext(SelectRouteEdge);
   const [path, x, y] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: .2 });
+  const labelY = Math.hypot(targetX - sourceX, targetY - sourceY) < 100 ? y - 26 : y;
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} interactionWidth={18}
       style={{ stroke: selected ? 'var(--color-accent-hover)' : 'var(--canvas-muted)', strokeWidth: selected ? 3 : 2 }} />
     {label && <EdgeLabelRenderer>
       <button type="button" className="tw-route-edge-label nodrag nopan"
-        style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
+        style={{ transform: `translate(-50%, -50%) translate(${x}px, ${labelY}px)` }}
         aria-label={`이동 구간 편집: ${String(label)}`} onClick={() => select(id)}>
         {label}
       </button>
@@ -169,6 +170,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const knownDates=doc?.days.flatMap(item=>item.date?[item.date]:[])??[];
   const formatTripDate=(date:string)=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric'}).format(new Date(`${date}T12:00:00Z`));
   const tripRangeLabel=knownDates.length?`${formatTripDate(knownDates[0])}${knownDates.length>1&&knownDates.at(-1)!==knownDates[0]?`–${formatTripDate(knownDates.at(-1)!)}`:''} · ${doc?.days.length??0}일`:`여행 일정 · ${doc?.days.length??0}일`;
+  const draggedEdgeId = useRef<string | null>(null);
   const edgePrefs=useCanvasEdgePreferences(tripId,preview);
   const effectiveModeForEdge=(edgeId:string):CanvasTravelMode=>{
     const edge=doc?.edges.find(item=>item.id===edgeId);
@@ -246,7 +248,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     ...(dayLinksOn?dayLinks.flatMap(link=>{
       const source=frameLayouts.get(link.source); const target=frameLayouts.get(link.target);
       if(!source||!target)return [];
-      return [{id:`day-link:${link.id}`,source:`day-frame:${link.source}`,sourceHandle:'day-link-out',target:`day-frame:${link.target}`,targetHandle:'day-link-in',type:'dayOrder',selectable:true,deletable:false,focusable:true,selected:link.id===selectedDayLinkId,markerEnd:{...marker,color:'var(--canvas-muted)'},data:{dayLinkId:link.id}}];
+      return [{id:`day-link:${link.id}`,source:`day-frame:${link.source}`,sourceHandle:'day-link-out',target:`day-frame:${link.target}`,targetHandle:'day-link-in',type:'dayOrder',reconnectable:false,selectable:true,deletable:false,focusable:true,selected:link.id===selectedDayLinkId,markerEnd:{...marker,color:'var(--canvas-muted)'},data:{dayLinkId:link.id}}];
     }):[]),
   ];
   const selected=board.nodes.find(n=>n.id===selectedId); const selectedModel=selected?.data.model;
@@ -456,10 +458,21 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             }}
             onEdgesChange={changes=>{const removed=new Set(changes.filter(change=>change.type==='remove').map(change=>change.id));if(removed.size)publish(board.nodes,board.edges.filter(edge=>!removed.has(edge.id)),'연결을 제거했어요.');}}
             onConnect={connect}
-            isValidConnection={connection=>{if(!connection.source||!connection.target)return false;const sourceDay=connection.source.startsWith('day-frame:');const targetDay=connection.target.startsWith('day-frame:');if(sourceDay||targetDay){if(!sourceDay||!targetDay)return false;return connection.source!==connection.target&&!dayLinks.some(link=>link.source===connection.source!.slice('day-frame:'.length)&&link.target===connection.target!.slice('day-frame:'.length));}return canConnectRoute(connection.source,connection.target,placeMap,doc.edges.filter(edge=>!placeConnectionMode||edge.id!==reconnectEdgeId));}}
+            isValidConnection={({ source, target }) => {
+              if (!source || !target) return false;
+              const prefix = 'day-frame:';
+              if (source.startsWith(prefix) || target.startsWith(prefix)) {
+                if (!source.startsWith(prefix) || !target.startsWith(prefix) || source === target) return false;
+                return !dayLinks.some(link => link.source === source.slice(prefix.length) && link.target === target.slice(prefix.length));
+              }
+              const replaced = draggedEdgeId.current ?? (placeConnectionMode ? reconnectEdgeId : null);
+              return canConnectRoute(source, target, placeMap, replaced ? doc.edges.filter(edge => edge.id !== replaced) : doc.edges);
+            }}
             onNodeClick={(_,node)=>{if(node.type==='dayFrame')return;if(placeConnectionMode){choosePlaceConnectionNode(node.id);return;}setSelectedId(node.id);setReplaceTargetId('');setDayId(node.data.model.dayId);setAddTargetDayId(node.data.model.dayId);setSelectedEdgeId('');setSelectedDayLinkId('');setDrawerOpen(true);}}
             onEdgeClick={(_,edge)=>{const dayLinkId=(edge as FlowEdge).data?.dayLinkId;if(edge.type==='dayOrder'&&dayLinkId){setSelectedDayLinkId(dayLinkId);setSelectedEdgeId('');setSelectedId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');return;}setSelectedEdgeId(edge.id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setDrawerOpen(true);}}
+            onReconnectStart={(_, edge) => { draggedEdgeId.current = edge.id; }}
             onReconnect={reconnectRouteEdge}
+            onReconnectEnd={() => { draggedEdgeId.current = null; }}
             onPaneClick={()=>{setMenu(null);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');}}
             onPaneContextMenu={event=>context(event)}
             onNodeContextMenu={(event,node)=>{event.stopPropagation();context(event,node.id);}}
