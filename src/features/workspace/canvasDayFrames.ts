@@ -237,45 +237,6 @@ export function materializeProjectedDay(document: CanvasDocument, dayId: string,
   };
 }
 
-export function arrangeDayPlaces(document: CanvasDocument, dayId: string, measuredSizes?: ReadonlyMap<string, CanvasMeasuredSize>): CanvasDocument | null {
-  if (!document.days.some(day => day.id === dayId)) return null;
-  const places = document.nodes.filter((node): node is CanvasPlaceNode => node.kind === 'place' && node.dayId === dayId);
-  if (!places.length) return null;
-  const columns = places.length === 1 ? 1 : 2;
-  const gapX = 28;
-  const gapY = 28;
-  const sizes = places.map(node => validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node));
-  const rowGroups: Array<{ start: number; count: number; width: number; height: number }> = [];
-  for (let start = 0; start < places.length; start += columns) {
-    const count = Math.min(columns, places.length - start);
-    const row = sizes.slice(start, start + count);
-    rowGroups.push({ start, count, width: row.reduce((sum, size) => sum + size.width, 0) + gapX * (count - 1), height: Math.max(...row.map(size => size.height)) });
-  }
-  const untouched = document.nodes.filter(node => node.dayId === dayId && node.kind !== 'place');
-  const commentBounds = untouched.map(node => {
-    const size = validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node);
-    return { left: node.position.x, top: node.position.y, right: node.position.x + size.width, bottom: node.position.y + size.height };
-  });
-  const minX = commentBounds.length ? Math.min(0, ...commentBounds.map(bound => bound.left)) : 0;
-  const minY = commentBounds.length ? Math.min(0, ...commentBounds.map(bound => bound.top)) : 0;
-  const origin = { x: minX - FRAME_PADDING, y: minY - HEADER_HEIGHT - FRAME_PADDING };
-  const commentWidth = commentBounds.length ? Math.max(0, ...commentBounds.map(bound => bound.right - origin.x)) + FRAME_PADDING : 0;
-  const frameWidth = Math.max(FRAME_WIDTH, ...rowGroups.map(row => row.width + FRAME_PADDING * 2), commentWidth);
-  const positions = new Map<string, { x: number; y: number }>();
-  let cursorY = HEADER_HEIGHT + FRAME_PADDING;
-  for (const row of rowGroups) {
-    const centerRow = row.count === 1 && places.length > 1;
-    let x = centerRow || row.count === 2 ? (frameWidth - row.width) / 2 : FRAME_PADDING;
-    for (let offset = 0; offset < row.count; offset += 1) {
-      positions.set(places[row.start + offset].id, { x: x + origin.x, y: cursorY + origin.y });
-      x += sizes[row.start + offset].width + gapX;
-    }
-    cursorY += row.height + gapY;
-  }
-  return { ...document, nodes: document.nodes.map(node => node.dayId === dayId && positions.has(node.id)
-    ? { ...node, position: positions.get(node.id)! } : node) };
-}
-
 export function frameForPoint(layouts: Map<string, CanvasFrameLayout>, point: { x: number; y: number }): CanvasFrameLayout | null {
   for (const frame of layouts.values()) {
     if (point.x >= frame.position.x && point.x <= frame.position.x + frame.width

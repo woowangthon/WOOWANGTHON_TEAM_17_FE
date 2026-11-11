@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCanvasDocument } from '../src/features/workspace/canvasModel.ts';
-import { arrangeDayPlaces, canvasDayTone, canvasDocumentPosition, canvasFrameNodePosition, dayLabel, ensureCanvasDateRange, frameForPoint, layoutCanvasDayFrames, materializeProjectedDay, resolveCanvasDrop } from '../src/features/workspace/canvasDayFrames.ts';
+import { canvasDayTone, canvasDocumentPosition, canvasFrameNodePosition, dayLabel, ensureCanvasDateRange, frameForPoint, layoutCanvasDayFrames, materializeProjectedDay, resolveCanvasDrop } from '../src/features/workspace/canvasDayFrames.ts';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const makeDocument = (days, nodes = []) => ({ schemaVersion: 3, days, nodes, edges: [] });
@@ -194,18 +194,4 @@ test('day tones are stable across renders and stay within the six approved accen
   const tones=['lime','sky','rose','amber','sage','lavender'];
   assert.ok(tones.includes(canvasDayTone(id(1))));assert.equal(canvasDayTone(id(1)),canvasDayTone(id(1)));
   assert.deepEqual(new Set(Array.from({length:6},(_,index)=>canvasDayTone(id(index+1)))).size,6);
-});
-
-test('explicit arrange balances cards by measured size, preserves IDs, other dates and comments',()=>{
-  const days=[{id:id(1),date:null},{id:id(2),date:null}];
-  const nodes=[
-    {id:id(50),kind:'place',dayId:id(1),position:{x:500,y:700},color:'default',contentid:1,intent:'candidate'},
-    {id:id(51),kind:'place',dayId:id(1),position:{x:900,y:80},color:'default',contentid:2,intent:'route'},
-    {id:id(52),kind:'place',dayId:id(1),position:{x:1200,y:80},color:'default',contentid:3,intent:'route'},
-    {id:id(53),kind:'comment',dayId:id(1),position:{x:-40,y:900},color:'default',text:'leave me'},
-    {id:id(54),kind:'place',dayId:id(2),position:{x:77,y:88},color:'default',contentid:4,intent:'candidate'},
-  ];
-  const doc=makeDocument(days,nodes);const arranged=arrangeDayPlaces(doc,id(1),new Map([[id(50),{width:300,height:200}],[id(51),{width:260,height:280}],[id(52),{width:400,height:160}]]));
-  assert.deepEqual(arranged.nodes.slice(0,3).map(node=>node.id),nodes.slice(0,3).map(node=>node.id));
-  const [a,b,c]=arranged.nodes.slice(0,3).map(node=>node.position);assert.equal(a.y,b.y);assert.ok(c.y>=a.y+280+28);assert.ok(c.x>a.x);assert.deepEqual(arranged.nodes[3].position,nodes[3].position);assert.deepEqual(arranged.nodes[4].position,nodes[4].position);assert.equal(arranged.days[0].id,days[0].id);
 });

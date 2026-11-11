@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import type { CanvasPlaceDetail } from './canvasModel';
+import { regionPhotos } from '../preparation/regionPhotos';
+import type { CanvasPlaceDetail, CanvasPlaceNode } from './canvasModel';
 
 type PlaceSummary = {
+  contentid?: number;
   title: string;
   address?: string | null;
   category?: string | null;
@@ -11,9 +13,10 @@ type PlaceSummary = {
 };
 
 const roleNames: Record<string, string> = {
-  meal_stop: '식당', sightseeing_stop: '관광', culture_stop: '문화', activity_stop: '체험',
+  meal_stop: '음식점', sightseeing_stop: '관광지', culture_stop: '문화', activity_stop: '체험',
   shopping_stop: '쇼핑', overnight_lodging: '숙소', overnight_camping: '캠핑', date_specific_event: '행사',
 };
+const localPhotos = new Map<number, string>(regionPhotos.map(photo => [Number(photo.contentId), photo.image]));
 
 function priceText(place?: PlaceSummary) {
   return place?.feeText?.trim() || place?.priceLabel?.trim() || '';
@@ -23,42 +26,75 @@ function placeCategory(place?: CanvasPlaceDetail) {
   return place?.category?.trim() || roleNames[place?.planningRole ?? ''] || '';
 }
 
-function PlacePhoto({ src, className }: { src?: string | null; className: string }) {
-  const [failed, setFailed] = useState<string>();
-  if (!src || failed === src) return null;
-  return <img src={src} alt="" draggable={false} decoding="async" loading="lazy" referrerPolicy="no-referrer"
-    className={className} onError={() => setFailed(src)} />;
+function PhotoSource({ sources, className, reserve }: { sources: string[]; className: string; reserve: boolean }) {
+  const [index, setIndex] = useState(0);
+  const src = sources[index];
+  if (src) return <img key={src} src={src} alt="" draggable={false} decoding="async" referrerPolicy="no-referrer"
+    className={className} onError={() => setIndex(index + 1)} />;
+  if (!reserve) return null;
+  return <span className={`${className} tw-photo-missing`}>
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/>
+    </svg>
+    <span>사진 없음</span>
+  </span>;
 }
 
-export function CanvasPlaceCardContent({ place, visitLabel, candidate }: {
-  place?: CanvasPlaceDetail; visitLabel?: string; candidate: boolean;
+function PlacePhoto({ place, className, reserve = false }: { place?: PlaceSummary; className: string; reserve?: boolean }) {
+  const local = place?.contentid == null ? undefined : localPhotos.get(place.contentid);
+  const sources = [local, place?.imageUrl].filter((value): value is string => Boolean(value));
+  return <PhotoSource key={JSON.stringify(sources)} sources={sources} className={className} reserve={reserve} />;
+}
+
+function stayMinutes(schedule?: CanvasPlaceNode['schedule'], estimate?: number | null) {
+  if (schedule?.startAt && schedule.endAt) {
+    const duration = Math.round((Date.parse(schedule.endAt) - Date.parse(schedule.startAt)) / 60000);
+    if (Number.isFinite(duration) && duration > 0) return duration;
+  }
+  return estimate ?? null;
+}
+
+export function CanvasPlaceCardContent({ place, visitLabel, candidate, schedule }: {
+  place?: CanvasPlaceDetail; visitLabel?: string; candidate: boolean; schedule?: CanvasPlaceNode['schedule'];
 }) {
-  const category = placeCategory(place);
+  const minutes = stayMinutes(schedule, place?.estimatedStayMinutes);
+  const clock = visitLabel?.replace(/^예상 시각 /u, '').replace(/ KST$/u, '');
   const price = priceText(place);
   return <>
     <div className="tw-place-identity">
-      <PlacePhoto src={place?.imageUrl} className="tw-place-thumb" />
+      <PlacePhoto place={place} className="tw-place-thumb" reserve />
       <div className="tw-place-title">
-        {(category || candidate) && <small>{[category, candidate ? '후보' : ''].filter(Boolean).join(' · ')}</small>}
-        <strong>{place?.title || '장소 정보 확인 중'}</strong>
+        <small>{[placeCategory(place), candidate ? '후보' : ''].filter(Boolean).join(' · ')}</small>
+        <strong>{place?.title || '장소 확인 중'}</strong>
+        <p className="tw-place-address" title={place?.address ?? undefined}>{place?.address || '주소 정보 없음'}</p>
       </div>
     </div>
-    {place?.address && <p className="tw-place-address" title={place.address}>{place.address}</p>}
-    <div className="tw-place-facts">
-      {visitLabel && <span>{visitLabel.replace(/^예상 시각 /u, '').replace(/ KST$/u, '')}</span>}
-      {place?.estimatedStayMinutes != null && <span>체류 {place.estimatedStayMinutes}분</span>}
-      <span className="tw-place-price" title={price}>가격 <b>{price || '정보 없음'}</b></span>
-    </div>
+    <dl className="tw-visit-facts">
+      <div><dt>방문 시간</dt><dd>{clock || '미정'}</dd></div>
+      <div><dt>체류 시간</dt><dd>{minutes == null ? '미정' : `${minutes}분`}</dd></div>
+      <div><dt>가격</dt><dd title={price}>{price || '정보 없음'}</dd></div>
+    </dl>
   </>;
 }
 
 export function CanvasPlaceOverview({ place }: { place?: CanvasPlaceDetail }) {
+  const info = [
+    ['운영 시간', place?.openingHoursText], ['휴무일', place?.closedDaysText], ['가격', priceText(place) || '정보 없음'],
+    ['예약', place?.bookingText], ['주차', place?.parkingText], ['전화', place?.tel],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]?.trim()));
   return <div className="tw-place-overview">
-    <PlacePhoto src={place?.imageUrl} className="tw-place-cover" />
-    {placeCategory(place) && <small>{placeCategory(place)}</small>}
-    <h3>{place?.title || '장소 정보 확인 중'}</h3>
-    {place?.address && <p>{place.address}</p>}
-    <div className="tw-place-overview-price"><span>가격</span><strong>{priceText(place) || '정보 없음'}</strong></div>
+    <PlacePhoto place={place} className="tw-place-cover" reserve />
+    <div className="tw-place-overview-heading">
+      {placeCategory(place) && <small>{placeCategory(place)}</small>}
+      <h3>{place?.title || '장소 정보 확인 중'}</h3>
+      <p className="tw-location"><span className="sr-only">위치 </span>{place?.address || '주소 정보 없음'}</p>
+    </div>
+    {place?.menuText?.trim() && <section><h4>메뉴</h4><p>{place.menuText}</p></section>}
+    <section><h4>이용 정보</h4><dl className="tw-place-info-list">{info.map(([name, value]) =>
+      <div key={name} className={name === '가격' ? 'tw-place-overview-price' : undefined}><dt>{name}</dt><dd>{value}</dd></div>
+    )}</dl></section>
+    {place?.overviewText?.trim() && <section><h4>장소 소개</h4><p>{place.overviewText}</p></section>}
+    {place?.homepageUrl && <a href={place.homepageUrl} target="_blank" rel="noreferrer">공식 홈페이지 ↗</a>}
   </div>;
 }
 
@@ -67,7 +103,7 @@ export function CanvasPlaceCandidate({ place, onChoose, actionLabel, disabled }:
 }) {
   return <article className="tw-search-result tw-place-candidate">
     <div className="tw-candidate-main">
-      <PlacePhoto src={place.imageUrl} className="tw-candidate-thumb" />
+      <PlacePhoto place={place} className="tw-candidate-thumb" />
       <div>
         <strong>{place.title}</strong>
         {place.address && <small>{place.address}</small>}
@@ -78,10 +114,11 @@ export function CanvasPlaceCandidate({ place, onChoose, actionLabel, disabled }:
       aria-label={`${place.title} · ${actionLabel}`}>{actionLabel}</button>
   </article>;
 }
+
 export function CanvasPlaceMenuSummary({ place }: { place?: CanvasPlaceDetail }) {
   if (!place) return null;
   return <div className="tw-menu-place">
-    <PlacePhoto src={place.imageUrl} className="tw-menu-place-photo" />
+    <PlacePhoto place={place} className="tw-menu-place-photo" />
     <div><strong>{place.title}</strong><small title={priceText(place)}>가격 {priceText(place) || '정보 없음'}</small></div>
   </div>;
 }
