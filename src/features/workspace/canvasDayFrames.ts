@@ -7,6 +7,7 @@ export type CanvasFrameLayout = {
   scale: { x: number; y: number };
   width: number;
   height: number;
+  connectorToNext?: { points: Array<{ x: number; y: number }> };
 };
 
 const FRAME_WIDTH = 560;
@@ -14,11 +15,15 @@ const FRAME_GAP_X = 36;
 const FRAME_GAP_Y = 36;
 const FRAME_COLUMNS = 3;
 const HEADER_HEIGHT = 72;
-const NODE_WIDTH = 250;
-const NODE_HEIGHT = 150;
-const CELL_GAP_X = 18;
-const CELL_GAP_Y = 18;
 const FRAME_PADDING = 22;
+const EMPTY_FRAME_HEIGHT = 300;
+const ESTIMATED_NODE_WIDTH = 250;
+const ESTIMATED_PLACE_HEIGHT = 220;
+const ESTIMATED_COMMENT_LINE_HEIGHT = 19;
+const ESTIMATED_COMMENT_BASE_HEIGHT = 84;
+const ESTIMATED_COMMENT_INNER_WIDTH = 196;
+
+export type CanvasMeasuredSize = { width: number; height: number };
 
 export function ensureCanvasDateRange(
   document: CanvasDocument,
@@ -65,20 +70,44 @@ function stableDateId(seed: string): string {
   return `${first}-${second.slice(0, 4)}-4${second.slice(5, 8)}-8${third.slice(1, 4)}-${third.slice(4, 8)}${fourth}`;
 }
 
-export function layoutCanvasDayFrames(document: CanvasDocument): Map<string, CanvasFrameLayout> {
+function estimatedNodeSize(node: CanvasNode): CanvasMeasuredSize {
+  if (node.kind === 'place') return { width: ESTIMATED_NODE_WIDTH, height: ESTIMATED_PLACE_HEIGHT };
+  const textLines = node.text.split('\n').reduce((sum, line) => {
+    const width = Array.from(line).reduce((lineWidth, char) => lineWidth + (/[\u0000-\u00ff]/u.test(char) ? 7 : 13), 0);
+    return sum + Math.max(1, Math.ceil(width / ESTIMATED_COMMENT_INNER_WIDTH));
+  }, 0);
+  return {
+    width: ESTIMATED_NODE_WIDTH,
+    height: Math.max(96, ESTIMATED_COMMENT_BASE_HEIGHT + textLines * ESTIMATED_COMMENT_LINE_HEIGHT),
+  };
+}
+
+function validMeasuredSize(size: CanvasMeasuredSize | undefined): size is CanvasMeasuredSize {
+  return Boolean(size && Number.isFinite(size.width) && size.width > 0 && Number.isFinite(size.height) && size.height > 0);
+}
+
+export function layoutCanvasDayFrames(
+  document: CanvasDocument,
+  measuredSizes?: ReadonlyMap<string, CanvasMeasuredSize>,
+): Map<string, CanvasFrameLayout> {
   const layouts = new Map<string, CanvasFrameLayout>();
   const rowHeights = new Map<number, number>();
   const daySizes = document.days.map((day, index) => {
     const row = Math.floor(index / FRAME_COLUMNS);
     const frameNodes = document.nodes.filter(node => node.dayId === day.id);
-    const columns = Math.max(1, Math.ceil(Math.sqrt(frameNodes.length)));
-    const rows = Math.max(1, Math.ceil(frameNodes.length / columns));
-    const xs = frameNodes.map(node => node.position.x);
-    const ys = frameNodes.map(node => node.position.y);
-    const width = Math.max(FRAME_WIDTH, FRAME_PADDING * 2 + columns * NODE_WIDTH + Math.max(0, columns - 1) * CELL_GAP_X, (xs.length ? Math.max(...xs) : 0) + FRAME_PADDING * 2 + NODE_WIDTH);
-    const height = Math.max(300, HEADER_HEIGHT + FRAME_PADDING + rows * NODE_HEIGHT + Math.max(0, rows - 1) * CELL_GAP_Y, (ys.length ? Math.max(...ys) : 0) + HEADER_HEIGHT + FRAME_PADDING * 2 + NODE_HEIGHT);
+    const bounds = frameNodes.map(node => {
+      const measured = measuredSizes?.get(node.id);
+      const size = validMeasuredSize(measured) ? measured : estimatedNodeSize(node);
+      return { left: node.position.x, top: node.position.y, right: node.position.x + size.width, bottom: node.position.y + size.height };
+    });
+    const minX = bounds.length ? Math.min(0, ...bounds.map(item => item.left)) : 0;
+    const minY = bounds.length ? Math.min(0, ...bounds.map(item => item.top)) : 0;
+    const maxX = bounds.length ? Math.max(0, ...bounds.map(item => item.right)) : 0;
+    const maxY = bounds.length ? Math.max(0, ...bounds.map(item => item.bottom)) : 0;
+    const width = bounds.length ? Math.max(FRAME_WIDTH, maxX - minX + FRAME_PADDING * 2) : FRAME_WIDTH;
+    const height = bounds.length ? Math.max(EMPTY_FRAME_HEIGHT, HEADER_HEIGHT + FRAME_PADDING * 2 + maxY - minY) : EMPTY_FRAME_HEIGHT;
     rowHeights.set(row, Math.max(rowHeights.get(row) ?? 0, height));
-    return { day, index, row, width, height, frameNodes };
+    return { day, index, row, width, height, minX, minY };
   });
   const rowY = new Map<number, number>();
   for (let row = 0; row < Math.ceil(document.days.length / FRAME_COLUMNS); row += 1) {
@@ -86,7 +115,7 @@ export function layoutCanvasDayFrames(document: CanvasDocument): Map<string, Can
     rowY.set(row, previousY);
   }
   for (const group of daySizes) {
-    const origin = { x: -FRAME_PADDING, y: -HEADER_HEIGHT - FRAME_PADDING };
+    const origin = { x: group.minX - FRAME_PADDING, y: group.minY - HEADER_HEIGHT - FRAME_PADDING };
     const scale = { x: 1, y: 1 };
     const x = daySizes.filter(item => item.row === group.row && item.index < group.index).reduce((sum, item) => sum + item.width + FRAME_GAP_X, 0);
     layouts.set(group.day.id, {
@@ -97,6 +126,30 @@ export function layoutCanvasDayFrames(document: CanvasDocument): Map<string, Can
       width: group.width,
       height: group.height,
     });
+  }
+  for (let index = 0; index < daySizes.length - 1; index += 1) {
+    const current = daySizes[index];
+    const next = daySizes[index + 1];
+    const from = layouts.get(current.day.id)!;
+    const to = layouts.get(next.day.id)!;
+    const startCenterX = from.position.x + from.width / 2;
+    const endCenterX = to.position.x + to.width / 2;
+    if (current.row === next.row) {
+      const connectorY = from.position.y + HEADER_HEIGHT / 2;
+      from.connectorToNext = { points: [
+        { x: from.position.x + from.width, y: connectorY },
+        { x: to.position.x, y: connectorY },
+      ] };
+    } else {
+      const rowBottom = from.position.y + (rowHeights.get(current.row) ?? from.height);
+      const gutterY = rowBottom + FRAME_GAP_Y / 2;
+      from.connectorToNext = { points: [
+        { x: startCenterX, y: from.position.y + from.height },
+        { x: startCenterX, y: gutterY },
+        { x: endCenterX, y: gutterY },
+        { x: endCenterX, y: to.position.y },
+      ] };
+    }
   }
   return layouts;
 }
