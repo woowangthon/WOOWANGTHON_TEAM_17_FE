@@ -182,6 +182,84 @@ test('an imported three-place row projects cards to a balanced two over one layo
   assert.deepEqual(canvasFrameNodePosition(saved.nodes[2],stableFrame),{x:third.x+10,y:third.y},'the moved bottom card retains its 10px drag after save');
 });
 
+test('four, five, and six imported places use measured snake rows without overlaps or document writes', () => {
+  for (const count of [4, 5, 6]) {
+    const day = { id: id(1), date: null };
+    const nodes = Array.from({ length: count }, (_, index) => ({
+      id: id(100 + index), kind: 'place', dayId: day.id,
+      position: { x: 100 + (Math.floor(index / 2) % 2 ? 1 - index % 2 : index % 2) * 270, y: 100 + Math.floor(index / 2) * 185 },
+      color: 'default', contentid: index + 1, intent: 'route',
+      source: { planId: id(70), versionId: id(71), nodeId: id(200 + index) },
+    }));
+    const edges = nodes.slice(1).map((node, index) => ({ id: id(300 + index), source: nodes[index].id, target: node.id }));
+    const document = { ...makeDocument([day], nodes), edges };
+    const before = structuredClone(document);
+    const sizes = new Map(nodes.map((node, index) => [node.id, { width: 230 + index * 23, height: 150 + index * 47 }]));
+    const frame = layoutCanvasDayFrames(document, sizes).get(day.id);
+    const positions = nodes.map(node => canvasFrameNodePosition(node, frame));
+
+    assert.ok(frame.projectedNodePositions, `${count} generated places are projected`);
+    assert.deepEqual(document, before, 'render layout leaves the source document unchanged');
+    assert.deepEqual(document.edges, edges, 'route edge order remains unchanged');
+    for (let index = 0; index < nodes.length; index += 1) {
+      const point = positions[index];
+      const size = sizes.get(nodes[index].id);
+      assert.ok(point.x >= 0 && point.y >= 0);
+      assert.ok(point.x + size.width <= frame.width);
+      assert.ok(point.y + size.height <= frame.height);
+      if (index >= 2 && Math.floor(index / 2) === 1) {
+        assert.equal(point.y, positions[0].y + Math.max(sizes.get(nodes[0].id).height, sizes.get(nodes[1].id).height) + 28);
+      }
+    }
+    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+        const left = positions[leftIndex]; const leftSize = sizes.get(nodes[leftIndex].id);
+        const right = positions[rightIndex]; const rightSize = sizes.get(nodes[rightIndex].id);
+        const overlap = left.x < right.x + rightSize.width && left.x + leftSize.width > right.x
+          && left.y < right.y + rightSize.height && left.y + leftSize.height > right.y;
+        assert.equal(overlap, false, `${count} place route cards ${leftIndex} and ${rightIndex} do not overlap`);
+      }
+    }
+    if (count >= 4) {
+      assert.ok(positions[2].x > positions[3].x, 'the second row displays the imported snake direction while retaining insertion order');
+    }
+    if (count === 5) {
+      assert.equal(positions[4].x + sizes.get(nodes[4].id).width / 2, frame.width / 2, 'the final odd card is centered');
+    }
+
+    const materialized = materializeProjectedDay(document, day.id, sizes);
+    assert.deepEqual(document, before, 'materialization does not mutate its input document');
+    assert.deepEqual(materialized.edges, edges, 'materialization preserves route edge order');
+    const materializedFrame = layoutCanvasDayFrames(materialized, sizes).get(day.id);
+    nodes.forEach((node, index) => assert.deepEqual(
+      canvasFrameNodePosition(materialized.nodes[index], materializedFrame), positions[index],
+      `materializing ${count} cards keeps displayed position ${index} stable`,
+    ));
+  }
+});
+
+test('manual, mixed-content, and mixed-version days are not projected', () => {
+  const day = { id: id(1), date: null };
+  const makeRoute = (index, overrides = {}) => ({
+    id: id(100 + index), kind: 'place', dayId: day.id,
+    position: { x: 100 + (Math.floor(index / 2) % 2 ? 1 - index % 2 : index % 2) * 270, y: 100 + Math.floor(index / 2) * 185 },
+    color: 'default', contentid: index + 1, intent: 'route',
+    source: { planId: id(70), versionId: id(71), nodeId: id(200 + index) },
+    ...overrides,
+  });
+  const routes = Array.from({ length: 4 }, (_, index) => makeRoute(index));
+  const manual = routes.map(node => ({ ...node, position: { ...node.position } }));
+  manual[3].position = { x: 812, y: 437 };
+  const mixedContent = [routes[0], routes[1], routes[2], { id: id(104), kind: 'comment', dayId: day.id, position: { x: 370, y: 285 }, color: 'default', text: 'note' }];
+  const mixedVersion = routes.map((node, index) => index === 3
+    ? { ...node, source: { ...node.source, versionId: id(72) } }
+    : node);
+  for (const nodes of [manual, mixedContent, mixedVersion]) {
+    const frame = layoutCanvasDayFrames(makeDocument([day], nodes)).get(day.id);
+    assert.equal(frame.projectedNodePositions, undefined);
+  }
+});
+
 test('explicit frame coordinates remain exact while automatic frames avoid them',()=>{
   const days=[{id:id(1),date:null,position:{x:200,y:100}},{id:id(2),date:null},{id:id(3),date:null}];
   const frames=layoutCanvasDayFrames(makeDocument(days));

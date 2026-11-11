@@ -96,16 +96,21 @@ function validMeasuredSize(size: CanvasMeasuredSize | undefined): size is Canvas
   return Boolean(size && Number.isFinite(size.width) && size.width > 0 && Number.isFinite(size.height) && size.height > 0);
 }
 
-function isUnmodifiedImportedThreePlaceRoute(frameNodes: CanvasNode[], placeNodes: CanvasPlaceNode[]): boolean {
-  if (frameNodes.length !== 3 || placeNodes.length !== 3 || placeNodes.some(node => node.intent !== 'route' || !node.source)) return false;
+function isUnmodifiedImportedPlaceRoute(frameNodes: CanvasNode[], placeNodes: CanvasPlaceNode[]): boolean {
+  if (frameNodes.length < 3 || placeNodes.length !== frameNodes.length || placeNodes.some(node => node.intent !== 'route' || !node.source)) return false;
   const source = placeNodes[0].source!;
   if (placeNodes.some(node => node.source!.planId !== source.planId || node.source!.versionId !== source.versionId)) return false;
-  const [first, second, third] = placeNodes;
   const near = (left: number, right: number) => Math.abs(left - right) <= 1;
-  if (!near(second.position.x - first.position.x, 270) || !near(second.position.y, first.position.y)) return false;
-  const importedLinear = near(third.position.x - second.position.x, 270) && near(third.position.y, second.position.y);
-  const importedSnake = near(third.position.x, second.position.x) && near(third.position.y - second.position.y, 185);
-  return importedLinear || importedSnake;
+  const baseY = placeNodes[0].position.y;
+  const importedSnake = placeNodes.every((node, index) => {
+    const row = Math.floor(index / 2);
+    const col = index % 2;
+    const x = 100 + (row % 2 ? 1 - col : col) * 270;
+    return near(node.position.x, x) && near(node.position.y, baseY + row * 185);
+  });
+  const importedLinear = placeNodes.every((node, index) =>
+    near(node.position.x, 100 + index * 270) && near(node.position.y, baseY));
+  return importedSnake || importedLinear;
 }
 
 export function layoutCanvasDayFrames(
@@ -127,26 +132,47 @@ export function layoutCanvasDayFrames(
     const maxX = bounds.length ? Math.max(0, ...bounds.map(item => item.right)) : 0;
     const maxY = bounds.length ? Math.max(0, ...bounds.map(item => item.bottom)) : 0;
     const placeNodes = frameNodes.filter((node): node is CanvasPlaceNode => node.kind === 'place');
-    const alignedGeneratedThree = isUnmodifiedImportedThreePlaceRoute(frameNodes, placeNodes);
+    const alignedGeneratedRoute = isUnmodifiedImportedPlaceRoute(frameNodes, placeNodes);
     let projectedNodePositions: Map<string, { x: number; y: number }> | undefined;
     let projectedWidth = 0;
     let projectedHeight = 0;
-    if (alignedGeneratedThree) {
-      const orderedPlaces = [...placeNodes].sort((left, right) => left.position.x - right.position.x || left.position.y - right.position.y);
-      const cards = orderedPlaces.map(node => ({ node, size: validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node) }));
+    if (alignedGeneratedRoute) {
+      const cards = placeNodes.map((node, index) => ({
+        node,
+        index,
+        row: Math.floor(index / 2),
+        column: index % 2,
+        size: validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node),
+      }));
       const gap = 28;
       const left = FRAME_PADDING;
       const top = HEADER_HEIGHT + FRAME_PADDING;
-      const firstRowHeight = Math.max(cards[0].size.height, cards[1].size.height);
-      const bottomY = top + firstRowHeight + gap;
-      const totalWidth = cards[0].size.width + gap + cards[1].size.width;
-      projectedWidth = Math.max(FRAME_WIDTH, totalWidth + FRAME_PADDING * 2, Math.max(...cards.map(card => card.size.width)) + FRAME_PADDING * 2);
-      projectedHeight = bottomY + cards[2].size.height + FRAME_PADDING;
-      projectedNodePositions = new Map([
-        [cards[0].node.id, { x: left, y: top }],
-        [cards[1].node.id, { x: left + cards[0].size.width + gap, y: top }],
-        [cards[2].node.id, { x: (projectedWidth - cards[2].size.width) / 2, y: bottomY }],
-      ]);
+      const rowCount = Math.ceil(cards.length / 2);
+      const rowHeights = Array.from({ length: rowCount }, (_, row) => Math.max(...cards.filter(card => card.row === row).map(card => card.size.height)));
+      const columnWidths = [0, 0];
+      for (const card of cards) {
+        if (cards.filter(candidate => candidate.row === card.row).length === 1) continue;
+        const physicalColumn = card.row % 2 ? 1 - card.column : card.column;
+        columnWidths[physicalColumn] = Math.max(columnWidths[physicalColumn], card.size.width);
+      }
+      const totalWidth = columnWidths[0] + gap + columnWidths[1];
+      projectedWidth = Math.max(FRAME_WIDTH, totalWidth + FRAME_PADDING * 2, ...cards.map(card => card.size.width + FRAME_PADDING * 2));
+      projectedHeight = top + rowHeights.reduce((sum, height) => sum + height, 0) + gap * (rowCount - 1) + FRAME_PADDING;
+      projectedNodePositions = new Map();
+      let rowY = top;
+      for (let row = 0; row < rowCount; row += 1) {
+        const rowCards = cards.filter(card => card.row === row);
+        for (const card of rowCards) {
+          if (rowCards.length === 1) {
+            projectedNodePositions.set(card.node.id, { x: (projectedWidth - card.size.width) / 2, y: rowY });
+            continue;
+          }
+          const column = row % 2 ? 1 - card.column : card.column;
+          const columnX = column === 0 ? left : left + columnWidths[0] + gap;
+          projectedNodePositions.set(card.node.id, { x: columnX, y: rowY });
+        }
+        rowY += rowHeights[row] + gap;
+      }
     }
     const width = projectedNodePositions ? projectedWidth : bounds.length ? Math.max(FRAME_WIDTH, maxX - minX + FRAME_PADDING * 2) : FRAME_WIDTH;
     const height = projectedNodePositions ? projectedHeight : bounds.length ? Math.max(EMPTY_FRAME_HEIGHT, HEADER_HEIGHT + FRAME_PADDING * 2 + maxY - minY) : EMPTY_FRAME_HEIGHT;
