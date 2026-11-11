@@ -126,7 +126,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     }
   }, [importCompletedPlan]);
 
-  const fail = useCallback((error: unknown, own: number, signal: AbortSignal) => {
+  const fail = useCallback((error: unknown, own: number, signal: AbortSignal, showOverlay = true) => {
     if (own !== epoch.current || signal.aborted) return;
     if (isGenerationAccessLost(error)) { callbacks.current.onAccessLost(); setOverlayOpen(false); }
     else {
@@ -134,7 +134,8 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
       const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : '';
       const knownStop = status >= 400 && status < 500 && code !== 'VERSION_CONFLICT';
       if (knownStop) { failedPlan.current = null; importer.current?.reset(); }
-      setMessage(error instanceof Error ? error.message : '일정 생성 상태를 확인하지 못했어요.'); setOverlayOpen(true); setRetryAvailable(!knownStop); setReturnAvailable(true); setError(true); setBusy(false);
+      setMessage(error instanceof Error ? error.message : '일정 생성 상태를 확인하지 못했어요.');
+      setOverlayOpen(showOverlay); setRetryAvailable(showOverlay && !knownStop); setReturnAvailable(showOverlay); setError(showOverlay); setBusy(false);
     }
   }, []);
 
@@ -160,11 +161,11 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
       if (own !== epoch.current || abort.signal.aborted) return null;
       acceptGenerationState(next); setMessage('');
       if (next.latestJob && ['QUEUED','RUNNING'].includes(next.latestJob.status) && !blockedReasonRef.current) {
-        setOverlayOpen(true); setRetryAvailable(false);
+        setRetryAvailable(false);
         void processJob(tripId, next.latestJob, abort.signal, own).catch(error => fail(error, own, abort.signal));
       }
       return next;
-    } catch (error) { fail(error, own, abort.signal); return null; }
+    } catch (error) { fail(error, own, abort.signal, false); return null; }
     finally { if (own === epoch.current) setLoading(false); }
   }, [enabled, tripId, processJob, fail, acceptGenerationState]);
 
@@ -178,45 +179,51 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
 
   const start = useCallback(async () => {
     if (!enabled || !tripId || busy) return;
-    if (blockedReason) { setMessage(blockedReason); return; }
-    setOverlayOpen(true); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setBusy(true); setMessage('');
+    if (failedPlan.current && blockedReasonRef.current) { setMessage(blockedReasonRef.current); return; }
+    setLoading(false); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setBusy(true); setMessage('');
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
+    let showOperationOverlay = false;
     try {
       if (failedPlan.current) {
+        showOperationOverlay = true; setOverlayOpen(true);
         await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, abort.signal, own);
         return;
       }
-      const result = await starter.current!.start(tripId, abort.signal, () => blockedReasonRef.current);
+      const result = await starter.current!.start(tripId, abort.signal, () => blockedReasonRef.current, () => {
+        showOperationOverlay = true; setOverlayOpen(true); setError(false); setPhase('generating');
+      });
       if (own !== epoch.current || abort.signal.aborted) return;
       if ('data' in result) acceptGenerationState(result.kind === 'started' ? { ...result.data, latestJob: result.job } : result.data);
-      if (result.kind === 'active') await processJob(tripId, result.data.latestJob!, abort.signal, own);
-      else if (result.kind === 'started') await processJob(tripId, result.job, abort.signal, own);
-      else if (result.kind === 'not-ready') { await loadOwnIssues(tripId, result.data, abort.signal, own); setOverlayOpen(false); setMessage(readinessMessage(result.data)); }
+      if (result.kind === 'active') { showOperationOverlay = true; await processJob(tripId, result.data.latestJob!, abort.signal, own); }
+      else if (result.kind === 'started') { showOperationOverlay = true; await processJob(tripId, result.job, abort.signal, own); }
+      else if (result.kind === 'not-ready') { void loadOwnIssues(tripId, result.data, abort.signal, own); setOverlayOpen(false); setMessage(readinessMessage(result.data)); }
       else if (result.kind === 'blocked') { setOverlayOpen(false); setMessage(result.reason); }
       else if (result.kind === 'busy') { setOverlayOpen(false); setMessage('일정 생성 상태를 확인하고 있어요. 잠시 후 다시 시도해 주세요.'); }
-    } catch (error) { fail(error, own, abort.signal); }
+    } catch (error) { fail(error, own, abort.signal, showOperationOverlay); }
     finally { if (own === epoch.current && !abort.signal.aborted) setBusy(false); }
-  }, [blockedReason, enabled, tripId, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
+  }, [enabled, tripId, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
 
   const retry = useCallback(async () => {
     if (!tripId || !enabled || busy) return;
-    setBusy(true); setOverlayOpen(true); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setMessage('');
+    if (failedPlan.current && blockedReasonRef.current) { setMessage(blockedReasonRef.current); setOverlayOpen(false); return; }
+    setLoading(false); setBusy(true); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setMessage('');
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
+    let showOperationOverlay = false;
     try {
-      if (failedPlan.current) { await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, abort.signal, own); return; }
+      if (failedPlan.current) { showOperationOverlay = true; setOverlayOpen(true); await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, abort.signal, own); return; }
       const fresh = await getGeneration(tripId, abort.signal);
       if (own !== epoch.current || abort.signal.aborted) return;
       acceptGenerationState(fresh);
       const job = fresh.latestJob;
-      if (job && ['QUEUED','RUNNING','SUCCEEDED'].includes(job.status)) await processJob(tripId, job, abort.signal, own);
+      if (job && ['QUEUED','RUNNING','SUCCEEDED'].includes(job.status)) { showOperationOverlay = true; await processJob(tripId, job, abort.signal, own); }
       else {
-        const result = await starter.current!.start(tripId, abort.signal, () => blockedReasonRef.current);
+        const result = await starter.current!.start(tripId, abort.signal, () => blockedReasonRef.current, () => { showOperationOverlay = true; setOverlayOpen(true); setError(false); setPhase('generating'); });
         if (own !== epoch.current || abort.signal.aborted) return;
-        if (result.kind === 'started') await processJob(tripId, result.job, abort.signal, own);
-        else if (result.kind === 'active') await processJob(tripId, result.data.latestJob!, abort.signal, own);
-        else { if (result.kind === 'not-ready') await loadOwnIssues(tripId, result.data, abort.signal, own); setOverlayOpen(false); setBusy(false); setMessage(result.kind === 'not-ready' ? readinessMessage(result.data) : '준비 화면에서 일정을 다시 시작해 주세요.'); }
+        if (result.kind === 'started') { showOperationOverlay = true; await processJob(tripId, result.job, abort.signal, own); }
+        else if (result.kind === 'active') { showOperationOverlay = true; await processJob(tripId, result.data.latestJob!, abort.signal, own); }
+        else { if (result.kind === 'not-ready') { void loadOwnIssues(tripId, result.data, abort.signal, own); setMessage(readinessMessage(result.data)); } else setMessage('준비 화면에서 일정을 다시 시작해 주세요.'); setOverlayOpen(false); setBusy(false); }
       }
-    } catch (error) { fail(error, own, abort.signal); }
+    } catch (error) { fail(error, own, abort.signal, showOperationOverlay); }
     finally { if (own === epoch.current && !abort.signal.aborted) setBusy(false); }
   }, [tripId, enabled, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
 
@@ -224,12 +231,14 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   return { data, loading, busy, message, personalIssues, start, refresh, overlayOpen, phase, error, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
 }
 
-function readinessMessage(state: GenerationState): string {
+export function readinessMessage(state: GenerationState): string {
   const codes = new Set(state.reasons.map(reason => reason.code));
   if (codes.has('CONDITIONS_INCOMPLETE')) return '여행 날짜와 예산 등 기본조건을 저장해 주세요.';
   if (codes.has('MEMBER_COUNT_MISMATCH')) return '예정 인원과 현재 참여 인원을 맞춰 주세요.';
-  if (codes.has('PREFERENCES_UNCONFIRMED') || codes.has('PREPARATION_INCOMPLETE')) return '참여자 모두 내 취향을 저장하고 준비 완료를 눌러야 해요.';
+  if (codes.has('PREFERENCES_UNCONFIRMED') || codes.has('PREPARATION_INCOMPLETE') || codes.has('REVIEW_REQUIRED')) return '참여자 모두 내 취향을 저장하고 준비 완료를 눌러야 해요.';
   if (codes.has('REQUIRED_PREFERENCE_UNSUPPORTED') || codes.has('UNSATISFIED')) return '내 취향에 생성 조건으로 반영할 수 없는 필수 항목이 있어요. 내 취향 입력을 확인해 주세요.';
-  if (codes.has('COMMON_REVIEW_REQUIRED') || codes.has('LEGACY_ANCHOR_REQUIRED')) return '기존 숙소 또는 고정 약속 정보를 최신 장소·시간으로 확인해 주세요.';
+  if (codes.has('DEPARTURE_UNRESOLVED')) return '출발 장소를 장소 검색에서 선택해 주세요.';
+  if (codes.has('RETURN_UNRESOLVED')) return '복귀 장소를 장소 검색에서 선택해 주세요.';
+  if (codes.has('LODGING_ANCHOR_REQUIRED') || codes.has('FIXED_SCHEDULE_ANCHOR_REQUIRED') || codes.has('COMMON_REVIEW_REQUIRED') || codes.has('LEGACY_ANCHOR_REQUIRED') || codes.has('LODGING_REVIEW_REQUIRED') || codes.has('FIXED_SCHEDULE_REVIEW_REQUIRED')) return '기존 숙소 또는 고정 약속 정보를 장소와 시간으로 확인해 주세요.';
   return '여행 준비 상태를 확인하고 빠진 조건을 저장해 주세요.';
 }

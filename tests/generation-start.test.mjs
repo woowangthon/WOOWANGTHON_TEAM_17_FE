@@ -11,13 +11,15 @@ function state(overrides = {}) {
 
 test('does not create a job while public readiness is incomplete', async () => {
   let posts = 0;
+  let readyReported = false;
   const controller = createGenerationStartController({
     getLatest: async () => state({ readyForGeneration: false, reasons: [{ code: 'REVIEW_REQUIRED' }] }),
     create: async () => { posts += 1; }, createKey: () => 'key',
   });
-  const result = await controller.start('trip-a', new AbortController().signal);
+  const result = await controller.start('trip-a', new AbortController().signal, undefined, () => { readyReported = true; });
   assert.equal(result.kind, 'not-ready');
   assert.equal(posts, 0);
+  assert.equal(readyReported, false);
 });
 
 test('reuses an active job without posting a duplicate', async () => {
@@ -94,7 +96,7 @@ test('keeps an idempotency key after an uncertain error and changes it with inpu
   assert.deepEqual(keys, ['key-1', 'key-1', 'key-2']);
 });
 
-test('blocks locally without fetching or posting', async () => {
+test('blocks locally before fetching or posting', async () => {
   let gets = 0;
   const controller = createGenerationStartController({
     getLatest: async () => { gets += 1; return state(); },
@@ -119,6 +121,21 @@ test('rechecks local edits after a delayed readiness fetch before creating a job
   const result = await pending;
   assert.equal(result.kind, 'blocked');
   assert.equal(posts, 0);
+});
+
+test('reports authoritative ready state before starting the create request', async () => {
+  let readyReported = false;
+  let releaseCreate;
+  const controller = createGenerationStartController({
+    getLatest: async () => state(),
+    create: () => new Promise(resolve => { releaseCreate = resolve; }),
+    createKey: () => 'ready-key',
+  });
+  const pending = controller.start('trip-a', new AbortController().signal, undefined, () => { readyReported = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(readyReported, true);
+  releaseCreate({ id: 'job-ready', status: 'QUEUED' });
+  assert.equal((await pending).kind, 'started');
 });
 
 test('does not allow overlapping starts', async () => {

@@ -20,7 +20,7 @@ export function createGenerationStartController({ getLatest, create, createKey, 
   let retry: { tripId: string; inputToken: string; settingsVersion: number; key: string } | null = null;
 
   return {
-    async start(tripId: string, signal: AbortSignal, blockedReason?: string | (() => string | undefined)): Promise<StartResult> {
+    async start(tripId: string, signal: AbortSignal, blockedReason?: string | (() => string | undefined), onReady?: () => void): Promise<StartResult> {
       if (inFlight) return { kind: 'busy' };
       const currentBlocker = () => typeof blockedReason === 'function' ? blockedReason() : blockedReason;
       if (currentBlocker()) return { kind: 'blocked', reason: currentBlocker()! };
@@ -39,10 +39,12 @@ export function createGenerationStartController({ getLatest, create, createKey, 
           if (currentBlocker()) return { kind: 'blocked', reason: currentBlocker()! };
           if (completedIsCurrent) { retry = null; return { kind: 'active', data }; }
         }
+        if (currentBlocker()) return { kind: 'blocked', reason: currentBlocker()! };
         if (!data.readyForGeneration) {
           retry = null;
           return { kind: 'not-ready', data };
         }
+        onReady?.();
         const sameInputs = retry?.tripId === tripId && retry.inputToken === data.inputToken && retry.settingsVersion === data.settingsVersion;
         const key = sameInputs ? retry!.key : createKey();
         retry = { tripId, inputToken: data.inputToken, settingsVersion: data.settingsVersion, key };

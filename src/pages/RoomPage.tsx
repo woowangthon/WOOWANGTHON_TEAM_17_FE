@@ -6,6 +6,7 @@ import CanvasPreview from '../features/workspace/CanvasPreview';
 import { usePersonalPreparation } from '../features/personal/usePersonalPreparation';
 import { useSharedPreparation } from '../features/room/useSharedPreparation';
 import { useGenerationStart, type GenerationCanvasHandoff } from '../features/generation/useGenerationStart';
+import { summarizePreparationReadiness } from '../features/generation/generationReadiness.ts';
 import { GenerationLoadingOverlay } from '../features/generation/GenerationLoadingOverlay';
 import ScheduleItemsEditor from '../features/personal/ScheduleItemsEditor';
 import PreparationScheduleFields from '../features/preparation/PreparationScheduleFields';
@@ -76,7 +77,7 @@ export default function RoomPage() {
   const personalHook = usePersonalPreparation({ tripId, enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !baseFatalAccess), conditionsVersion: shared.preparation?.conditionsVersion ?? 0, onSaved: () => { void shared.refreshAfterPersonalMutation(); } });
   const fatalAccess = baseFatalAccess || (!isPreview && personalHook.state === 'fatal');
   const participantsOpen = openParticipantRoomId === entry?.trip.id && view === 'preparation' && !fatalAccess;
-  const generationBlocker = conditionDirty || shared.saving || rebaseRequired
+  const localGenerationBlocker = conditionDirty || shared.saving || rebaseRequired
     ? '여행 기본조건의 미저장 변경을 먼저 저장하거나 취소해 주세요.'
     : !isPreview && personalHook.state !== 'ready'
       ? '내 취향과 준비 상태를 불러온 뒤 다시 시도해 주세요.'
@@ -86,7 +87,7 @@ export default function RoomPage() {
   const generationStart = useGenerationStart({
     tripId,
     enabled: Boolean(!isPreview && status === 'ready' && entry?.member.role === 'OWNER' && shared.state === 'ready' && !fatalAccess),
-    blockedReason: generationBlocker,
+    blockedReason: localGenerationBlocker,
     onStarted: handoff => { setCanvasHandoff(handoff); changeView('canvas'); },
     onAccessLost: onGenerationAccessLost,
   });
@@ -245,6 +246,16 @@ export default function RoomPage() {
   const canEdit = isPreview || Boolean(shared.preparation?.canEditConditions);
   const fieldErrors = { ...shared.saveFieldErrors, ...conditionErrors };
   const readinessCodes = new Set(generationStart.data?.reasons.map(reason => reason.code) ?? []);
+  const sharedReadiness = summarizePreparationReadiness(shared.preparation ? {
+    expectedPeople: shared.preparation.conditions.expectedPeople,
+    activeMemberCount: shared.preparation.activeMemberCount,
+    members: shared.preparation.members.map(member => ({ preparationStatus: member.preparationStatus })),
+    reasons: shared.preparation.readiness.reasons,
+    conditionsReady: shared.preparation.readiness.conditionsReady,
+  } : null);
+  const sharedGenerationBlocker = sharedReadiness.blockers.join(' ');
+  const resumableJob = ['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(generationStart.data?.latestJob?.status ?? '');
+  const generationCtaBlocker = localGenerationBlocker || (sharedGenerationBlocker && !resumableJob ? sharedGenerationBlocker : '');
   const legacyLodgingNeedsAnchor = readinessCodes.has('LODGING_ANCHOR_REQUIRED') || readinessCodes.has('COMMON_REVIEW_REQUIRED');
   const legacyScheduleNeedsAnchor = readinessCodes.has('FIXED_SCHEDULE_ANCHOR_REQUIRED') || readinessCodes.has('COMMON_REVIEW_REQUIRED');
   const showLegacyAnchorGuide = canEdit && ((legacyLodgingNeedsAnchor && Boolean(conditions.lodging.trim())) || (legacyScheduleNeedsAnchor && Boolean(conditions.fixedSchedule.trim())));
@@ -341,9 +352,15 @@ export default function RoomPage() {
             </>}
           </section>
         </div>
-        <section className="prep-generation"><div><h2>일정 만들기</h2><p id="tw-generation-note">{isPreview ? '실제 일정 생성은 예시 화면에서 사용할 수 없어요.' : generationBlocker ?? '여행 준비를 마치면 방장이 실제 코스를 생성할 수 있어요.'}</p></div><PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role === 'OWNER' ? '일정 만들기' : '방장이 시작할 수 있어요'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || entry.member.role !== 'OWNER' || fatalAccess || generationStart.busy || Boolean(generationBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); }} ariaDescribedBy="tw-generation-note" />
+        <section className="prep-generation">
+          <div>
+            <h2>일정 만들기</h2>
+            {!isPreview && sharedReadiness.memberCountLabel && <small className="prep-generation-status">{sharedReadiness.memberCountLabel} · {sharedReadiness.confirmedCountLabel}</small>}
+            <p id="tw-generation-note">{isPreview ? '실제 일정 생성은 예시 화면에서 사용할 수 없어요.' : localGenerationBlocker || sharedGenerationBlocker || '여행 준비를 마치면 방장이 실제 코스를 생성할 수 있어요.'}</p>
+          </div>
+          <PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role === 'OWNER' ? '일정 만들기' : '방장이 시작할 수 있어요'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || entry.member.role !== 'OWNER' || fatalAccess || generationStart.busy || Boolean(generationCtaBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); }} ariaDescribedBy="tw-generation-note" />
           {!isPreview && generationStart.data?.latestJob?.status === 'SUCCEEDED' && <Button variant="secondary" disabled={generationStart.busy} onClick={() => void generationStart.retry()}>생성한 일정 가져오기</Button>}
-          {!isPreview && (generationStart.message || generationStart.loading) && <p className="prep-generation-status" role="status">{generationStart.loading ? '참여자 확인 상태를 불러오는 중이에요.' : generationStart.message}</p>}
+          {!isPreview && (generationStart.message || (generationStart.loading && !sharedGenerationBlocker && !localGenerationBlocker)) && <p className="prep-generation-status" role="status">{generationStart.message || '참여자 확인 상태를 불러오는 중이에요.'}</p>}
         </section>
       </section>}
     </div>}
