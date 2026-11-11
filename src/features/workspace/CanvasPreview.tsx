@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, getBezierPath, Handle, MarkerType, Position, ReactFlow, useStore, useReactFlow, useUpdateNodeInternals, type Connection, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance, type Rect } from '@xyflow/react';
+import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, getBezierPath, Handle, MarkerType, Position, ReactFlow, useNodesInitialized, useStore, useReactFlow, useUpdateNodeInternals, type Connection, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance, type Rect } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Button from '../../components/ui/Button';
 import CanvasToolIcon from './CanvasToolIcon';
@@ -24,6 +24,17 @@ type Board = { nodes: FlowNode[]; edges: Edge[] };
 type FlowEdge = Edge<{ worldPoints?: Array<{x:number;y:number}>; dayLinkId?:string }>;
 const OpenCanvasMenu=createContext<(id:string,element:HTMLElement)=>void>(()=>{});
 const SelectRouteEdge=createContext<(id:string)=>void>(()=>{});
+type CommentCanvasContextValue = {
+  tripId: string;
+  focusRequest: { id: string; sequence: number };
+  menuOpen: boolean;
+  requestEdit: (id: string) => void;
+  commit: (id: string, text: string, expectedText: string, force: boolean) => boolean;
+};
+const CommentCanvasContext = createContext<CommentCanvasContextValue>({
+  tripId: '', focusRequest: { id: '', sequence: 0 }, menuOpen: false, requestEdit: () => {}, commit: () => false,
+});
+
 type DiscoveryMemory={tab:'ai'|'search';query:string;results:PlaceSearchResult[];prompt:string;aiPlace:CanvasPlaceDetail|null;aiAlternatives:CanvasPlaceDetail[];pending:RecommendationRequest|null;context:{dayId:string;replaceTargetId:string}};
 const discoveryMemory=new Map<string,DiscoveryMemory>();
 const colorOptions: Array<[CanvasColor,string]> = [['default','기본'],['lime','연두'],['sky','하늘'],['rose','분홍'],['amber','살구']];
@@ -74,8 +85,8 @@ function DayFrame({ id,data }: NodeProps<FlowNode>) {
   useEffect(()=>{updateNodeInternals(id);},[id,data.sourceSide,data.targetSide,updateNodeInternals]);
   const open=useContext(OpenCanvasMenu);
   return <section className={`tw-canvas-day-frame ${data.isActive?'is-active':''}`} data-tone={data.tone} aria-label={`${data.dayTitle} 일정 그룹`}>
-    <Handle type="target" id="day-link-in" position={data.targetSide??Position.Left} isConnectable className="tw-daylink-handle" />
-    <Handle type="source" id="day-link-out" position={data.sourceSide??Position.Right} isConnectable className="tw-daylink-handle" />
+    <Handle type="target" id="day-link-in" position={data.targetSide??Position.Left} isConnectable className="tw-daylink-handle"><span className="tw-connection-grip" aria-hidden="true">+</span></Handle>
+    <Handle type="source" id="day-link-out" position={data.sourceSide??Position.Right} isConnectable className="tw-daylink-handle"><span className="tw-connection-grip" aria-hidden="true">+</span></Handle>
     <header className="tw-day-frame-grip"><strong>{data.dayTitle}</strong><span>{data.placeCount}곳{data.mealCount ? ` · 식사 ${data.mealCount}` : ''} · 댓글 {data.commentCount}</span><button type="button" className="tw-node-menu-button nodrag nopan" aria-label={`${data.dayTitle} 편집 메뉴`} onClick={event=>{event.stopPropagation();open(`day-frame:${data.model.dayId}`,event.currentTarget);}}>⋯</button></header>
   </section>;
 }
@@ -106,11 +117,76 @@ function PlaceCard({ id,data, selected }: NodeProps<FlowNode>) {
   return <article className={`tw-place-node ${selected?'is-selected':''} ${data.connectionCandidate?'is-link-target':''} ${data.connectionStart?'is-link-start':''} ${model.intent==='candidate'?'is-candidate':''} color-${model.color}`}>
     <button type="button" className="tw-node-menu-button nodrag nopan" aria-label={`${data.title??'장소'} 편집 메뉴`} onClick={event=>{event.stopPropagation();open(id,event.currentTarget);}}>⋯</button>
     <CanvasPlaceCardContent place={data.detail} visitLabel={data.visitLabel} candidate={model.intent==='candidate'} schedule={model.schedule}/>
-    <Handle type="target" position={data.targetSide??Position.Left} className="tw-handle" aria-label="앞 장소 연결점" />
-    <Handle type="source" position={data.sourceSide??Position.Right} className="tw-handle" aria-label="다음 장소 연결점" />
+    <Handle type="target" position={data.targetSide??Position.Left} className="tw-handle" aria-label="앞 장소 연결점"><span className="tw-connection-grip" aria-hidden="true">+</span></Handle>
+    <Handle type="source" position={data.sourceSide??Position.Right} className="tw-handle" aria-label="다음 장소 연결점"><span className="tw-connection-grip" aria-hidden="true">+</span></Handle>
   </article>;
 }
-function CommentCard({ id,data, selected }: NodeProps<FlowNode>) { const model = data.model as CanvasCommentNode; const open=useContext(OpenCanvasMenu); return <article className={`tw-comment-node color-${model.color} ${selected?'is-selected':''}`}><button type="button" className="tw-node-menu-button nodrag nopan" aria-label="댓글 편집 메뉴" onClick={event=>{event.stopPropagation();open(id,event.currentTarget);}}>⋯</button><span>공유 댓글</span><p>{model.text}</p></article>; }
+function CommentCard({ id, data, selected }: NodeProps<FlowNode>) {
+  const model = data.model as CanvasCommentNode;
+  const open = useContext(OpenCanvasMenu);
+  const comments = useContext(CommentCanvasContext);
+  const nodesInitialized = useNodesInitialized();
+  const flow = useReactFlow<FlowNode>();
+  const viewedFocusRequest = useRef(0);
+  const focusRequest = comments.focusRequest.id === id ? comments.focusRequest.sequence : 0;
+
+  useEffect(() => {
+    if (!selected || !focusRequest || viewedFocusRequest.current === focusRequest || !nodesInitialized) return;
+    let frame = 0;
+    let attempts = 0;
+    let previousHeight = -1;
+    let cancelled = false;
+    const inspect = () => {
+      if (cancelled) return;
+      const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`);
+      const root = element?.closest<HTMLElement>('.react-flow');
+      const canvas = element?.closest<HTMLElement>('.tw-flow-canvas');
+      if (!element || !root || !canvas) {
+        if (attempts++ < 12) frame = window.requestAnimationFrame(inspect);
+        return;
+      }
+      const bounds = element.getBoundingClientRect();
+      if (window.getComputedStyle(element).visibility !== 'visible' || !bounds.height) {
+        if (attempts++ < 12) frame = window.requestAnimationFrame(inspect);
+        return;
+      }
+      if (Math.abs(bounds.height - previousHeight) > 1 && attempts++ < 12) {
+        previousHeight = bounds.height;
+        frame = window.requestAnimationFrame(inspect);
+        return;
+      }
+      const viewport = root.getBoundingClientRect();
+      const dock = canvas.querySelector<HTMLElement>('.tw-canvas-tool-dock')?.getBoundingClientRect();
+      const clipped = bounds.left < viewport.left + 12 || bounds.right > viewport.right - 12
+        || bounds.top < viewport.top + 12 || bounds.bottom > viewport.bottom - 12;
+      const overlapsDock = Boolean(dock && bounds.left < dock.right && bounds.right > dock.left
+        && bounds.top < dock.bottom && bounds.bottom > dock.top);
+      if (clipped || overlapsDock || bounds.width < 220 || bounds.height < 130) {
+        void flow.fitView({
+          nodes: [{ id }], padding: { top: .08, right: .08, bottom: .24, left: .08 }, maxZoom: 1,
+          duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 120,
+        });
+      }
+      viewedFocusRequest.current = focusRequest;
+    };
+    frame = window.requestAnimationFrame(inspect);
+    return () => { cancelled = true; window.cancelAnimationFrame(frame); };
+  }, [flow, focusRequest, id, nodesInitialized, selected]);
+
+  return <article className={`tw-comment-node color-${model.color} ${selected ? 'is-selected' : ''}`}>
+    <button type="button" className="tw-node-menu-button nodrag nopan" aria-label="댓글 편집 메뉴"
+      onClick={event => { event.stopPropagation(); open(id, event.currentTarget); }}>⋯</button>
+    <header className="tw-comment-card-heading">
+      <span>공유 댓글</span>
+      {!selected && <button type="button" className="nodrag nopan"
+        onClick={event => { event.stopPropagation(); comments.requestEdit(id); }}>댓글 편집</button>}
+    </header>
+    {selected ? <CanvasCommentEditor key={id} tripId={comments.tripId} node={model}
+      focusReady={nodesInitialized && !comments.menuOpen} focusRequest={focusRequest}
+      onCommit={(text, expectedText, force) => comments.commit(id, text, expectedText, force)} />
+      : <p className="tw-comment-body">{model.text}</p>}
+  </article>;
+}
 const nodeTypes = { place: PlaceCard, comment: CommentCard, dayFrame: DayFrame };
 const edgeTypes = { dayOrder: DayOrderEdge, default: RouteEdge };
 function plannedKst(schedule: CanvasPlaceNode['schedule']): string | undefined {
@@ -130,6 +206,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const closeDrawer = () => { setDrawerOpen(false); drawerTrigger.current?.focus(); };
   const initialDiscovery=discoveryMemory.get(tripId); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [message,setMessage]=useState(''); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
   const [flowNodes,setFlowNodes]=useState<{base:CanvasDocument|null;nodes:FlowNode[]}|null>(null); const [fitFocus,setFitFocus]=useState<'all'|'day'>('all'); const flow=useRef<ReactFlowInstance<FlowNode>|null>(null); const shell=useRef<HTMLDivElement>(null); const menuRef=useRef<HTMLDivElement>(null); const menuOpener=useRef<HTMLElement|null>(null); const clipboard=useRef<CanvasNode|null>(null); const abort=useRef<AbortController|null>(null); const triedDetails=useRef<Set<number>>(new Set()); const pendingRecommendation=useRef<RecommendationRequest|null>(initialDiscovery?.pending??null); const recommendationContext=useRef<{dayId:string;replaceTargetId:string}>(initialDiscovery?.context??{dayId:initialDiscovery?.pending?.dayId??savedView?.dayId??'',replaceTargetId:''}); const placeChoiceSequence=useRef(0);
+  const [commentFocusRequest,setCommentFocusRequest]=useState({id:'',sequence:0});
   const viewInitialized=useRef(false); const viewSnapshot=useRef<CanvasViewMemory>({dayId:savedView?.dayId??'',viewport:savedView?.viewport??null});
   const [fitTarget,setFitTarget]=useState<{key:string;nodes:string[]}|null>(null);
   const currentFitKey=useRef<string|null>(null);currentFitKey.current=fitTarget?.key??null;
@@ -309,6 +386,39 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     setReplaceTargetId('');
     setMenu(null);
   }
+  const requestCommentEdit = useCallback((id: string) => {
+    const model = doc?.nodes.find((node): node is CanvasCommentNode => node.id === id && node.kind === 'comment');
+    if (!model) return;
+    setSelectedId(id);
+    setSelectedEdgeId('');
+    setSelectedDayLinkId('');
+    setReplaceTargetId('');
+    setDayId(model.dayId);
+    setAddTargetDayId(model.dayId);
+    setMenu(null);
+    setDrawerOpen(false);
+    setCommentFocusRequest(current => ({ id, sequence: current.sequence + 1 }));
+  }, [doc]);
+  const updateCanvas = sync.update;
+  const commitComment = useCallback((id: string, text: string, expectedText: string, force: boolean) => {
+    let alreadyCurrent = false;
+    const updated = updateCanvas(current => {
+      const existing = current.nodes.find((node): node is CanvasCommentNode => node.id === id && node.kind === 'comment');
+      if (!existing || (!force && existing.text !== expectedText)) return current;
+      if (existing.text === text) {
+        alreadyCurrent = true;
+        return current;
+      }
+      return {
+        ...current,
+        nodes: current.nodes.map(node => node.id === id && node.kind === 'comment' ? { ...node, text } : node),
+      };
+    });
+    return updated || alreadyCurrent;
+  }, [updateCanvas]);
+  const commentCanvasContext = useMemo<CommentCanvasContextValue>(() => ({
+    tripId, focusRequest: commentFocusRequest, menuOpen: Boolean(menu), requestEdit: requestCommentEdit, commit: commitComment,
+  }), [tripId, commentFocusRequest, menu, requestCommentEdit, commitComment]);
   const addPlace=(place:CanvasPlaceDetail,position?:{x:number;y:number},targetDay=activeDayId)=>{if(!doc)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasPlaceNode={id:crypto.randomUUID(),kind:'place',dayId:placed.dayId,position:placed.position,color:'default',contentid:place.contentid,intent:'candidate'};const updated=sync.update(current=>{if(current.nodes.length>=500||!current.days.some(item=>item.id===placed.dayId))return current;const normalized=materializeProjectedDay(current,placed.dayId,measuredSizes);return {...normalized,nodes:[...normalized.nodes,model]};});if(!updated){setMessage('날짜가 바뀌었거나 캔버스가 가득 차 장소를 추가하지 못했어요.');return;}setDetails(m=>new Map(m).set(place.contentid,place));setMessage(`${place.title}을 검토용 후보로 추가했어요.`);selectCard(model.id);setDayId(model.dayId);setAddTargetDayId(model.dayId);};
   const choosePlace=async(contentid:number,targetDay:string,targetNodeId:string)=>{
     if(targetDay!==discoveryDayId||targetNodeId!==replaceTargetId){setSearchMessage('날짜나 교체 대상이 바뀌었어요. 현재 선택에 맞는 후보를 다시 확인해 주세요.');return;}
@@ -346,7 +456,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
       setMessage('장소 상세 정보를 다시 불러왔어요.');
     }catch(error){setMessage(error instanceof Error?error.message:'장소 상세 정보를 불러오지 못했어요.');}
   };
-  const addComment=(position?:{x:number;y:number},targetDay=discoveryDayId)=>{if(!doc||doc.nodes.length>=500||!targetDay)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasCommentNode={id:crypto.randomUUID(),kind:'comment',dayId:placed.dayId,position:placed.position,color:'default',text:'댓글을 입력해 주세요'};const newNode:FlowNode={id:model.id,type:'comment',parentId:`day-frame:${model.dayId}`,position:canvasFrameNodePosition(model,frameLayouts.get(model.dayId)!),data:{model}};publish([...allFrameNodes.filter(node=>node.type!=='dayFrame'),newNode],board.edges,'공유 댓글 카드를 추가했어요.');selectCard(model.id);setDayId(model.dayId);setAddTargetDayId(model.dayId);};
+  const addComment=(position?:{x:number;y:number},targetDay=discoveryDayId)=>{if(!doc||doc.nodes.length>=500||!targetDay)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasCommentNode={id:crypto.randomUUID(),kind:'comment',dayId:placed.dayId,position:placed.position,color:'default',text:'댓글을 입력해 주세요'};const newNode:FlowNode={id:model.id,type:'comment',parentId:`day-frame:${model.dayId}`,position:canvasFrameNodePosition(model,frameLayouts.get(model.dayId)!),data:{model}};publish([...allFrameNodes.filter(node=>node.type!=='dayFrame'),newNode],board.edges,'공유 댓글 카드를 추가했어요.');selectCard(model.id);setDrawerOpen(false);setCommentFocusRequest(current=>({id:model.id,sequence:current.sequence+1}));setDayId(model.dayId);setAddTargetDayId(model.dayId);};
   const copy=()=>{
     if(!selectedModel)return;
     clipboard.current=canvasClipboardCopy(selectedModel);
@@ -436,7 +546,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             <div className="tw-canvas-dock-group" role="group" aria-label="일정 편집">{canvasCommands.filter(command=>command.id==='add-comment'||command.id==='connect-places').map(command=><button key={command.id} title={command.label} aria-label={command.label} aria-pressed={command.id==='connect-places'?placeConnectionMode:undefined} className={command.id==='connect-places'&&placeConnectionMode?'is-active':''} onClick={()=>runCommand(command.id)}><CanvasToolIcon command={command.id}/></button>)}</div>
             <div className="tw-canvas-dock-group" role="group" aria-label="보기와 더보기">{canvasCommands.filter(command=>command.id==='fit'||command.id==='edit-menu').map(command=><button key={command.id} className={command.id==='edit-menu'?'tw-canvas-options-button':''} title={command.label} aria-label={command.label} aria-haspopup={command.id==='edit-menu'?'menu':undefined} aria-expanded={command.id==='edit-menu'?Boolean(menu):undefined} onClick={event=>command.id==='edit-menu'?openToolbarMenu(event.currentTarget):runCommand(command.id)}><CanvasToolIcon command={command.id}/></button>)}</div>
           </div>
-          {doc&&<SelectRouteEdge.Provider value={id=>{setSelectedEdgeId(id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setDrawerOpen(true);}}><OpenCanvasMenu.Provider value={openCardMenu}><ReactFlow<FlowNode>
+          {doc&&<SelectRouteEdge.Provider value={id=>{setSelectedEdgeId(id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setDrawerOpen(true);}}><OpenCanvasMenu.Provider value={openCardMenu}><CommentCanvasContext.Provider value={commentCanvasContext}><ReactFlow<FlowNode>
             nodes={flowNodes?.base===doc?flowNodes.nodes:allFrameNodes}
             edges={visibleEdges}
             nodeTypes={nodeTypes}
@@ -468,7 +578,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
               const replaced = draggedEdgeId.current ?? (placeConnectionMode ? reconnectEdgeId : null);
               return canConnectRoute(source, target, placeMap, replaced ? doc.edges.filter(edge => edge.id !== replaced) : doc.edges);
             }}
-            onNodeClick={(_,node)=>{if(node.type==='dayFrame')return;if(placeConnectionMode){choosePlaceConnectionNode(node.id);return;}setSelectedId(node.id);setReplaceTargetId('');setDayId(node.data.model.dayId);setAddTargetDayId(node.data.model.dayId);setSelectedEdgeId('');setSelectedDayLinkId('');setDrawerOpen(true);}}
+            onNodeClick={(_,node)=>{if(node.type==='dayFrame')return;if(placeConnectionMode){choosePlaceConnectionNode(node.id);return;}if(node.type==='comment'){requestCommentEdit(node.id);return;}setSelectedId(node.id);setReplaceTargetId('');setDayId(node.data.model.dayId);setAddTargetDayId(node.data.model.dayId);setSelectedEdgeId('');setSelectedDayLinkId('');setDrawerOpen(true);}}
             onEdgeClick={(_,edge)=>{const dayLinkId=(edge as FlowEdge).data?.dayLinkId;if(edge.type==='dayOrder'&&dayLinkId){setSelectedDayLinkId(dayLinkId);setSelectedEdgeId('');setSelectedId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');return;}setSelectedEdgeId(edge.id);setSelectedDayLinkId('');setSelectedId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setDrawerOpen(true);}}
             onReconnectStart={(_, edge) => { draggedEdgeId.current = edge.id; }}
             onReconnect={reconnectRouteEdge}
@@ -484,7 +594,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             {cardsMeasured && fitTarget && overviewBounds && <FitDayFrames key={fitTarget.key} bounds={overviewBounds} onFitted={completeFit}/>}
             {cardsMeasured && initialFitPending && !fitTarget && !restoreViewport && initialBounds && <FitDayFrames bounds={initialBounds} onFitted={completeInitialFit}/>}
             <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="var(--tw-grid)"/><Controls showInteractive={false}/>
-          </ReactFlow></OpenCanvasMenu.Provider></SelectRouteEdge.Provider>}
+          </ReactFlow></CommentCanvasContext.Provider></OpenCanvasMenu.Provider></SelectRouteEdge.Provider>}
           {!doc&&<div className="tw-canvas-loading">{sync.status==='error'?'공유 캔버스를 불러오지 못했어요.': '공유 캔버스를 불러오고 있어요.'}<Button variant="secondary" onClick={sync.retry}>다시 불러오기</Button></div>}
           {doc&&doc.nodes.length===0&&<div className="tw-empty-canvas"><strong>아직 일정이 비어 있어요</strong><p>날짜별 영역에 장소를 검색하거나 추천을 받아 첫 카드를 추가해 보세요.</p><Button variant="secondary" onClick={()=>setDrawerOpen(true)}>장소 찾기</Button></div>}
           {menu&&createPortal(<div ref={menuRef} className="tw-context-menu" role="menu" aria-label="편집 메뉴" style={{position:'fixed',left:menuPosition.left,top:menuPosition.top,maxHeight:'calc(100vh - 16px)',overflowY:'auto'}} onKeyDown={event=>{
@@ -507,8 +617,8 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             </>}
             {menu.dayLinkId&&<button role="menuitem" className="tw-menu-danger" onClick={()=>{remove();setMenu(null);}}>날짜 연결 삭제</button>}
             {contextNode&&<>
-              {contextNode.kind==='place'&&<button role="menuitem" onClick={()=>{setDrawerOpen(true);setMenu(null);}}>장소 정보</button>}
-              {contextNode.kind==='comment'&&<button role="menuitem" onClick={()=>{setDrawerOpen(true);setMenu(null);}}>댓글 편집</button>}
+              {contextNode.kind==='place'&&<><button role="menuitem" onClick={()=>{setDrawerOpen(true);setMenu(null);}}>장소 정보</button><button role="menuitem" onClick={()=>{setReplaceTargetId(contextNode.id);setSelectedId('');setTab('search');setSearchMessage('');setDrawerOpen(true);setMenu(null);}}>장소 바꾸기</button></>}
+              {contextNode.kind==='comment'&&<button role="menuitem" onClick={()=>requestCommentEdit(contextNode.id)}>댓글 편집</button>}
               <button role="menuitem" onClick={()=>{copy();setMenu(null);}}>복사</button>
               {hasClipboard&&<button role="menuitem" onClick={()=>{paste();setMenu(null);}}>붙여넣기</button>}
               {contextNode.kind==='place'&&!contextNodeEdges.some(edge=>edge.source===contextNode.id)&&<button role="menuitem" onClick={()=>{startPlaceConnection(contextNode.id);setMenu(null);}}>여기서 장소 연결</button>}
@@ -530,15 +640,14 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
         </div>{message&&<p className="tw-canvas-feedback" role="status">{message}</p>}
       </section>
       {drawerOpen&&<aside className="tw-place-drawer" aria-label="장소 및 카드 편집 패널" onKeyDown={event => { if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); closeDrawer(); } }}>
-        <div className="tw-drawer-heading"><h2>{selectedModel?.kind==='place'?'장소 정보':selectedModel?.kind==='comment'?'공유 댓글':selectedRouteEdge?'이동 구간':replaceTargetId?'장소 바꾸기':'장소 찾기'}</h2><button type="button" onClick={closeDrawer} aria-label="장소 패널 닫기"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
-        {selectedModel?.kind==='place'&&<PlaceInspector node={selectedModel} detail={placeDetails.get(selectedModel.contentid)} days={doc?.days??[]} onRetryDetail={()=>void retryPlaceDetail(selectedModel.contentid)} onBack={()=>{setSelectedId('');setReplaceTargetId('');setTab('ai');}} onReplace={()=>{setReplaceTargetId(selectedModel.id);setSelectedId('');setTab('search');setSearchMessage('');setDrawerOpen(true);}} onStartConnect={()=>startPlaceConnection(selectedModel.id)} onColor={color=>editNode(selectedModel.id,m=>({...m,color}))} onMove={next=>moveNode(selectedModel.id,next)} onDisconnect={()=>publish(board.nodes,board.edges.filter(e=>e.source!==selectedModel.id&&e.target!==selectedModel.id),'이 장소의 연결을 끊었어요.')}/>}
-        {selectedModel?.kind==='comment'&&<section className="tw-inspector"><div className="tw-inspector-actions"><Button variant="secondary" onClick={()=>{setSelectedId('');setTab('ai');}}>장소 찾기로 돌아가기</Button></div><CanvasCommentEditor key={selectedModel.id} tripId={tripId} node={selectedModel} onCommit={(text,expectedText,force)=>sync.update(current=>({...current,nodes:current.nodes.map(node=>node.id===selectedModel.id&&node.kind==='comment'&&(force||node.text===expectedText)?{...node,text}:node)}))}/><label htmlFor="tw-comment-day">여행 날짜</label><select id="tw-comment-day" className="text-input" value={selectedModel.dayId} onChange={e=>moveNode(selectedModel.id,e.target.value)}>{doc?.days.map((item,index)=><option key={item.id} value={item.id}>{item.date??`${index+1}일차`}</option>)}</select><ColorPicker value={selectedModel.color} onChange={color=>editNode(selectedModel.id,m=>({...m,color}))}/><Button variant="secondary" onClick={remove}>댓글 삭제</Button></section>}
+        <div className="tw-drawer-heading"><h2>{selectedModel?.kind==='place'?'장소 정보':selectedRouteEdge?'이동 구간':replaceTargetId?'장소 바꾸기':'장소 찾기'}</h2><button type="button" onClick={closeDrawer} aria-label="장소 패널 닫기"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
+        {selectedModel?.kind==='place'&&<PlaceInspector detail={placeDetails.get(selectedModel.contentid)} onRetryDetail={()=>void retryPlaceDetail(selectedModel.contentid)} onBack={()=>{setSelectedId('');setReplaceTargetId('');setTab('ai');}}/>}
         {!selectedModel&&selectedRouteEdge&&doc&&selectedEdgeSource?.kind==='place'&&selectedEdgeTarget?.kind==='place'&&<>
           <div className="tw-inspector-actions"><Button variant="secondary" onClick={()=>startEdgeReconnect(selectedRouteEdge.id)}>도착 장소 바꾸기</Button></div>
           <CanvasEdgeEditor key={selectedEdgeKey} tripId={tripId} conditionsVersion={conditionsVersion} sourceContentid={selectedEdgeSource.contentid} targetContentid={selectedEdgeTarget.contentid} preview={preview} commonMode={transport} preference={selectedEdgePreference} onSave={override=>edgePrefs.set(selectedRouteEdge,doc,override)} storageError={edgePrefs.storageError} fromName={selectedEdgeName(selectedEdgeSource)} toName={selectedEdgeName(selectedEdgeTarget)} automaticLabel={routes.labels.get(selectedRouteEdge.id)??'시간 미확인'}/>
           {!preview&&routes.hasIssue&&<Button variant="secondary" onClick={routes.retry}>이동 시간 다시 확인</Button>}
         </>}
-        {!selectedModel&&!selectedRouteEdge&&<div className="tw-discovery">
+        {selectedModel?.kind!=='place'&&!selectedRouteEdge&&<div className="tw-discovery">
           {replaceTargetId&&<p className="tw-replace-target-note" role="status">현재 장소 · {replaceName}</p>}
           <div className="tw-discovery-tabs" role="tablist" aria-label="장소 찾기 방식"><button type="button" role="tab" aria-selected={tab==='ai'} onClick={()=>setTab('ai')}>AI 추천</button><button type="button" role="tab" aria-selected={tab==='search'} onClick={()=>setTab('search')}>직접 검색</button></div>
           {tab==='ai'?<>
@@ -557,18 +666,10 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   </section>;
 }
 
-function ColorPicker({value,onChange}:{value:CanvasColor;onChange:(color:CanvasColor)=>void}){return <fieldset className="tw-color-picker"><legend>카드 색상</legend>{colorOptions.map(([color,label])=><button type="button" key={color} className={`color-${color} ${value===color?'is-selected':''}`} aria-pressed={value===color} onClick={()=>onChange(color)}>{label}</button>)}</fieldset>;}
-function PlaceInspector({node,detail,days,onColor,onMove,onDisconnect,onBack,onReplace,onStartConnect,onRetryDetail}:{node:CanvasPlaceNode;detail?:CanvasPlaceDetail;days:CanvasDocument['days'];onColor:(color:CanvasColor)=>void;onMove:(dayId:string)=>void;onDisconnect:()=>void;onBack:()=>void;onReplace:()=>void;onStartConnect:()=>void;onRetryDetail:()=>void}){
+function PlaceInspector({detail,onBack,onRetryDetail}:{detail?:CanvasPlaceDetail;onBack:()=>void;onRetryDetail:()=>void}){
   return <section className="tw-inspector">
+    <div className="tw-inspector-actions"><Button variant="secondary" onClick={onBack}>장소 찾기로 돌아가기</Button></div>
     <CanvasPlaceOverview place={detail}/>
-    <div className="tw-inspector-actions"><Button variant="secondary" onClick={onBack}>장소 찾기</Button><Button variant="secondary" onClick={onReplace}>장소 바꾸기</Button><Button variant="secondary" className="tw-connect-mode-button" onClick={onStartConnect}>장소 연결</Button></div>
     {!detail&&<div className="tw-panel-error" role="status"><span>상세 정보를 확인하지 못했어요.</span><Button variant="secondary" onClick={onRetryDetail}>다시 불러오기</Button></div>}
-    {node.schedule?.locked&&<p className="tw-inspector-note">생성한 일정에서 가져온 방문 시간이에요. 장소를 바꾸면 시간 정보가 해제돼요.</p>}
-    <details className="tw-place-edit-controls"><summary>일정 편집</summary><div>
-      <label htmlFor="tw-move-day">여행 날짜</label>
-      <select id="tw-move-day" className="text-input" value={node.dayId} onChange={e=>onMove(e.target.value)}>{days.map((day,index)=><option key={day.id} value={day.id}>{day.date??`${index+1}일차`}</option>)}</select>
-      <ColorPicker value={node.color} onChange={onColor}/>
-      <Button variant="secondary" onClick={onDisconnect}>이 장소 연결 끊기</Button>
-    </div></details>
   </section>;
 }
