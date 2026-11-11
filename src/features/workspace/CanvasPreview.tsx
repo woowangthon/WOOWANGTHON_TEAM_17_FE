@@ -225,7 +225,10 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const viewScope=canvasViewScope(tripId,preview); const savedView=readCanvasView(viewScope);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const closeDrawer = () => { setDrawerOpen(false); drawerTrigger.current?.focus(); };
-  const initialDiscovery=discoveryMemory.get(tripId); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [message,setMessage]=useState(''); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [editingCommentId,setEditingCommentId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
+  const initialDiscovery=discoveryMemory.get(tripId); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [feedback,setFeedback]=useState({text:'',isError:false}); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [editingCommentId,setEditingCommentId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
+  const message = feedback.text;
+  const setMessage = useCallback((text: string) => setFeedback({ text, isError: false }), []);
+  const reportProblem = useCallback((text: string) => setFeedback({ text, isError: true }), []);
   const [flowNodes,setFlowNodes]=useState<{base:CanvasDocument|null;nodes:FlowNode[]}|null>(null); const [fitFocus,setFitFocus]=useState<'all'|'day'|'none'>('all'); const flow=useRef<ReactFlowInstance<FlowNode>|null>(null); const shell=useRef<HTMLDivElement>(null); const menuRef=useRef<HTMLDivElement>(null); const menuOpener=useRef<HTMLElement|null>(null); const menuAnchor=useRef<HTMLElement|null>(null); const clipboard=useRef<CanvasNode|null>(null); const abort=useRef<AbortController|null>(null); const triedDetails=useRef<Set<number>>(new Set()); const pendingRecommendation=useRef<RecommendationRequest|null>(initialDiscovery?.pending??null); const recommendationContext=useRef<{dayId:string;replaceTargetId:string}>(initialDiscovery?.context??{dayId:initialDiscovery?.pending?.dayId??savedView?.dayId??'',replaceTargetId:''}); const placeChoiceSequence=useRef(0);
   const nativeGesture=useRef<NativeConnectionGesture|null>(null);
   const cancelNativeConnection=useRef<(()=>void)|null>(null);
@@ -246,7 +249,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
       setSelectedId('');setSelectedEdgeId('');setMenu(null);setRestoreViewport(null);setInitialFitPending(false);
       const frameIds=doc.days.map(day=>`day-frame:${day.id}`);
       setFitTarget(frameIds.length&&!hasFittedHandoff(key)?{key,nodes:frameIds}:null);
-      if(!target.matched)setMessage(target.nodeIds.length?'생성한 장소가 삭제되어 저장된 경로를 보여주고 있어요.':'생성한 장소가 삭제되어 캔버스가 비어 있어요.');
+      if(!target.matched)reportProblem(target.nodeIds.length?'생성한 장소가 삭제되어 저장된 경로를 보여주고 있어요.':'생성한 장소가 삭제되어 캔버스가 비어 있어요.');
       return;
     }
     if(viewInitialized.current){
@@ -367,7 +370,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const contextPlace=contextNode?.kind==='place'?placeDetails.get(contextNode.contentid):undefined;
   const contextNodeEdges=contextNode?doc?.edges.filter(edge=>edge.source===contextNode.id||edge.target===contextNode.id)??[]:[];
   const contextRouteEdge=menu?.edgeId?doc?.edges.find(edge=>edge.id===menu.edgeId):undefined;
-  const publish=(nextNodes:FlowNode[],nextEdges:Edge[],note:string):boolean=>{if(!doc)return false;const materialized=doc.days.reduce((current,day)=>materializeProjectedDay(current,day.id,measuredSizes),doc);const normalizedNodes=nextNodes.filter(node=>node.type!=='dayFrame').map(node=>{const original=doc.nodes.find(item=>item.id===node.id);const normalized=materialized.nodes.find(item=>item.id===node.id);const unchangedPosition=original&&node.data.model.dayId===original.dayId&&JSON.stringify(node.data.model.position)===JSON.stringify(original.position);return unchangedPosition&&normalized?{...node,data:{...node.data,model:{...node.data.model,position:normalized.position}}}:node;});const proposed=docOf(normalizedNodes,nextEdges,materialized);let conflictPaths:string[]=[];const updated=sync.update(current=>{const merged=mergeCanvasDocuments(doc,proposed,current);conflictPaths=merged.conflicts;return merged.document??current;});if(!updated&&conflictPaths.length){setMessage(`다른 참여자의 변경과 겹쳐 이 편집을 보류했어요: ${conflictPaths.slice(0,3).join(', ')}`);return false;}if(updated)setMessage(note);return updated;};
+  const publish=(nextNodes:FlowNode[],nextEdges:Edge[],note:string):boolean=>{if(!doc)return false;const materialized=doc.days.reduce((current,day)=>materializeProjectedDay(current,day.id,measuredSizes),doc);const normalizedNodes=nextNodes.filter(node=>node.type!=='dayFrame').map(node=>{const original=doc.nodes.find(item=>item.id===node.id);const normalized=materialized.nodes.find(item=>item.id===node.id);const unchangedPosition=original&&node.data.model.dayId===original.dayId&&JSON.stringify(node.data.model.position)===JSON.stringify(original.position);return unchangedPosition&&normalized?{...node,data:{...node.data,model:{...node.data.model,position:normalized.position}}}:node;});const proposed=docOf(normalizedNodes,nextEdges,materialized);let conflictPaths:string[]=[];const updated=sync.update(current=>{const merged=mergeCanvasDocuments(doc,proposed,current);conflictPaths=merged.conflicts;return merged.document??current;});if(!updated&&conflictPaths.length){reportProblem(`다른 참여자의 변경과 겹쳐 이 편집을 보류했어요: ${conflictPaths.slice(0,3).join(', ')}`);return false;}if(updated)setMessage(note);return updated;};
   const editNode=(id:string,update:(model:CanvasNode)=>CanvasNode,note='변경 사항을 저장하고 있어요.')=>{const nodes=board.nodes.map(n=>n.id===id?{...n,data:{...n.data,model:update(n.data.model)}}:n);publish(nodes,board.edges,note);};
   const moveNode=(nodeId:string,nextDay:string)=>{if(!doc)return;const model=board.nodes.find(n=>n.id===nodeId)?.data.model;if(!model||model.dayId===nextDay)return;const from=frameLayouts.get(model.dayId);const to=frameLayouts.get(nextDay);if(!to)return;const local=from?canvasFrameNodePosition(model,from):model.position;const position=canvasDocumentPosition(local,to);const edges=model.kind==='place'?board.edges.filter(e=>e.source!==nodeId&&e.target!==nodeId):board.edges;const nodes=board.nodes.map(n=>n.id===nodeId?{...n,data:{...n.data,model:{...model,dayId:nextDay,position}}}:n);publish(nodes,edges,model.kind==='place'?'날짜를 옮기고 기존 연결을 함께 제거했어요.':'댓글 날짜를 옮겼어요.');changeDay(nextDay);};
   const connect=(connection:Pick<Connection,'source'|'target'>):boolean=>{
@@ -375,16 +378,16 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     const sourceDay=connection.source.startsWith('day-frame:')?connection.source.slice('day-frame:'.length):'';
     const targetDay=connection.target.startsWith('day-frame:')?connection.target.slice('day-frame:'.length):'';
     if(sourceDay||targetDay){
-      if(!sourceDay||!targetDay||sourceDay===targetDay){setMessage('서로 다른 날짜 그룹끼리만 연결할 수 있어요.');return false;}
+      if(!sourceDay||!targetDay||sourceDay===targetDay){reportProblem('서로 다른 날짜 그룹끼리만 연결할 수 있어요.');return false;}
       let changed=false;
       const updated=sync.update(current=>{const next=connectDayFrames(current,sourceDay,targetDay);if(!next)return current;changed=JSON.stringify(getDayLinks(next))!==JSON.stringify(getDayLinks(current));return next;});
       if(updated&&changed){setMessage('날짜 그룹을 연결했어요. 장소 동선과는 별도로 저장돼요.');setSelectedDayLinkId('');return true;}
-      setMessage('이 날짜 연결을 추가하지 못했어요.');return false;
+      reportProblem('이 날짜 연결을 추가하지 못했어요.');return false;
     }
     const gesture = nativeGesture.current;
     const activeReconnectEdgeId = gesture?.kind === 'place' ? gesture.replacementId : placeConnectionMode ? reconnectEdgeId : '';
     const remainingEdges=doc.edges.filter(edge=>edge.id!==activeReconnectEdgeId);
-    if(!canConnectRoute(connection.source,connection.target,placeMap,remainingEdges)){setMessage('같은 날짜의 장소끼리 앞뒤 한 곳씩 연결할 수 있어요. 순환 연결은 만들 수 없어요.');return false;}
+    if(!canConnectRoute(connection.source,connection.target,placeMap,remainingEdges)){reportProblem('같은 날짜의 장소끼리 앞뒤 한 곳씩 연결할 수 있어요. 순환 연결은 만들 수 없어요.');return false;}
     const nodes=board.nodes.map(node=>node.id===connection.source||node.id===connection.target?{...node,data:{...node.data,model:node.data.model.kind==='place'?{...node.data.model,intent:'route' as const}:node.data.model}}:node);
     const nextEdges=activeReconnectEdgeId&&doc.edges.some(edge=>edge.id===activeReconnectEdgeId)?board.edges.map(edge=>edge.id===activeReconnectEdgeId?{...edge,source:connection.source!,target:connection.target!}:edge):addEdge({...connection,id:crypto.randomUUID(),...edgeStyle},board.edges);
     const saved=publish(nodes,nextEdges,activeReconnectEdgeId?'장소 연결을 바꿨어요.':'장소를 연결했어요. 다른 카드는 자동으로 연결하지 않아요.');
@@ -400,9 +403,9 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   };
   const reconnectRouteEdge=(edge:Edge,connection:Pick<Connection,'source'|'target'>)=>{
     if(nativeGesture.current?.cancelled)return;
-    if(!doc||!connection.source||!connection.target||edge.type==='dayOrder'){setMessage('장소 연결만 바꿀 수 있어요.');return;}
+    if(!doc||!connection.source||!connection.target||edge.type==='dayOrder'){reportProblem('장소 연결만 바꿀 수 있어요.');return;}
     const remaining=doc.edges.filter(item=>item.id!==edge.id);
-    if(!canConnectRoute(connection.source,connection.target,placeMap,remaining)){setMessage('같은 날짜의 앞뒤 장소 순서에 맞지 않아 연결을 바꾸지 않았어요. 기존 연결은 그대로예요.');return;}
+    if(!canConnectRoute(connection.source,connection.target,placeMap,remaining)){reportProblem('같은 날짜의 앞뒤 장소 순서에 맞지 않아 연결을 바꾸지 않았어요. 기존 연결은 그대로예요.');return;}
     publish(board.nodes,board.edges.map(item=>item.id===edge.id?{...item,source:connection.source!,target:connection.target!}:item),'장소 연결을 바꿨어요.');
   };
   const remove=()=>{if(!doc)return;const dayLinkId=menu?.dayLinkId??selectedDayLinkId;if(dayLinkId){let removed=false;sync.update(current=>{const next=disconnectDayFrames(current,dayLinkId);if(!next)return current;removed=true;return next;});if(removed)setMessage('날짜 연결을 삭제했어요. 장소 동선은 그대로 유지돼요.');setSelectedDayLinkId('');setMenu(null);return;}const nodeId=board.nodes.find(node=>node.id===(menu?.nodeId??selectedId))?.id;if(nodeId){const ids=new Set([nodeId]);publish(board.nodes.filter(n=>!ids.has(n.id)),board.edges.filter(e=>!ids.has(e.source)&&!ids.has(e.target)),'선택한 카드를 삭제하고 연결선을 함께 제거했어요.');setSelectedId('');setMenu(null);return;}const edgeId=menu?.edgeId??selectedEdgeId;if(edgeId&&board.edges.some(e=>e.id===edgeId)){publish(board.nodes,board.edges.filter(e=>e.id!==edgeId),'장소 연결을 삭제했어요.');setSelectedEdgeId('');setMenu(null);}};
@@ -457,7 +460,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const commentCanvasContext = useMemo<CommentCanvasContextValue>(() => ({
     tripId, focusRequest: commentFocusRequest, menuOpen: Boolean(menu), editingId: editingCommentId, requestEdit: requestCommentEdit, commit: commitComment,
   }), [tripId, commentFocusRequest, menu, editingCommentId, requestCommentEdit, commitComment]);
-  const addPlace=(place:CanvasPlaceDetail,position?:{x:number;y:number},targetDay=activeDayId)=>{if(!doc)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasPlaceNode={id:crypto.randomUUID(),kind:'place',dayId:placed.dayId,position:placed.position,color:'default',contentid:place.contentid,intent:'candidate'};const updated=sync.update(current=>{if(current.nodes.length>=500||!current.days.some(item=>item.id===placed.dayId))return current;const normalized=materializeProjectedDay(current,placed.dayId,measuredSizes);return {...normalized,nodes:[...normalized.nodes,model]};});if(!updated){setMessage('날짜가 바뀌었거나 캔버스가 가득 차 장소를 추가하지 못했어요.');return;}setDetails(m=>new Map(m).set(place.contentid,place));setMessage(`${place.title}을 검토용 후보로 추가했어요.`);selectCard(model.id);setDayId(model.dayId);setAddTargetDayId(model.dayId);};
+  const addPlace=(place:CanvasPlaceDetail,position?:{x:number;y:number},targetDay=activeDayId)=>{if(!doc)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasPlaceNode={id:crypto.randomUUID(),kind:'place',dayId:placed.dayId,position:placed.position,color:'default',contentid:place.contentid,intent:'candidate'};const updated=sync.update(current=>{if(current.nodes.length>=500||!current.days.some(item=>item.id===placed.dayId))return current;const normalized=materializeProjectedDay(current,placed.dayId,measuredSizes);return {...normalized,nodes:[...normalized.nodes,model]};});if(!updated){reportProblem('날짜가 바뀌었거나 캔버스가 가득 차 장소를 추가하지 못했어요.');return;}setDetails(m=>new Map(m).set(place.contentid,place));setMessage(`${place.title}을 검토용 후보로 추가했어요.`);selectCard(model.id);setDayId(model.dayId);setAddTargetDayId(model.dayId);};
   const choosePlace=async(contentid:number,targetDay:string,targetNodeId:string)=>{
     if(targetDay!==discoveryDayId||targetNodeId!==replaceTargetId){setSearchMessage('날짜나 교체 대상이 바뀌었어요. 현재 선택에 맞는 후보를 다시 확인해 주세요.');return;}
     const sequence=++placeChoiceSequence.current;
@@ -492,7 +495,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
       const detail=await getPlaceDetail(tripId,contentid);
       setDetails(previous=>new Map(previous).set(contentid,detail));
       setMessage('장소 상세 정보를 다시 불러왔어요.');
-    }catch(error){setMessage(error instanceof Error?error.message:'장소 상세 정보를 불러오지 못했어요.');}
+    }catch(error){reportProblem(error instanceof Error?error.message:'장소 상세 정보를 불러오지 못했어요.');}
   };
   const addComment=(position?:{x:number;y:number},targetDay=discoveryDayId)=>{if(!doc||doc.nodes.length>=500||!targetDay)return;const placed=addPosition(position,targetDay);if(!placed)return;const model:CanvasCommentNode={id:crypto.randomUUID(),kind:'comment',dayId:placed.dayId,position:placed.position,color:'default',text:'댓글을 입력해 주세요'};const newNode:FlowNode={id:model.id,type:'comment',parentId:`day-frame:${model.dayId}`,position:canvasFrameNodePosition(model,frameLayouts.get(model.dayId)!),data:{model}};publish([...allFrameNodes.filter(node=>node.type!=='dayFrame'),newNode],board.edges,'공유 댓글 카드를 추가했어요.');selectCard(model.id);setEditingCommentId(model.id);setDrawerOpen(false);setCommentFocusRequest(current=>({id:model.id,sequence:current.sequence+1}));setDayId(model.dayId);setAddTargetDayId(model.dayId);};
   const copy=()=>{
@@ -505,7 +508,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const clearSelectionAfterHistory=()=>{if(selectedId||selectedEdgeId)setDrawerOpen(false);setSelectedId('');setSelectedEdgeId('');setSelectedDayLinkId('');setReplaceTargetId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setReconnectEdgeId('');setMenu(null);if(!['offline','conflict','error'].includes(sync.status))setMessage('');};
   const undo=()=>{if(sync.undo())clearSelectionAfterHistory();};
   const redo=()=>{if(sync.redo())clearSelectionAfterHistory();};
-  const cancelPlaceConnection = useCallback((note: string | null = '장소 연결을 취소했어요.') => {
+  const cancelPlaceConnection = useCallback((note: string | null = '장소 연결을 취소했어요.', isError = false) => {
     if (nativeGesture.current) {
       nativeGesture.current.cancelled = true;
       suppressNextHandleClick.current = true;
@@ -517,8 +520,11 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     setReconnectEdgeId('');
     setSelectedId('');
     setFlowNodes(null);
-    if (note !== null) setMessage(note);
-  }, []);
+    if (note !== null) {
+      if (isError) reportProblem(note);
+      else setMessage(note);
+    }
+  }, [reportProblem, setMessage]);
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || menuRef.current || (!placeConnectionMode && !nativeGesture.current)) return;
@@ -532,7 +538,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   const startPlaceConnection=(sourceId='',replacingEdgeId='')=>{
     if(sourceId&&!replacingEdgeId)replacingEdgeId=doc?.edges.find(edge=>edge.source===sourceId)?.id??'';
     const remainingEdges=doc?.edges.filter(edge=>edge.id!==replacingEdgeId)??[];
-    if(sourceId){const source=board.nodes.find(node=>node.id===sourceId)?.data.model;if(!source||source.kind!=='place'||remainingEdges.some(edge=>edge.source===sourceId)){setReconnectEdgeId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');setMessage('이미 다음 장소가 연결된 카드는 시작점으로 선택할 수 없어요.');return;}}
+    if(sourceId){const source=board.nodes.find(node=>node.id===sourceId)?.data.model;if(!source||source.kind!=='place'||remainingEdges.some(edge=>edge.source===sourceId)){setReconnectEdgeId('');setPlaceConnectionMode(false);setPlaceConnectionStartId('');reportProblem('이미 다음 장소가 연결된 카드는 시작점으로 선택할 수 없어요.');return;}}
     connectionBaseEdge.current = doc?.edges.find(edge => edge.id === replacingEdgeId) ?? null;
     setReconnectEdgeId(replacingEdgeId);
     setPlaceConnectionMode(true);setPlaceConnectionStartId(sourceId);setSelectedId(sourceId);setSelectedEdgeId('');setSelectedDayLinkId('');setReplaceTargetId('');setMenu(null);setFlowNodes(null);setDrawerOpen(false);
@@ -578,11 +584,11 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
   };
   const choosePlaceConnectionNode=(nodeId:string)=>{
     const model=board.nodes.find(node=>node.id===nodeId)?.data.model;
-    if(!model||model.kind!=='place'){setMessage('장소 카드만 연결할 수 있어요.');return;}
+    if(!model||model.kind!=='place'){reportProblem('장소 카드만 연결할 수 있어요.');return;}
     if(!placeConnectionStartId){startPlaceConnection(nodeId);return;}
     if(placeConnectionStartId===nodeId){setPlaceConnectionStartId('');setSelectedId('');setMessage('첫 장소를 다시 선택해 주세요.');return;}
     if(connect({source:placeConnectionStartId,target:nodeId})){setFlowNodes(null);}
-    else cancelPlaceConnection('같은 날짜의 앞뒤 장소 순서에 맞지 않아 연결을 취소했어요.');
+    else cancelPlaceConnection('같은 날짜의 앞뒤 장소 순서에 맞지 않아 연결을 취소했어요.', true);
   };
   useEffect(()=>{
     if(!placeConnectionMode||!placeConnectionStartId)return;
@@ -592,11 +598,11 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
     const liveEdge = baseline ? doc?.edges.find(edge => edge.id === baseline.id) : null;
     const reconnectStillExists = !baseline || (liveEdge?.source === baseline.source && liveEdge?.target === baseline.target);
     if(!sourceExists||alreadyContinues||!reconnectStillExists){
-      cancelPlaceConnection('시작 장소가 바뀌어 장소 연결을 취소했어요.');
+      cancelPlaceConnection('시작 장소가 바뀌어 장소 연결을 취소했어요.', true);
     }
   },[doc,placeConnectionMode,placeConnectionStartId,reconnectEdgeId]);
   const runSearch=async()=>{abort.current?.abort();const controller=new AbortController();abort.current=controller;setBusy(true);setSearchMessage('');setResults([]);try{const found=await searchPlaces(tripId,query,controller.signal);if(controller.signal.aborted)return;setResults(found);setSearchMessage(found.length?'':`“${query.trim()}” 검색 결과가 없어요.`);}catch(error){if(!controller.signal.aborted)setSearchMessage(error instanceof Error?error.message:'장소 검색에 실패했어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
-  const askAI=async()=>{if(busy||!prompt.trim()||!discoveryDayId||!doc||(pendingRecommendation.current&&!recommendationContextMatches))return;const exclude=doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid);const hadPending=Boolean(pendingRecommendation.current);if(!hadPending){recommendationContext.current={dayId:discoveryDayId,replaceTargetId};setAiPlace(null);setAiAlternatives([]);}pendingRecommendation.current=retainRecommendationRequest(pendingRecommendation.current,prompt.trim(),discoveryDayId,exclude);if(!hadPending)setRecommendationPending(true);const request=pendingRecommendation.current;const requestContext={...recommendationContext.current};const controller=new AbortController();abort.current?.abort();abort.current=controller;setBusy(true);try{const result=await recommendPlace(tripId,request.prompt,request.dayId,request.exclude,request.key,controller.signal);if(controller.signal.aborted)return;pendingRecommendation.current=null;setRecommendationPending(false);if(requestContext.dayId===currentTargetRef.current.dayId&&requestContext.replaceTargetId===currentTargetRef.current.replaceTargetId){setAiPlace(result.place);setAiAlternatives(result.alternatives);setTab('ai');setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');}else{setAiPlace(null);setAiAlternatives([]);setMessage('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');}}catch(error){if(!controller.signal.aborted)setMessage(error instanceof Error?error.message:'추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
+  const askAI=async()=>{if(busy||!prompt.trim()||!discoveryDayId||!doc||(pendingRecommendation.current&&!recommendationContextMatches))return;const exclude=doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid);const hadPending=Boolean(pendingRecommendation.current);if(!hadPending){recommendationContext.current={dayId:discoveryDayId,replaceTargetId};setAiPlace(null);setAiAlternatives([]);}pendingRecommendation.current=retainRecommendationRequest(pendingRecommendation.current,prompt.trim(),discoveryDayId,exclude);if(!hadPending)setRecommendationPending(true);const request=pendingRecommendation.current;const requestContext={...recommendationContext.current};const controller=new AbortController();abort.current?.abort();abort.current=controller;setBusy(true);try{const result=await recommendPlace(tripId,request.prompt,request.dayId,request.exclude,request.key,controller.signal);if(controller.signal.aborted)return;pendingRecommendation.current=null;setRecommendationPending(false);if(requestContext.dayId===currentTargetRef.current.dayId&&requestContext.replaceTargetId===currentTargetRef.current.replaceTargetId){setAiPlace(result.place);setAiAlternatives(result.alternatives);setTab('ai');setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');}else{setAiPlace(null);setAiAlternatives([]);reportProblem('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');}}catch(error){if(!controller.signal.aborted)reportProblem(error instanceof Error?error.message:'추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');}finally{if(abort.current===controller){abort.current=null;setBusy(false);}}};
   useEffect(()=>()=>abort.current?.abort(),[]);
   useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),4200);return()=>window.clearTimeout(timeout);},[message]);
   useEffect(()=>{discoveryMemory.set(tripId,{tab,query,results,prompt,aiPlace,aiAlternatives,pending:pendingRecommendation.current,context:recommendationContext.current});},[tripId,tab,query,results,prompt,aiPlace,aiAlternatives,recommendationPending]);
@@ -850,7 +856,7 @@ export default function CanvasPreview({ tripId, preview = false, startDate, endD
             {!preview&&routes.hasIssue&&<button role="menuitem" onClick={()=>{routes.retry();setMenu(null);}}>이동 시간 다시 확인</button>}
             {(sync.canUndo||sync.canRedo)&&<details className="tw-context-secondary"><summary>실행 기록</summary>{sync.canUndo&&<button role="menuitem" onClick={()=>{undo();setMenu(null);}}>실행 취소</button>}{sync.canRedo&&<button role="menuitem" onClick={()=>{redo();setMenu(null);}}>다시 실행</button>}</details>}
           </div>,document.body)}
-        </div>{message&&!placeConnectionMode&&<p className="tw-canvas-feedback" role="status">{message}</p>}
+        </div>{message&&!placeConnectionMode&&<p className={feedback.isError ? "tw-canvas-feedback" : "sr-only"} role={feedback.isError ? "alert" : "status"}>{message}</p>}
       </section>
       {drawerOpen&&<aside className="tw-place-drawer" aria-label="장소 및 카드 편집 패널" onKeyDown={event => { if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); closeDrawer(); } }}>
         <div className="tw-drawer-heading"><h2>{selectedModel?.kind==='place'?'장소 정보':selectedRouteEdge?'이동 구간':replaceTargetId?'장소 바꾸기':'장소 찾기'}</h2><button type="button" onClick={closeDrawer} aria-label="장소 패널 닫기"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
