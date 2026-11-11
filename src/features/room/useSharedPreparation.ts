@@ -9,7 +9,7 @@ import {
 import type { RoomDraft, RoomEntry } from './roomData';
 
 type LoadState = 'loading' | 'ready' | 'error' | 'fatal';
-type SaveResult = 'saved' | 'invalid' | 'conflict' | 'failed' | 'fatal';
+type SaveResult = 'saved' | 'unchanged' | 'invalid' | 'conflict' | 'failed' | 'fatal';
 
 function fatalError(error: unknown): boolean {
   if (!(error instanceof PreparationHttpError)) return false;
@@ -152,9 +152,9 @@ export function useSharedPreparation(tripId: string | null, entry: RoomEntry | n
         return next;
       });
       setLastUpdated(Date.now());
-      setSaveMessage('공통 조건을 저장했어요. 참여자들의 확인 상태가 초기화되어 다시 확인이 필요해요.');
+      setSaveMessage(saved.requiresReconfirmation ? '공통 조건을 저장했어요.' : '변경된 공통 조건이 없어요.');
       setMessage('');
-      return 'saved';
+      return saved.requiresReconfirmation ? 'saved' : 'unchanged';
     } catch (error) {
       if (!mounted.current || ownSaveGeneration !== generation.current) return 'failed';
       if (error instanceof PreparationHttpError) {

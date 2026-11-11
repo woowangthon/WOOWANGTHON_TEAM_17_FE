@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createJob, GenerationError, getGeneration, getJob, getPlan, getSelfPreparationIssues, type GenerationState, type Job, type SelfDto } from './generationApi';
+import { createJob, GenerationError, getGeneration, getJob, getPlan, getSelfPreparationIssues, type GenerationState, type Job, type Plan, type SelfDto } from './generationApi';
 import { createGenerationStartController } from './generationStartController';
 import { CanvasHttpError, getCanvas, importPlanToCanvas } from '../workspace/canvasApi.ts';
 import { acceptImportedCanvasState } from '../workspace/useCanvasSync.ts';
@@ -45,12 +45,14 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   const [dismissedIssueFields, setDismissedIssueFields] = useState<Set<string>>(() => new Set());
   const epoch = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const operationLock = useRef<symbol | null>(null);
+  const refreshLock = useRef<symbol | null>(null);
   const starter = useRef<ReturnType<typeof createGenerationStartController> | null>(null);
   const callbacks = useRef({ onStarted, onAccessLost });
   const blockedReasonRef = useRef(blockedReason);
   const processing = useRef<string | null>(null);
   const importer = useRef<ReturnType<typeof createGenerationCanvasImportController> | null>(null);
-  const failedPlan = useRef<{ planId: string; versionId: string; warningCodes: GenerationPlanWarningCode[] } | null>(null);
+  const failedPlan = useRef<{ planId: string; versionId: string; status: Plan['status']; warningCodes: GenerationPlanWarningCode[] } | null>(null);
   const issueInputToken = useRef<string | null>(null);
   const readinessRevision = useRef(0);
   const runReadinessRevision = useRef(0);
@@ -89,20 +91,21 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     setData(next);
   }, []);
 
-  const importCompletedPlan = useCallback(async (id: string, planId: string, versionId: string, warningCodes: GenerationPlanWarningCode[], signal: AbortSignal, own: number) => {
+  const importCompletedPlan = useCallback(async (id: string, planId: string, versionId: string, planStatus: Plan['status'], warningCodes: GenerationPlanWarningCode[], signal: AbortSignal, own: number) => {
     setPhase('opening');
     if (blockedReasonRef.current || runReadinessRevision.current !== readinessRevision.current) {
       setBusy(false); setOverlayOpen(false); setReturnAvailable(false); setError(false);
       setMessage('입력이 바뀌어 일정을 열지 않았어요. 변경 내용을 저장한 뒤 일정 만들기를 눌러 주세요.');
       return;
     }
-    failedPlan.current = { planId, versionId, warningCodes };
+    failedPlan.current = { planId, versionId, status: planStatus, warningCodes };
     const imported = await importer.current!.run(id, planId, versionId, signal);
     if (signal.aborted || own !== epoch.current) return;
     const latest = await getCanvas(id, { signal });
     if (signal.aborted || own !== epoch.current) return;
     if (latest.revision < imported.revision) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '가져온 캔버스의 최신 상태를 확인할 수 없어요.');
     await acceptImportedCanvasState(id, latest, signal);
+    setData(current => current ? { ...current, latestPlan: { planId, versionId, status: planStatus, current: true } } : current);
     if (!mayCompleteHandoff(signal, own, epoch.current, blockedReasonRef.current)
         || runReadinessRevision.current !== readinessRevision.current) {
       if (!signal.aborted && own === epoch.current && (blockedReasonRef.current || runReadinessRevision.current !== readinessRevision.current)) {
@@ -158,7 +161,7 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
       const warningCodes = Array.isArray(warnings)
         ? [...new Set(warnings.filter((code): code is GenerationPlanWarningCode => supportedWarnings.has(code as GenerationPlanWarningCode)))]
         : [];
-      await importCompletedPlan(id, plan.planId, plan.versionId, warningCodes, signal, own);
+      await importCompletedPlan(id, plan.planId, plan.versionId, plan.status, warningCodes, signal, own);
     } finally {
       if (processing.current === initialJob.id) processing.current = null;
       if (own === epoch.current && !signal.aborted) setBusy(false);
@@ -190,7 +193,9 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!enabled || !tripId) return null;
+    if (!enabled || !tripId || operationLock.current || processing.current || refreshLock.current) return null;
+    const refreshToken = Symbol('generation-refresh');
+    refreshLock.current = refreshToken;
     controller.current?.abort();
     const own = ++epoch.current;
     const abort = new AbortController(); controller.current = abort;
@@ -206,13 +211,17 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
       }
       return next;
     } catch (error) { fail(error, own, abort.signal, false); return null; }
-    finally { if (own === epoch.current) setLoading(false); }
+    finally {
+      if (refreshLock.current === refreshToken) refreshLock.current = null;
+      if (own === epoch.current) setLoading(false);
+    }
   }, [enabled, tripId, processJob, fail, acceptGenerationState]);
 
   // Reset all request-scoped state when the room scope changes.
   /* eslint-disable react/set-state-in-effect */
   useEffect(() => {
     epoch.current += 1; controller.current?.abort(); controller.current = null;
+    operationLock.current = null; refreshLock.current = null;
     starter.current?.reset(); importer.current?.reset(); processing.current = null; failedPlan.current = null;
     setData(null); setBusy(false); setLoading(false); setMessage(''); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setPhase('checking'); setError(false); setPersonalIssues(undefined); issueInputToken.current = null;
     if (enabled && tripId) void refresh();
@@ -221,42 +230,55 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
   /* eslint-enable react/set-state-in-effect */
 
   const start = useCallback(async () => {
-    if (!enabled || !tripId || busy) return;
-    if (failedPlan.current && blockedReasonRef.current) { setMessage(blockedReasonRef.current); return; }
+    if (!enabled || !tripId || busy || operationLock.current || processing.current) return;
+    if (blockedReasonRef.current) { setMessage(blockedReasonRef.current); return; }
+    const operationToken = Symbol('generation-start');
+    operationLock.current = operationToken;
     setLoading(false); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setBusy(true); setMessage('');
     runReadinessRevision.current = readinessRevision.current;
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
+    refreshLock.current = null;
     let showOperationOverlay = false;
     try {
       if (failedPlan.current) {
         showOperationOverlay = true; setOverlayOpen(true);
-        await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, failedPlan.current.warningCodes, abort.signal, own);
+        await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, failedPlan.current.status, failedPlan.current.warningCodes, abort.signal, own);
         return;
       }
+      const openOnlyPlan = data?.latestPlan?.current && data.latestJob?.status === 'SUCCEEDED'
+        ? { planId: data.latestPlan.planId, versionId: data.latestPlan.versionId }
+        : undefined;
       const result = await starter.current!.start(tripId, abort.signal, () => blockedReasonRef.current, () => {
         showOperationOverlay = true; setOverlayOpen(true); setError(false); setPhase('generating');
-      });
+      }, openOnlyPlan);
       if (own !== epoch.current || abort.signal.aborted) return;
       if ('data' in result) acceptGenerationState(result.kind === 'started' ? { ...result.data, latestJob: result.job } : result.data);
       if (result.kind === 'active') { showOperationOverlay = true; await processJob(tripId, result.data.latestJob!, abort.signal, own); }
       else if (result.kind === 'started') { showOperationOverlay = true; await processJob(tripId, result.job, abort.signal, own); }
       else if (result.kind === 'not-ready') { void loadOwnIssues(tripId, result.data, abort.signal, own); setOverlayOpen(false); setMessage(readinessMessage(result.data)); }
+      else if (result.kind === 'changed') { setOverlayOpen(false); setError(false); setMessage('여행 조건이나 참여자 준비가 바뀌어 기존 일정이 최신이 아니에요. 새 일정을 만들려면 한 번 더 눌러 주세요.'); }
       else if (result.kind === 'blocked') { setOverlayOpen(false); setMessage(result.reason); }
       else if (result.kind === 'busy') { setOverlayOpen(false); setMessage('일정 생성 상태를 확인하고 있어요. 잠시 후 다시 시도해 주세요.'); }
     } catch (error) { fail(error, own, abort.signal, showOperationOverlay); }
-    finally { if (own === epoch.current && !abort.signal.aborted) setBusy(false); }
-  }, [enabled, tripId, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
+    finally {
+      if (own === epoch.current && !abort.signal.aborted) setBusy(false);
+      if (operationLock.current === operationToken) operationLock.current = null;
+    }
+  }, [enabled, tripId, busy, data, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
 
   const retry = useCallback(async () => {
-    if (!tripId || !enabled || busy) return;
+    if (!tripId || !enabled || busy || operationLock.current || processing.current) return;
     if (blockedReasonRef.current) { setMessage(blockedReasonRef.current); setOverlayOpen(false); return; }
     if (failedPlan.current && blockedReasonRef.current) { setMessage(blockedReasonRef.current); setOverlayOpen(false); return; }
+    const operationToken = Symbol('generation-retry');
+    operationLock.current = operationToken;
     setLoading(false); setBusy(true); setOverlayOpen(false); setRetryAvailable(false); setReturnAvailable(false); setError(false); setPhase('checking'); setMessage('');
     runReadinessRevision.current = readinessRevision.current;
     controller.current?.abort(); const own = ++epoch.current; const abort = new AbortController(); controller.current = abort;
+    refreshLock.current = null;
     let showOperationOverlay = false;
     try {
-      if (failedPlan.current) { showOperationOverlay = true; setOverlayOpen(true); await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, failedPlan.current.warningCodes, abort.signal, own); return; }
+      if (failedPlan.current) { showOperationOverlay = true; setOverlayOpen(true); await importCompletedPlan(tripId, failedPlan.current.planId, failedPlan.current.versionId, failedPlan.current.status, failedPlan.current.warningCodes, abort.signal, own); return; }
       const fresh = await getGeneration(tripId, abort.signal);
       if (own !== epoch.current || abort.signal.aborted) return;
       acceptGenerationState(fresh);
@@ -270,7 +292,10 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
         else { if (result.kind === 'not-ready') { void loadOwnIssues(tripId, result.data, abort.signal, own); setMessage(readinessMessage(result.data)); } else setMessage('준비 화면에서 일정을 다시 시작해 주세요.'); setOverlayOpen(false); setBusy(false); }
       }
     } catch (error) { fail(error, own, abort.signal, showOperationOverlay); }
-    finally { if (own === epoch.current && !abort.signal.aborted) setBusy(false); }
+    finally {
+      if (own === epoch.current && !abort.signal.aborted) setBusy(false);
+      if (operationLock.current === operationToken) operationLock.current = null;
+    }
   }, [tripId, enabled, busy, importCompletedPlan, processJob, fail, loadOwnIssues, acceptGenerationState]);
 
   const dismiss = useCallback(() => setOverlayOpen(false), []);
@@ -278,5 +303,6 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
     setDismissedIssueFields(current => field ? new Set([...current, field]) : new Set(['likes', 'avoid', 'food', 'walking']));
   }, []);
   const visiblePersonalIssues = personalIssues?.filter(issue => !dismissedIssueFields.has(issue.field));
-  return { data, loading, busy, message, personalIssues: visiblePersonalIssues, clearPersonalIssue, start, refresh, overlayOpen, phase, error, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
+  const hasCurrentPlan = Boolean(data?.latestPlan?.current && data.latestJob?.status === 'SUCCEEDED');
+  return { data, loading, busy, message, hasCurrentPlan, personalIssues: visiblePersonalIssues, clearPersonalIssue, start, refresh, overlayOpen, phase, error, retry, retryAction: retryAvailable ? retry : undefined, retryAvailable, returnAction: returnAvailable && !busy ? dismiss : undefined, dismiss };
 }

@@ -46,6 +46,21 @@ test('reuses the completed server job so the flow can import its plan instead of
   assert.equal(posts, 0);
 });
 
+test('opening a cached current plan never creates a job when the fresh snapshot says it changed', async () => {
+  let posts = 0;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({
+      latestJob: { id: 'job-done', status: 'SUCCEEDED', planId: 'plan-a' },
+      latestPlan: { planId: 'plan-a', versionId: 'v1', status: 'DRAFT', current: false },
+    }),
+    create: async () => { posts += 1; }, createKey: () => 'key',
+    isCurrentCompleted: async () => false,
+  });
+  const result = await controller.start('trip-a', new AbortController().signal, undefined, undefined, { planId: 'plan-a', versionId: 'v1' });
+  assert.equal(result.kind, 'changed');
+  assert.equal(posts, 0);
+});
+
 test('stale completed job does not prevent a fresh generation job', async () => {
   let posts = 0;
   const controller = createGenerationStartController({

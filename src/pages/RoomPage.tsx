@@ -81,8 +81,8 @@ export default function RoomPage() {
     ? '여행 기본조건의 미저장 변경을 먼저 저장하거나 취소해 주세요.'
     : !isPreview && personalHook.state !== 'ready'
       ? '내 취향과 준비 상태를 불러온 뒤 다시 시도해 주세요.'
-    : !isPreview && personalHook.confirmation?.status !== 'confirmed'
-      ? '방장 본인의 취향을 저장하고 준비 완료를 눌러 주세요.'
+    : !isPreview && personalHook.saveStatus !== 'confirmed'
+      ? '내 취향을 저장하고 준비 완료를 눌러 주세요.'
     : personalHook.dirty || personalHook.phase !== 'idle'
       ? '내 취향 변경을 저장하고 준비 처리를 마친 뒤 다시 시도해 주세요.'
       : undefined;
@@ -93,6 +93,12 @@ export default function RoomPage() {
     onStarted: handoff => { setCanvasHandoff(handoff); changeView('canvas'); },
     onAccessLost: onGenerationAccessLost,
   });
+  const refreshGeneration = generationStart.refresh;
+  const confirmedRoster = (shared.preparation?.members ?? []).map(member => `${member.id}:${member.preparationStatus}`).join('|');
+  const readinessFreshnessKey = [shared.preparation?.conditionsVersion ?? '', personalHook.confirmation?.confirmedConditionsVersion ?? '', personalHook.confirmation?.confirmedPreferenceVersion ?? '', confirmedRoster].join(':');
+  useEffect(() => {
+    if (status === 'ready' && entry?.member.role === 'OWNER' && shared.state === 'ready') void refreshGeneration();
+  }, [entry?.member.role, readinessFreshnessKey, refreshGeneration, shared.state, status]);
 
   function invalidateCopyFeedback() {
     copyAttemptRef.current += 1;
@@ -169,12 +175,12 @@ export default function RoomPage() {
   function updateCondition<K extends keyof RoomDraft>(key: K, value: RoomDraft[K]) {
     setConditionDirty(true);
     setConditionMessage('');
-    personalHook.setReviewed(false);
     setConditionForm((current) => ({ ...current, [key]: value }));
     setConditionErrors((current) => ({ ...current, [key]: undefined, ...(key === 'startDate' || key === 'endDate' ? { startDate: undefined, endDate: undefined } : {}) }));
   }
   async function saveConditions() {
     if (shared.saving) return;
+    if (!conditionDirty) { setConditionMessage('변경된 공통 조건이 없어요.'); return; }
     const errors = validateRoomDraft(conditionForm);
     setConditionErrors(errors);
     if (Object.keys(errors).length) return;
@@ -182,7 +188,14 @@ export default function RoomPage() {
     if (!shared.preparation?.canEditConditions || editVersion === null) return;
     if (rebaseRequired && !rebaseAccepted) { document.getElementById('room-rebase-accept')?.focus(); return; }
     const result = await shared.save(withPreservedHiddenConditions(conditionForm, shared.conditions, { clearLegacyAnchors: legacyAnchorsMoved }), editVersion);
-    if (result === 'saved') { const savedDraft = legacyAnchorsMoved ? { ...conditionForm, lodging: '', fixedSchedule: '' } : { ...conditionForm }; setConditions(savedDraft); setConditionForm(savedDraft); setConditionDirty(false); setRebaseRequired(false); setRebaseAccepted(false); setLegacyAnchorsMoved(false); setConditionMessage(legacyAnchorsMoved ? '공통 조건을 저장했어요. 내 취향에서 옮긴 정보를 분석한 뒤 저장해 주세요.' : '공통 조건을 저장했어요. 참여자들은 새 조건을 확인해야 해요.'); return; }
+    if (result === 'saved' || result === 'unchanged') {
+      const savedDraft = legacyAnchorsMoved ? { ...conditionForm, lodging: '', fixedSchedule: '' } : { ...conditionForm };
+      setConditions(savedDraft); setConditionForm(savedDraft); setConditionDirty(false);
+      setRebaseRequired(false); setRebaseAccepted(false); setRebaseVersion(null); setLegacyAnchorsMoved(false);
+      setConditionMessage(result === 'unchanged' ? '변경된 공통 조건이 없어요.'
+        : legacyAnchorsMoved ? '공통 조건을 저장했어요. 내 취향에서 옮긴 정보를 분석한 뒤 저장해 주세요.' : '공통 조건을 저장했어요.');
+      return;
+    }
     if (result === 'conflict' || result === 'failed') {
       setRebaseRequired(true); setRebaseAccepted(false); setRebaseVersion(null);
       const latest = await shared.refresh();
@@ -269,16 +282,6 @@ export default function RoomPage() {
   const legacyScheduleNeedsAnchor = readinessCodes.has('FIXED_SCHEDULE_ANCHOR_REQUIRED') || readinessCodes.has('COMMON_REVIEW_REQUIRED');
   const showLegacyAnchorGuide = canEdit && ((legacyLodgingNeedsAnchor && Boolean(conditions.lodging.trim())) || (legacyScheduleNeedsAnchor && Boolean(conditions.fixedSchedule.trim())));
   const sampleTrip = isPreview;
-  const personalReadyToReview = personalHook.state === 'ready' && personalHook.phase === 'idle' && !personalHook.dirty
-    && !conditionDirty && !shared.saving && !rebaseRequired
-    && Boolean(personalHook.savedDraft.originalText.trim()) && Boolean(personalHook.savedDraft.likes.trim())
-    && ['20', '40', 'unlimited'].includes(personalHook.savedDraft.walking);
-  const reviewHelp = conditionDirty || shared.saving || rebaseRequired ? '여행 기본조건을 먼저 저장해 주세요.'
-    : personalHook.dirty ? '수정한 취향을 먼저 저장해 주세요.'
-      : !personalHook.savedDraft.originalText.trim() ? '여행하고 싶은 내용을 적고 저장해 주세요.'
-        : !personalHook.savedDraft.likes.trim() ? '좋아하는 것을 입력하고 저장해 주세요.'
-        : !['20', '40', 'unlimited'].includes(personalHook.savedDraft.walking) ? '걷기 시간을 선택하고 저장해 주세요.'
-          : '저장한 취향을 확인하면 준비를 완료할 수 있어요.';
   const issueFor = (field: 'likes' | 'avoid' | 'food' | 'walking') => generationStart.personalIssues?.find(issue => issue.field === field);
   const issueMessage = (field: 'likes' | 'avoid' | 'food' | 'walking') => {
     if (!issueFor(field)) return '';
@@ -287,7 +290,7 @@ export default function RoomPage() {
     if (field === 'likes') return '필수 조건과 선호를 구분해 장소 기준으로 구체적으로 적어 주세요.';
     return '걷기 제한을 선택하고 내 취향을 다시 저장해 주세요.';
   };
-  const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '저장됨', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
+  const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '준비 완료', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
   return <main className="travel-workspace prep-room-shell">
     <header className="tw-topbar prep-topbar">
       <a className="tw-brand" href="/">충북 여행 계획</a>
@@ -331,7 +334,7 @@ export default function RoomPage() {
               <PreparationScheduleFields key={tripId ?? ''} tripId={tripId ?? ''} value={{ departureTime: conditionForm.departureTime }} departure={conditionForm.departure} returnRoute={conditionForm.returnRoute} departureError={fieldErrors.departure} departureTimeError={fieldErrors.departureTime} departureContentidError={fieldErrors.departureContentid} returnRouteError={fieldErrors.returnRoute} disabled={!canEdit || shared.saving} onChange={(key, value) => updateCondition(key, value)} onDepartureChange={value => updateCondition('departure', value)} onDepartureContentidChange={value => updateCondition('departureContentid', value)} onReturnRouteChange={value => updateCondition('returnRoute', value)} />
               {showLegacyAnchorGuide && <aside className="prep-schedule-hint" aria-label="기존 공통 일정 정보 안내"><p>기존 공통 정보에 장소와 시간이 지정되지 않았어요. 그대로 보관하거나 내 취향 원문으로 옮길 수 있어요.</p>{legacyLodgingNeedsAnchor && conditions.lodging.trim() && <p><strong>기존 공통 숙소 정보:</strong> {conditions.lodging}</p>}{legacyScheduleNeedsAnchor && conditions.fixedSchedule.trim() && <p><strong>기존 공통 약속 정보:</strong> {conditions.fixedSchedule}</p>}{legacyAnchorsMoved ? <p role="status">내 취향 원문으로 복사했어요. 조건 저장 후 내 취향에서 분석해 주세요.</p> : <Button variant="secondary" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onClick={moveLegacyAnchorsToPersonal}>내 취향으로 옮기기</Button>}</aside>}
             </fieldset>
-            {canEdit && <div className="prep-condition-save">{(conditionMessage || (!rebaseRequired && shared.saveMessage)) && <span className="prep-condition-status" role="status">{conditionMessage || shared.saveMessage}</span>}<PreparationActionButton label="조건 저장" loading={shared.saving} loadingLabel="조건 저장 중" onClick={() => void saveConditions()} /></div>}
+            {canEdit && <div className="prep-condition-save">{(conditionMessage || (!rebaseRequired && shared.saveMessage)) && <span className="prep-condition-status" role="status">{conditionMessage || shared.saveMessage}</span>}<PreparationActionButton label="조건 저장" loading={shared.saving} loadingLabel="조건 저장 중" disabled={!conditionDirty || shared.saving} onClick={() => void saveConditions()} /></div>}
             {!canEdit && <dl className="prep-readonly-values"><div><dt>지역</dt><dd>{conditions.region || '미정'}</dd></div><div><dt>여행 기간</dt><dd>{conditions.startDate && conditions.endDate ? formatDraftDate(conditions.startDate, conditions.endDate) : '미정'}</dd></div><div><dt>예정 인원</dt><dd>{formatDraftPeople(conditions.expectedPeople)}</dd></div><div><dt>전체 예산</dt><dd>{formatDraftBudget(conditions.budget)}</dd></div><div><dt>이동수단</dt><dd>{formatDraftTransport(conditions.transport)}</dd></div><div><dt>출발지와 복귀</dt><dd>{conditions.departure || '미정'} / {conditions.returnRoute || '미정'}</dd></div></dl>}
             {rebaseRequired && <section className="tw-conflict" aria-live="polite"><h3>공통 조건이 먼저 바뀌었어요</h3><p>{shared.saveMessage || '최신 조건을 확인한 뒤 내 입력을 다시 적용해 주세요.'}</p><dl>{(['region', 'startDate', 'endDate', 'expectedPeople', 'budget', 'transport', 'departure', 'returnRoute'] as const).map((key) => <div key={key}><dt>{key === 'region' ? '지역' : key === 'startDate' ? '시작일' : key === 'endDate' ? '마지막 날' : key === 'expectedPeople' ? '인원' : key === 'budget' ? '예산' : key === 'transport' ? '이동수단' : key === 'departure' ? '출발지' : '복귀 장소'}</dt><dd><span>최신: {key === 'transport' ? formatDraftTransport(shared.conditions?.transport ?? 'undecided') : shared.conditions?.[key] || '미정'}</span><span>내 입력: {key === 'transport' ? formatDraftTransport(conditionForm.transport) : conditionForm[key] || '미정'}</span></dd></div>)}</dl>{rebaseVersion === null ? <Button variant="secondary" onClick={() => { void shared.refresh().then((latest) => { if (latest) setRebaseVersion(latest.conditionsVersion); }); }} disabled={shared.refreshing}>최신 조건 불러오기</Button> : <Button id="room-rebase-accept" variant="secondary" onClick={() => { setEditVersion(rebaseVersion); setRebaseAccepted(true); }}>최신 조건 확인 후 내 변경 다시 적용</Button>}{rebaseAccepted && <p>최신 버전 {editVersion}에 내 변경을 적용할 준비가 됐어요. 저장을 눌러 주세요.</p>}</section>}
           </section>
@@ -360,9 +363,8 @@ export default function RoomPage() {
                   {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
                 </> : <div className="prep-parsed-empty"><h3>내 취향</h3><p>원하는 내용을 적고 분석하면 여기에 정리돼요.</p></div>}
                 {isPreview ? <div className="prep-confirm-row"><span role="status">{localPersonalMessage || '예시 입력은 실제 여행방 상태에 반영되지 않아요.'}</span></div> : <div className="prep-confirm-row prep-personal-actions">
-                  <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span><PreparationActionButton label="내 취향 저장" loading={personalHook.phase === 'saving'} loadingLabel="취향 저장 중" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || !personalHook.dirty} onClick={() => void personalHook.save()} /></div>
-                  {personalHook.resultsVisible && <div className="prep-review-row"><label className="prep-review-checkbox"><input type="checkbox" checked={personalHook.reviewed} disabled={!personalReadyToReview || personalHook.confirmation?.status === 'confirmed'} onChange={(event) => personalHook.setReviewed(event.target.checked)} /><span>여행 조건과 내 취향을 확인했어요</span></label><PreparationActionButton label="준비 완료" loading={personalHook.phase === 'confirming'} loadingLabel="준비 완료 처리 중" disabled={!personalHook.canConfirm || !personalReadyToReview} onClick={() => { if (personalReadyToReview && personalHook.canConfirm) void personalHook.confirm(); }} /></div>}
-                  {!personalReadyToReview && personalHook.resultsVisible && personalHook.state === 'ready' && personalHook.phase === 'idle' && personalHook.confirmation?.status !== 'confirmed' && <small className="prep-review-help">{reviewHelp}</small>}
+                  {!personalHook.resultsVisible && personalHook.dirty && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span><PreparationActionButton label="초안 저장" loading={personalHook.phase === 'saving'} loadingLabel="초안 저장 중" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || conditionDirty || shared.saving || rebaseRequired} onClick={() => void personalHook.save()} /></div>}
+                  {personalHook.resultsVisible && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span>{!(personalHook.saveStatus === 'confirmed' && !personalHook.dirty) && <PreparationActionButton label="저장하고 준비 완료" loading={personalHook.phase === 'saving' || personalHook.phase === 'confirming'} loadingLabel={personalHook.phase === 'saving' ? '취향 저장 중' : '준비 완료 처리 중'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || conditionDirty || shared.saving || rebaseRequired} onClick={() => void personalHook.saveAndConfirm()} />}</div>}
                 </div>}
               </fieldset>
             </>}
@@ -376,7 +378,7 @@ export default function RoomPage() {
               : localGenerationBlocker || sharedGenerationBlocker || generationStart.message
                 || (generationStart.busy ? '저장된 조건을 확인하고 있어요.' : '준비 완료한 사람의 취향으로 경로를 만들어요.')}</p>
           </div>
-          <PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role === 'OWNER' ? '일정 만들기' : '방장이 시작할 수 있어요'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || entry.member.role !== 'OWNER' || fatalAccess || generationStart.busy || Boolean(generationCtaBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); }} ariaDescribedBy="tw-generation-note" />
+          <PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role !== 'OWNER' ? '방장이 시작할 수 있어요' : generationStart.hasCurrentPlan ? '일정 열기' : '새 일정 만들기'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || entry.member.role !== 'OWNER' || fatalAccess || generationStart.busy || Boolean(generationCtaBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); }} ariaDescribedBy="tw-generation-note" />
         </section>
       </section>}
     </div>}
