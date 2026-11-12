@@ -38,9 +38,10 @@ export function useCanvasRoutes(
   tripId: string, conditionsVersion: number | null, mode: CanvasTravelMode,
   document: CanvasDocument | null, activeDayId: string | null, preview: boolean,
   effectiveModeForEdge?: (edgeId: string) => CanvasTravelMode,
+  includeGeometry = false,
 ) {
   const planJson = JSON.stringify({
-    scope: JSON.stringify([tripId, conditionsVersion, preview]),
+    scope: JSON.stringify([tripId, conditionsVersion, mode, preview, includeGeometry]),
     requests: preview ? [] : collectCanvasRouteRequests(tripId, conditionsVersion, mode, document, activeDayId, effectiveModeForEdge),
   });
   const plan = useMemo(() => JSON.parse(planJson) as RoutePlan, [planJson]);
@@ -67,7 +68,7 @@ export function useCanvasRoutes(
     for (const request of plan.requests) {
       const key = canvasRouteKey(request);
       void controller.load(key, async signal => {
-        try { return { route: await getCanvasRoute(request, signal) }; }
+        try { return { route: await getCanvasRoute(request, signal, { routeGeometry: includeGeometry }) }; }
         catch (error) {
           if (signal.aborted) return { route: null, errorCode: 'ABORTED' };
           return { route: null, errorCode: error instanceof CanvasHttpError ? error.code : 'NETWORK_ERROR' };
@@ -85,7 +86,7 @@ export function useCanvasRoutes(
       });
     }
     return () => { active = false; };
-  }, [controller, plan, preview]);
+  }, [controller, plan, preview, includeGeometry]);
 
   const retry = useCallback(() => {
     const generation = scopeGeneration.current;
@@ -95,7 +96,7 @@ export function useCanvasRoutes(
       controller.retry(key);
       setStates(previous => new Map(previous).set(key, { scope, phase: 'loading', route: null }));
       void controller.load(key, async signal => {
-        try { return { route: await getCanvasRoute(request, signal) }; }
+        try { return { route: await getCanvasRoute(request, signal, { routeGeometry: includeGeometry }) }; }
         catch (error) {
           if (signal.aborted) return { route: null, errorCode: 'ABORTED' };
           return { route: null, errorCode: error instanceof CanvasHttpError ? error.code : 'NETWORK_ERROR' };
@@ -113,7 +114,7 @@ export function useCanvasRoutes(
         });
       });
     }
-  }, [controller]);
+  }, [controller, includeGeometry]);
 
   const labels = useMemo(() => {
     const byEdge = new Map<string, string>();
@@ -130,5 +131,14 @@ export function useCanvasRoutes(
     const state = candidate?.scope === plan.scope ? candidate : undefined;
     return state?.phase === 'error' || state?.phase === 'stale' || state?.route?.status === 'unknown';
   });
-  return { labels, hasIssue, retry, routeCount: plan.requests.length };
+  const routesByEdge = useMemo(() => {
+    const byEdge = new Map<string, CanvasRoute>();
+    for (const request of plan.requests) {
+      const state = states.get(canvasRouteKey(request));
+      const currentState = state?.scope === plan.scope ? state : undefined;
+      if (currentState?.phase === 'ready' && currentState.route) for (const edgeId of request.edgeIds) byEdge.set(edgeId, currentState.route);
+    }
+    return byEdge;
+  }, [plan, states]);
+  return { labels, routesByEdge, hasIssue, retry, routeCount: plan.requests.length };
 }

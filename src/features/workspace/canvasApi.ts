@@ -5,7 +5,7 @@ export class CanvasHttpError extends Error {
   status: number; code: string; current?: CanvasState;
   constructor(status: number, code: string, message: string, current?: CanvasState) { super(message); this.status = status; this.code = code; this.current = current; this.name = 'CanvasHttpError'; }
 }
-type Options = { signal?: AbortSignal; fetcher?: typeof fetch };
+type Options = { signal?: AbortSignal; fetcher?: typeof fetch; routeGeometry?: boolean };
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const nullableText = (value: unknown) => value === null || typeof value === 'string';
 const exactKeys=(value:Record<string,unknown>,keys:string[])=>Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
@@ -89,7 +89,7 @@ export async function getCanvasRoute(input: CanvasRouteInput, signal?: AbortSign
   }
   const query = new URLSearchParams({ sourceContentid: String(input.sourceContentid), targetContentid: String(input.targetContentid), expectedConditionsVersion: String(input.conditionsVersion) });
   if (input.modeOverride) query.set('mode', input.modeOverride);
-  const value = await request(`${pathFor(input.tripId)}/canvas/route?${query}`, { method: 'GET' }, { ...options, signal });
+  const value = await request(`${pathFor(input.tripId)}/canvas/route?${query}`, { method: 'GET', headers: options.routeGeometry ? { 'X-Canvas-Route-Geometry': '1' } : undefined }, { ...options, signal });
   const route = parseCanvasRoute(value, input);
   if (!route) throw new CanvasHttpError(502, 'INVALID_RESPONSE', '경로 응답의 조건이나 장소가 일치하지 않아요.');
   return route;
