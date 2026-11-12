@@ -14,6 +14,10 @@ export function MapIcon(props: IconProps) {
   return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}><path d="m3.5 6 5.7-2.5 5.6 2.5L20.5 4v14l-5.7 2.5-5.6-2.5L3.5 20V6Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M9.2 3.8v14.4m5.6-12.2v14.2" stroke="currentColor" strokeWidth="1.4"/></svg>;
 }
 
+export function ItineraryIcon(props: IconProps) {
+  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}><path d="M8 5.5h12M8 12h12M8 18.5h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><circle cx="4.5" cy="5.5" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="18.5" r="1" fill="currentColor"/></svg>;
+}
+
 export function CheckIcon(props: IconProps) {
   return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}><path d="m5 12.5 4.2 4.2L19 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }

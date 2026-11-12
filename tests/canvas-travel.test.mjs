@@ -6,7 +6,7 @@ import { canvasClipboardCopy, copyCanvasNode, replaceCanvasPlace } from '../src/
 
 const uuid = '10000000-0000-4000-8000-000000000001';
 const input = { tripId: uuid, sourceContentid: -17, targetContentid: 22, conditionsVersion: 3, mode: 'walk' };
-const result = (overrides = {}) => ({ sourceContentid: -17, targetContentid: 22, conditionsVersion: 3, mode: 'walk', status: 'verified', durationSeconds: 3661, distanceMeters: 1200, checkedAt: '2026-11-11T00:00:00Z', reasonCodes: [], ...overrides });
+const result = (overrides = {}) => ({ sourceContentid: -17, targetContentid: 22, conditionsVersion: 3, mode: 'walk', status: 'verified', durationSeconds: 3661, distanceMeters: 1200, checkedAt: '2026-11-11T00:00:00Z', reasonCodes: [], geometry: [], ...overrides });
 const deferred = () => {
   let resolve;
   const promise = new Promise(done => { resolve = done; });
@@ -36,6 +36,20 @@ test('route parser requires exact signed IDs, condition version, mode, and coher
   assert.equal(parseCanvasRoute(result({ status: 'unknown', durationSeconds: null, distanceMeters: null }), input)?.status, 'unknown');
 });
 
+test('route geometry accepts legacy shape and validates opt-in WGS84 points', () => {
+  const legacy = result(); delete legacy.geometry;
+  assert.deepEqual(parseCanvasRoute(legacy, input)?.geometry, []);
+  const path = [{ latitude: 36.1, longitude: 127.4 }, { latitude: -90, longitude: 180 }];
+  assert.deepEqual(parseCanvasRoute(result({ geometry: path }), input)?.geometry, path);
+  for (const geometry of [
+    [{ latitude: 90.1, longitude: 127 }], [{ latitude: 36, longitude: -180.1 }],
+    [{ latitude: NaN, longitude: 127 }], [{ latitude: 36, longitude: Infinity }],
+    [{ latitude: 36, longitude: 127, crs: 'WGS84' }], new Array(2049).fill({ latitude: 36, longitude: 127 }),
+  ]) assert.equal(parseCanvasRoute(result({ geometry }), input), null);
+  assert.equal(parseCanvasRoute(result({ status: 'unknown', durationSeconds: null, distanceMeters: null, geometry: [] }), input)?.status, 'unknown');
+  assert.equal(parseCanvasRoute(result({ status: 'unknown', durationSeconds: null, distanceMeters: null, geometry: path }), input), null);
+});
+
 test('route labels round up partial minutes and never invent a duration', () => {
   assert.equal(formatCanvasRouteLabel(parseCanvasRoute(result({ durationSeconds: 61 }), input)), '도보 2분');
   assert.equal(formatCanvasRouteLabel(parseCanvasRoute(result({ durationSeconds: 3661 }), input)), '도보 1시간 2분');
@@ -54,6 +68,19 @@ test('an explicit leg mode is sent as an optional route query and validated agai
   assert.equal(route.mode,'car');
   assert.match(captured.path,/\?sourceContentid=-17&targetContentid=22&expectedConditionsVersion=3&mode=car$/u);
   await assert.rejects(getCanvasRoute({...overrideInput,mode:'walk'},undefined,{fetcher:async()=>new Response(JSON.stringify(result()),{status:200})}),/경로 조회 정보를 확인/u);
+});
+
+test('route geometry header is opt-in and response identity remains fenced', async () => {
+  let captured;
+  const route = await getCanvasRoute(input, undefined, { routeGeometry: true, fetcher: async (path, init) => {
+    captured = { path, init };
+    return new Response(JSON.stringify(result({ geometry: [{ latitude: 36, longitude: 127 }] })), { status: 200 });
+  } });
+  assert.equal(route.geometry.length, 1);
+  assert.equal(new Headers(captured.init.headers).get('X-Canvas-Route-Geometry'), '1');
+  for (const wrong of [result({ sourceContentid: 22 }), result({ targetContentid: -17 }), result({ conditionsVersion: 4 }), result({ mode: 'car' })]) {
+    await assert.rejects(getCanvasRoute(input, undefined, { routeGeometry: true, fetcher: async () => new Response(JSON.stringify(wrong), { status: 200 }) }), /경로 응답/u);
+  }
 });
 
 test('route requests include only current-day directed place edges and deduplicate content pairs', () => {

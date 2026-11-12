@@ -10,6 +10,7 @@ export type CanvasRoute = {
   distanceMeters: number | null;
   checkedAt: string;
   reasonCodes: string[];
+  geometry: Array<{ latitude: number; longitude: number }>;
 };
 export type CanvasRouteInput = {
   tripId: string;
@@ -34,7 +35,8 @@ function validTimestamp(value: unknown): value is string {
 const modes: CanvasTravelMode[] = ['car', 'walk', 'transit', 'charter', null];
 
 export function parseCanvasRoute(value: unknown, expected: CanvasRouteInput): CanvasRoute | null {
-  if (!record(value) || !exactKeys(value, ['sourceContentid', 'targetContentid', 'conditionsVersion', 'mode', 'status', 'durationSeconds', 'distanceMeters', 'checkedAt', 'reasonCodes'])) return null;
+  const keys = ['sourceContentid', 'targetContentid', 'conditionsVersion', 'mode', 'status', 'durationSeconds', 'distanceMeters', 'checkedAt', 'reasonCodes'];
+  if (!record(value) || !(exactKeys(value, keys) || exactKeys(value, [...keys, 'geometry']))) return null;
   if (!validContentid(value.sourceContentid) || value.sourceContentid !== expected.sourceContentid || !validContentid(value.targetContentid) || value.targetContentid !== expected.targetContentid) return null;
   if (!validConditionsVersion(value.conditionsVersion) || value.conditionsVersion !== expected.conditionsVersion || !validConditionsVersion(expected.conditionsVersion) || !modes.includes(value.mode as CanvasTravelMode) || value.mode !== expected.mode) return null;
   if (value.status !== 'verified' && value.status !== 'unknown') return null;
@@ -46,6 +48,11 @@ export function parseCanvasRoute(value: unknown, expected: CanvasRouteInput): Ca
   const distanceMeters = value.distanceMeters as number | null;
   if ((durationSeconds !== null && durationSeconds > 4294967295) || (distanceMeters !== null && distanceMeters > 4294967295)) return null;
   if (!Array.isArray(value.reasonCodes) || value.reasonCodes.length > 20 || !value.reasonCodes.every(code => typeof code === 'string' && code.length > 0 && code.length <= 80)) return null;
+  const geometry = value.geometry === undefined ? [] : value.geometry;
+  if (!Array.isArray(geometry) || geometry.length > 2048 || (value.status === 'unknown' && geometry.length > 0)
+    || !geometry.every(point => record(point) && exactKeys(point, ['latitude', 'longitude'])
+      && typeof point.latitude === 'number' && Number.isFinite(point.latitude) && Math.abs(point.latitude) <= 90
+      && typeof point.longitude === 'number' && Number.isFinite(point.longitude) && Math.abs(point.longitude) <= 180)) return null;
   return {
     sourceContentid: value.sourceContentid,
     targetContentid: value.targetContentid,
@@ -56,6 +63,7 @@ export function parseCanvasRoute(value: unknown, expected: CanvasRouteInput): Ca
     distanceMeters,
     checkedAt: value.checkedAt,
     reasonCodes: [...value.reasonCodes] as string[],
+    geometry: geometry as Array<{ latitude: number; longitude: number }>,
   };
 }
 

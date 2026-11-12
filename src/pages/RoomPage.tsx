@@ -3,6 +3,7 @@ import AsyncState from '../components/ui/AsyncState';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import CanvasPreview from '../features/workspace/CanvasPreview';
+import CanvasItinerary from '../features/workspace/CanvasItinerary';
 import { usePersonalPreparation } from '../features/personal/usePersonalPreparation';
 import { useSharedPreparation } from '../features/room/useSharedPreparation';
 import { useGenerationStart, type GenerationCanvasHandoff } from '../features/generation/useGenerationStart';
@@ -15,7 +16,7 @@ import { withPreservedHiddenConditions } from '../features/preparation/preparati
 import PreparationActionButton from '../features/preparation/PreparationActionButton';
 import InfoTip from '../features/preparation/InfoTip';
 import RegionPicker from '../features/preparation/RegionPicker';
-import { CheckIcon, MapIcon, PanelIcon } from '../features/preparation/PreparationIcons';
+import { CheckIcon, ItineraryIcon, MapIcon, PanelIcon } from '../features/preparation/PreparationIcons';
 import {
   emptyRoomDraft, formatDraftBudget, formatDraftDate, formatDraftPeople,
   formatDraftTransport, loadRoomEntry, previewPersonalDraft, validateRoomDraft, type PersonalDraft, type RoomDraft, type RoomEntry,
@@ -34,7 +35,7 @@ const previewConditions: RoomDraft = {
   expectedPeople: '3', budget: '600000', transport: 'car', departure: '청주역', returnRoute: '청주역',
   lodging: '1박 필요', fixedSchedule: '둘째 날 18:00까지 청주역 복귀',
 };
-type View = 'preparation' | 'canvas';
+type View = 'preparation' | 'canvas' | 'itinerary';
 
 type RankedPreferenceProps = {
   field: 'avoid' | 'food';
@@ -78,7 +79,7 @@ export default function RoomPage() {
   const [entry, setEntry] = useState<RoomEntry | null>(isPreview ? previewEntry : null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(isPreview ? 'ready' : tripId ? 'loading' : 'error');
   const [errorMessage, setErrorMessage] = useState('여행방 주소가 없어요. 시작 화면에서 방을 만들거나 초대 코드로 참여해 주세요.');
-  const [view, setView] = useState<View>(query.get('view') === 'canvas' ? 'canvas' : 'preparation');
+  const [view, setView] = useState<View>(query.get('view') === 'canvas' ? 'canvas' : query.get('view') === 'itinerary' ? 'itinerary' : 'preparation');
   const [canvasHandoff, setCanvasHandoff] = useState<GenerationCanvasHandoff | null>(null);
   const [accessLostTripId, setAccessLostTripId] = useState<string | null>(null);
   const [conditions, setConditions] = useState<RoomDraft>(isPreview ? previewConditions : { ...emptyRoomDraft });
@@ -98,6 +99,7 @@ export default function RoomPage() {
   const navPanelRef = useRef<HTMLElement>(null);
   const preparationRailRef = useRef<HTMLButtonElement>(null);
   const canvasRailRef = useRef<HTMLButtonElement>(null);
+  const itineraryRailRef = useRef<HTMLButtonElement>(null);
   const [copyFeedback, setCopyFeedback] = useState<{ message: string; success: boolean; roomId: string; view: View } | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyAttemptRef = useRef(0);
@@ -347,13 +349,14 @@ export default function RoomPage() {
         <span className="prep-rail-rule" />
         <button ref={preparationRailRef} type="button" className={`prep-rail-button ${view === 'preparation' ? 'is-active' : ''}`} aria-current={view === 'preparation' ? 'page' : undefined} aria-label="여행 준비" title="여행 준비" onClick={() => changeView('preparation')}><CheckIcon /></button>
         <button ref={canvasRailRef} type="button" className={`prep-rail-button ${view === 'canvas' ? 'is-active' : ''}`} aria-current={view === 'canvas' ? 'page' : undefined} aria-label="일정 캔버스" title="일정 캔버스" onClick={() => changeView('canvas')}><MapIcon /></button>
+        <button ref={itineraryRailRef} type="button" className={`prep-rail-button ${view === 'itinerary' ? 'is-active' : ''}`} aria-current={view === 'itinerary' ? 'page' : undefined} aria-label="여행 일정" title="여행 일정" onClick={() => changeView('itinerary')}><ItineraryIcon /></button>
       </aside>
       {mobileNavOpen && <aside ref={navPanelRef} className="prep-nav-overlay" aria-label="여행 메뉴">
         <div className="prep-nav-heading"><strong>메뉴</strong><button ref={navCloseRef} type="button" className="prep-nav-close" aria-label="탐색 메뉴 닫기" onClick={() => { setMobileNavOpen(false); navToggleRef.current?.focus(); }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button></div>
-        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className={view === 'preparation' ? 'is-selected' : ''} type="button" aria-current={view === 'preparation' ? 'page' : undefined} onClick={() => { changeView('preparation'); preparationRailRef.current?.focus(); }}><CheckIcon /><span>여행 준비</span></button><button className={view === 'canvas' ? 'is-selected' : ''} type="button" aria-current={view === 'canvas' ? 'page' : undefined} onClick={() => { changeView('canvas'); canvasRailRef.current?.focus(); }}><MapIcon /><span>일정 캔버스</span></button></nav>
+        <nav className="prep-nav-links" aria-label="여행방 메뉴"><button className={view === 'preparation' ? 'is-selected' : ''} type="button" aria-current={view === 'preparation' ? 'page' : undefined} onClick={() => { changeView('preparation'); preparationRailRef.current?.focus(); }}><CheckIcon /><span>여행 준비</span></button><button className={view === 'canvas' ? 'is-selected' : ''} type="button" aria-current={view === 'canvas' ? 'page' : undefined} onClick={() => { changeView('canvas'); canvasRailRef.current?.focus(); }}><MapIcon /><span>일정 캔버스</span></button><button className={view === 'itinerary' ? 'is-selected' : ''} type="button" aria-current={view === 'itinerary' ? 'page' : undefined} onClick={() => { changeView('itinerary'); itineraryRailRef.current?.focus(); }}><ItineraryIcon /><span>여행 일정</span></button></nav>
         <a className="prep-nav-return" href="/">여행 시작으로 돌아가기</a>
       </aside>}
-      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} preview={isPreview} startDate={conditions.startDate} endDate={conditions.endDate} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} handoff={canvasHandoff?.tripId === entry.trip.id ? canvasHandoff : null} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
+      {view === 'canvas' ? <CanvasPreview key={entry.trip.id} tripId={entry.trip.id} preview={isPreview} startDate={conditions.startDate} endDate={conditions.endDate} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} handoff={canvasHandoff?.tripId === entry.trip.id ? canvasHandoff : null} /> : view === 'itinerary' ? <CanvasItinerary tripId={entry.trip.id} preview={isPreview} tripName={entry.trip.name} conditionsVersion={isPreview ? null : shared.preparation?.conditionsVersion ?? null} transport={isPreview ? null : shared.preparation?.conditions.transport ?? null} onEditCanvas={() => { changeView('canvas'); canvasRailRef.current?.focus(); }} /> : <section className="prep-main" aria-label="여행 준비 작업 공간">
         <header className="prep-page-heading">
           <div className="prep-heading-info">
             <h1>{entry.trip.name || '여행 준비'}</h1>
