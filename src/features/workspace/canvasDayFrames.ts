@@ -12,8 +12,8 @@ export type CanvasFrameLayout = {
 };
 
 const FRAME_WIDTH = 560;
-const FRAME_GAP_X = 36;
-const FRAME_GAP_Y = 36;
+const FRAME_GAP_X = 64;
+const FRAME_GAP_Y = 64;
 const FRAME_COLUMNS = 3;
 const HEADER_HEIGHT = 72;
 const FRAME_PADDING = 22;
@@ -97,7 +97,7 @@ function validMeasuredSize(size: CanvasMeasuredSize | undefined): size is Canvas
 }
 
 function isUnmodifiedImportedPlaceRoute(frameNodes: CanvasNode[], placeNodes: CanvasPlaceNode[]): boolean {
-  if (frameNodes.length < 3 || placeNodes.length !== frameNodes.length || placeNodes.some(node => node.intent !== 'route' || !node.source)) return false;
+  if (frameNodes.length < 2 || placeNodes.length !== frameNodes.length || placeNodes.some(node => node.intent !== 'route' || !node.source)) return false;
   const source = placeNodes[0].source!;
   if (placeNodes.some(node => node.source!.planId !== source.planId || node.source!.versionId !== source.versionId)) return false;
   const near = (left: number, right: number) => Math.abs(left - right) <= 1;
@@ -144,7 +144,7 @@ export function layoutCanvasDayFrames(
         column: index % 2,
         size: validMeasuredSize(measuredSizes?.get(node.id)) ? measuredSizes!.get(node.id)! : estimatedNodeSize(node),
       }));
-      const gap = 28;
+      const gap = 64;
       const left = FRAME_PADDING;
       const top = HEADER_HEIGHT + FRAME_PADDING;
       const rowCount = Math.ceil(cards.length / 2);

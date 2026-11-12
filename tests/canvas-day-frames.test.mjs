@@ -169,9 +169,9 @@ test('an imported three-place row projects cards to a balanced two over one layo
   const [first,second,third]=nodes.map(node=>canvasFrameNodePosition(node,frame));
   assert.equal(first.y,second.y);assert.ok(third.y>first.y);
   assert.ok(Math.abs((third.x+sizes.get(id(42)).width/2)-((first.x+second.x+sizes.get(id(41)).width)/2))<=1,'bottom place is centered under the top row');
-  assert.ok(third.y>=first.y+sizes.get(id(40)).height+28,'bottom row clears the taller top card');
+  assert.ok(third.y>=first.y+sizes.get(id(40)).height+64,'bottom row clears the taller top card');
   assert.ok(first.x>=0&&first.y>=72);
-  const moved=canvasDocumentPosition({x:third.x+10,y:third.y},frame,nodes[2]);assert.deepEqual(moved,{x:84,y:548},'inverse materializes the bottom card display position plus the 10px drag');
+  const moved=canvasDocumentPosition({x:third.x+10,y:third.y},frame,nodes[2]);assert.deepEqual(moved,{x:102,y:584},'inverse materializes the bottom card display position plus the 10px drag');
   const original=makeDocument(days,nodes);
   const materialized=materializeProjectedDay(original,days[0].id,sizes,nodes[2].id);
   const dragged={...materialized,nodes:materialized.nodes.map(node=>node.id===nodes[2].id?{...node,position:moved}:node)};
@@ -182,8 +182,8 @@ test('an imported three-place row projects cards to a balanced two over one layo
   assert.deepEqual(canvasFrameNodePosition(saved.nodes[2],stableFrame),{x:third.x+10,y:third.y},'the moved bottom card retains its 10px drag after save');
 });
 
-test('four, five, and six imported places use measured snake rows without overlaps or document writes', () => {
-  for (const count of [4, 5, 6]) {
+test('two, four, five, and six imported places use measured snake rows without overlaps or document writes', () => {
+  for (const count of [2, 4, 5, 6]) {
     const day = { id: id(1), date: null };
     const nodes = Array.from({ length: count }, (_, index) => ({
       id: id(100 + index), kind: 'place', dayId: day.id,
@@ -208,7 +208,7 @@ test('four, five, and six imported places use measured snake rows without overla
       assert.ok(point.x + size.width <= frame.width);
       assert.ok(point.y + size.height <= frame.height);
       if (index >= 2 && Math.floor(index / 2) === 1) {
-        assert.equal(point.y, positions[0].y + Math.max(sizes.get(nodes[0].id).height, sizes.get(nodes[1].id).height) + 28);
+        assert.equal(point.y, positions[0].y + Math.max(sizes.get(nodes[0].id).height, sizes.get(nodes[1].id).height) + 64);
       }
     }
     for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
