@@ -34,6 +34,8 @@ export type RoomDraft = {
   budget: string;
   transport: 'undecided' | 'car' | 'transit' | 'charter' | 'walk';
   departure: string;
+  departureTime: string;
+  departureContentid: string;
   returnRoute: string;
   lodging: string;
   fixedSchedule: string;
@@ -41,7 +43,7 @@ export type RoomDraft = {
 
 export const emptyRoomDraft: RoomDraft = {
   region: '', startDate: '', endDate: '', expectedPeople: '', budget: '', transport: 'undecided',
-  departure: '', returnRoute: '', lodging: '', fixedSchedule: '',
+  departure: '', departureTime: '09:00', departureContentid: '', returnRoute: '', lodging: '', fixedSchedule: '',
 };
 
 export function validateRoomDraft(draft: RoomDraft): Partial<Record<keyof RoomDraft, string>> {
@@ -62,6 +64,17 @@ export function validateRoomDraft(draft: RoomDraft): Partial<Record<keyof RoomDr
 }
 
 export type PreferenceImportance = 'required' | 'preferred';
+export type ScheduleItem = {
+  id: string;
+  kind: 'lodging' | 'appointment';
+  scope: 'personal' | 'group' | null;
+  placeQuery: string;
+  contentid: number | null;
+  date: string | null;
+  time: string | null;
+  endDate: string | null;
+  endTime: string | null;
+};
 export type PersonalDraft = {
   originalText: string;
   likes: string;
@@ -70,18 +83,19 @@ export type PersonalDraft = {
   food: string;
   foodImportance: PreferenceImportance;
   walking: '20' | '40' | 'unlimited' | '';
+  scheduleItems: ScheduleItem[];
 };
 
 export const emptyPersonalDraft: PersonalDraft = {
   originalText: '', likes: '', avoid: '', avoidImportance: 'required',
-  food: '', foodImportance: 'preferred', walking: '',
+  food: '', foodImportance: 'preferred', walking: '', scheduleItems: [],
 };
 
 export const previewPersonalDraft: PersonalDraft = {
   originalText: '자연 풍경과 조용한 카페가 좋아요. 사진을 찍으며 여유롭게 쉬고 싶고, 오래 걷는 코스는 피하고 싶어요.\n\n식사는 너무 맵지 않으면 좋겠어요.',
   likes: '자연 풍경, 조용한 카페, 여유로운 휴식',
   avoid: '긴 도보 이동', avoidImportance: 'required', food: '맵지 않은 음식',
-  foodImportance: 'preferred', walking: '20',
+  foodImportance: 'preferred', walking: '20', scheduleItems: [],
 };
 
 export function personalDraftComplete(draft: PersonalDraft): boolean {
@@ -111,5 +125,5 @@ export function formatDraftTransport(transport: RoomDraft['transport']): string 
 }
 
 export function roomConditionsStarted(draft: RoomDraft): boolean {
-  return Boolean(draft.region || draft.startDate || draft.endDate || draft.expectedPeople || draft.budget || draft.departure || draft.returnRoute || draft.lodging || draft.fixedSchedule || draft.transport !== 'undecided');
+  return Boolean(draft.region || draft.startDate || draft.endDate || draft.expectedPeople || draft.budget || draft.departure || draft.departureContentid || draft.returnRoute || draft.lodging || draft.fixedSchedule || draft.transport !== 'undecided');
 }

@@ -1,4 +1,4 @@
-import type { PersonalDraft, PreferenceImportance } from '../room/roomData.ts';
+import type { PersonalDraft, PreferenceImportance, ScheduleItem } from '../room/roomData.ts';
 
 export type PersonalConfirmation = {
   status: 'writing' | 'confirmed';
@@ -12,6 +12,7 @@ export type PersonalPreferences = {
   preferenceVersion: number;
   draft: PersonalDraft;
   confirmation: PersonalConfirmation;
+  clarifications: Array<{ itemId: string; fields: string[]; code: string; candidates: Array<{ contentid: number; title: string; address: string | null }> }>;
 };
 
 export type Interpretation = {
@@ -19,6 +20,7 @@ export type Interpretation = {
   sourcePreferenceVersion: number;
   suggestions: Omit<PersonalDraft, 'originalText'>;
   needsWalkingAnswer: boolean;
+  clarifications: PersonalPreferences['clarifications'];
 };
 
 export class PersonalApiError extends Error {
@@ -70,8 +72,26 @@ function validText(value: unknown, limit: number, multiline: boolean): value is 
   return true;
 }
 
+function validDate(value: unknown): value is string | null {
+  if (value === null) return true;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+function parseScheduleItems(value: unknown, optional = false): ScheduleItem[] {
+  if (value === undefined && optional) return [];
+  if (!Array.isArray(value) || value.length > 20) return invalidDto();
+  const ids = new Set<string>();
+  const items = value.map((entry): ScheduleItem => {
+    if (!record(entry) || Object.keys(entry).sort().join('|') !== ['id','kind','scope','placeQuery','contentid','date','time','endDate','endTime'].sort().join('|') || typeof entry.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(entry.id) || ids.has(entry.id) || (entry.kind !== 'lodging' && entry.kind !== 'appointment') || (entry.scope !== null && entry.scope !== 'personal' && entry.scope !== 'group') || typeof entry.placeQuery !== 'string' || [...entry.placeQuery].length > 200 || (entry.contentid !== null && (!Number.isInteger(entry.contentid) || (entry.contentid as number) < -2147483648 || (entry.contentid as number) > 2147483647)) || !validDate(entry.date) || !validDate(entry.endDate) || ![entry.time, entry.endTime].every(time => time === null || (typeof time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/u.test(time)))) return invalidDto();
+    ids.add(entry.id);
+    return { id: entry.id, kind: entry.kind, scope: entry.scope, placeQuery: entry.placeQuery, contentid: entry.contentid as number | null, date: entry.date as string | null, time: entry.time as string | null, endDate: entry.endDate as string | null, endTime: entry.endTime as string | null };
+  });
+  return items;
+}
+
 function parseDraft(value: unknown): PersonalDraft {
-  if (!record(value) || Object.keys(value).sort().join('|') !== [...keys].sort().join('|')) return invalidDto();
+  if (!record(value) || !([Object.keys(value).sort().join('|') === [...keys].sort().join('|'), Object.keys(value).sort().join('|') === [...keys, 'scheduleItems'].sort().join('|')].some(Boolean))) return invalidDto();
   if (!validText(value.originalText, textLimits.originalText, true) || !validText(value.likes, textLimits.likes, true) || !validText(value.avoid, textLimits.avoid, true) || !validText(value.food, textLimits.food, true)) return invalidDto();
   if (typeof value.avoidImportance !== 'string' || !importanceValues.includes(value.avoidImportance as PreferenceImportance)) return invalidDto();
   if (typeof value.foodImportance !== 'string' || !importanceValues.includes(value.foodImportance as PreferenceImportance)) return invalidDto();
@@ -81,11 +101,25 @@ function parseDraft(value: unknown): PersonalDraft {
     avoidImportance: value.avoidImportance as PreferenceImportance, food: value.food ?? '',
     foodImportance: value.foodImportance as PreferenceImportance,
     walking: (value.walking ?? '') as PersonalDraft['walking'],
+    scheduleItems: parseScheduleItems(value.scheduleItems, true),
   };
 }
 
+function parseClarifications(value: unknown): PersonalPreferences['clarifications'] {
+  const raw = value ?? [];
+  if (!Array.isArray(raw) || raw.length > 20) return invalidDto();
+  return raw.map((item) => {
+    if (!record(item) || typeof item.itemId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(item.itemId) || !Array.isArray(item.fields) || item.fields.some(field => typeof field !== 'string') || typeof item.code !== 'string' || !Array.isArray(item.candidates)) return invalidDto();
+    const candidates = item.candidates.map(candidate => {
+      if (!record(candidate) || !Number.isInteger(candidate.contentid) || (candidate.contentid as number) < -2147483648 || (candidate.contentid as number) > 2147483647 || typeof candidate.title !== 'string' || (candidate.address !== null && typeof candidate.address !== 'string')) return invalidDto();
+      return { contentid: candidate.contentid as number, title: candidate.title, address: candidate.address as string | null };
+    });
+    return { itemId: item.itemId, fields: item.fields as string[], code: item.code, candidates };
+  });
+}
+
 export function parsePersonalPreferences(value: unknown): PersonalPreferences {
-  if (!record(value) || Object.keys(value).sort().join('|') !== ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion'].sort().join('|') || !validVersion(value.conditionsVersion) || !validVersion(value.preferenceVersion) || !record(value.confirmation)) return invalidDto();
+  if (!record(value) || !([Object.keys(value).sort().join('|') === ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion'].sort().join('|'), Object.keys(value).sort().join('|') === ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion', 'clarifications'].sort().join('|')].some(Boolean)) || !validVersion(value.conditionsVersion) || !validVersion(value.preferenceVersion) || !record(value.confirmation)) return invalidDto();
   const confirmation = value.confirmation;
   if (Object.keys(confirmation).sort().join('|') !== ['status', 'confirmedConditionsVersion', 'confirmedPreferenceVersion', 'confirmedAt'].sort().join('|')) return invalidDto();
   if ((confirmation.status !== 'writing' && confirmation.status !== 'confirmed') ||
@@ -94,6 +128,7 @@ export function parsePersonalPreferences(value: unknown): PersonalPreferences {
       !(confirmation.confirmedAt === null || (typeof confirmation.confirmedAt === 'string' && !Number.isNaN(Date.parse(confirmation.confirmedAt))))) return invalidDto();
   if (confirmation.status === 'confirmed' && (confirmation.confirmedConditionsVersion !== value.conditionsVersion || confirmation.confirmedPreferenceVersion !== value.preferenceVersion || confirmation.confirmedAt === null)) return invalidDto();
   if (confirmation.status === 'writing' && (confirmation.confirmedConditionsVersion !== null || confirmation.confirmedPreferenceVersion !== null || confirmation.confirmedAt !== null)) return invalidDto();
+  const clarifications = parseClarifications(value.clarifications);
   return {
     conditionsVersion: value.conditionsVersion,
     preferenceVersion: value.preferenceVersion,
@@ -104,12 +139,14 @@ export function parsePersonalPreferences(value: unknown): PersonalPreferences {
       confirmedPreferenceVersion: confirmation.confirmedPreferenceVersion,
       confirmedAt: confirmation.confirmedAt,
     },
+    clarifications,
   };
 }
 
 export function parseInterpretation(value: unknown): Interpretation {
-  if (!record(value) || Object.keys(value).sort().join('|') !== ['sourceConditionsVersion', 'sourcePreferenceVersion', 'suggestions', 'needsWalkingAnswer'].sort().join('|') || !validVersion(value.sourceConditionsVersion) || !validVersion(value.sourcePreferenceVersion) || typeof value.needsWalkingAnswer !== 'boolean' || !record(value.suggestions)) return invalidDto();
-  if (Object.keys(value.suggestions).sort().join('|') !== ['likes', 'avoid', 'avoidImportance', 'food', 'foodImportance', 'walking'].sort().join('|')) return invalidDto();
+  if (!record(value) || !([Object.keys(value).sort().join('|') === ['sourceConditionsVersion', 'sourcePreferenceVersion', 'suggestions', 'needsWalkingAnswer'].sort().join('|'), Object.keys(value).sort().join('|') === ['sourceConditionsVersion', 'sourcePreferenceVersion', 'suggestions', 'needsWalkingAnswer', 'clarifications'].sort().join('|')].some(Boolean)) || !validVersion(value.sourceConditionsVersion) || !validVersion(value.sourcePreferenceVersion) || typeof value.needsWalkingAnswer !== 'boolean' || !record(value.suggestions)) return invalidDto();
+  if (Object.keys(value.suggestions).filter(key => key !== 'scheduleItems').sort().join('|') !== ['likes', 'avoid', 'avoidImportance', 'food', 'foodImportance', 'walking'].sort().join('|')) return invalidDto();
+  const scheduleItems = parseScheduleItems(value.suggestions.scheduleItems, true);
   const suggestions = parseDraft({ originalText: null, ...value.suggestions });
   if (suggestions.originalText !== '' || value.needsWalkingAnswer !== (suggestions.walking === '')) return invalidDto();
   return {
@@ -118,8 +155,10 @@ export function parseInterpretation(value: unknown): Interpretation {
     suggestions: {
       likes: suggestions.likes, avoid: suggestions.avoid, avoidImportance: suggestions.avoidImportance,
       food: suggestions.food, foodImportance: suggestions.foodImportance, walking: suggestions.walking,
+      scheduleItems,
     },
     needsWalkingAnswer: value.needsWalkingAnswer,
+    clarifications: parseClarifications(value.clarifications),
   };
 }
 
@@ -183,12 +222,13 @@ export async function saveMyPreferences(tripId: string, expectedConditionsVersio
     originalText: draft.originalText.trim() || null, likes: draft.likes.trim() || null,
     avoid: draft.avoid.trim() || null, avoidImportance: draft.avoidImportance,
     food: draft.food.trim() || null, foodImportance: draft.foodImportance,
-    walking: draft.walking || null,
+    walking: draft.walking || null, scheduleItems: draft.scheduleItems ?? [],
   });
   const payload = await request(path(tripId), 'PUT', { expectedConditionsVersion, expectedPreferenceVersion, draft: {
     originalText: normalized.originalText || null, likes: normalized.likes || null, avoid: normalized.avoid || null,
     avoidImportance: normalized.avoidImportance, food: normalized.food || null, foodImportance: normalized.foodImportance,
     walking: normalized.walking || null,
+    scheduleItems: normalized.scheduleItems,
   } }, options);
   try { return parsePersonalPreferences(payload); }
   catch { throw new PersonalApiError({ status: 0, code: 'INVALID_WRITE_RESPONSE', message: '저장 결과를 확인할 수 없어요. 입력은 유지했어요. 새로고침해 최신 상태를 확인해 주세요.', uncertain: true }); }

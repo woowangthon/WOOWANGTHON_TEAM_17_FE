@@ -1,0 +1,47 @@
+/* Hallmark · shape: app transition · genre: modern-minimal · theme: Wayfind brand adaptation · signature: verified-stage route gauge. */
+/* Hallmark · pre-emit critique: the ring moves only after a real stage change; elapsed time never increases progress. */
+/* Accent is limited to the small circular gauge; the full-screen surface uses paper. */
+.generation-loading {
+  --prep-line: var(--color-border);
+  --prep-ink: var(--color-text);
+  --prep-muted: var(--color-muted);
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) + 1);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-5);
+  background: var(--color-page);
+  color: var(--color-text);
+  animation: generation-loading-enter 180ms ease-out;
+}
+.generation-loading:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -4px; }
+.generation-loading-brand { position: absolute; inset-block-start: var(--space-5); inset-inline-start: var(--space-5); font-size: var(--text-size-secondary); font-weight: 700; }
+.generation-loading-content { width: min(100%, 560px); padding-block: var(--space-9); text-align: center; min-width: 0; }
+.generation-loading h1 { margin: var(--space-7) 0 var(--space-3); font-size: clamp(26px, 3vi, 38px); font-weight: 650; line-height: 1.35; letter-spacing: -.04em; overflow-wrap: break-word; text-wrap: balance; min-width: 0; }
+.generation-loading p { margin: 0; line-height: 1.7; font-size: var(--text-size-secondary); color: var(--color-muted); }
+.generation-loading .generation-loading-caption { margin-top: var(--space-2); font-size: var(--text-size-small); }
+.generation-loading-gauge { position: relative; display: grid; place-items: center; width: 112px; height: 112px; margin-inline: auto; color: var(--color-text); }
+.generation-loading-gauge svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+.generation-loading-gauge circle { fill: none; stroke-width: 8; }
+.generation-loading-gauge-track { stroke: var(--color-border); }
+.generation-loading-gauge-value { stroke: var(--color-accent); stroke-linecap: round; transition: stroke-dasharray 160ms ease-out; }
+.generation-loading-gauge > span { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.generation-loading-gauge small { color: var(--color-muted); font-size: 14px; font-weight: 600; }
+.generation-loading-complete .generation-loading-gauge-value,
+.generation-loading-error .generation-loading-gauge-value { transition: none; }
+.generation-loading-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--space-5); margin-top: var(--space-6); }
+.generation-loading-actions button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 4px; }
+.generation-loading-actions button:active { transform: translateY(1px); }
+@keyframes generation-loading-enter { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .generation-loading { animation: none; }
+  .generation-loading-gauge-value { transition: none; }
+}
+@media (max-width: 480px) {
+  .generation-loading { padding: var(--space-4); }
+  .generation-loading-brand { inset-block-start: var(--space-4); inset-inline-start: var(--space-4); }
+  .generation-loading-content { padding-block: var(--space-8); }
+}

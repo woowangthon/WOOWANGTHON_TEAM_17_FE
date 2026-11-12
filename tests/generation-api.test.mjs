@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createJob, getGeneration, normalizeSelf, putSelfReview, savePlan, saveSettings } from '../src/features/generation/generationApi.ts'
+import { GenerationDeadlineError, withGenerationDeadline } from '../src/features/generation/generationDeadline.ts'
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
 const settings = { activityWindow: { start: '09:00', end: '18:00' }, departureAnchor: null, returnAnchor: null, reviewedCommonFields: [] }
@@ -48,4 +49,12 @@ test('plan save requires explicit acknowledgement and current lock/version CAS',
   assert.equal(call.path, '/api/v1/trips/trip-1/plans/p1/save')
   assert.deepEqual(JSON.parse(call.init.body), { versionId: 'v1', expectedLockVersion: 3, acknowledgeUnverified: true })
   assert.match(call.init.headers['Idempotency-Key'], /^[0-9a-f-]{36}$/)
+})
+
+test('generation request deadline stops a stalled request and propagates caller cancellation', async () => {
+  await assert.rejects(withGenerationDeadline(undefined, 5, async () => new Promise(() => {})), GenerationDeadlineError)
+  const controller = new AbortController()
+  const pending = withGenerationDeadline(controller.signal, 1_000, async () => new Promise(() => {}))
+  controller.abort()
+  await assert.rejects(pending, { name: 'AbortError' })
 })

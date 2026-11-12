@@ -11,13 +11,15 @@ function state(overrides = {}) {
 
 test('does not create a job while public readiness is incomplete', async () => {
   let posts = 0;
+  let readyReported = false;
   const controller = createGenerationStartController({
     getLatest: async () => state({ readyForGeneration: false, reasons: [{ code: 'REVIEW_REQUIRED' }] }),
     create: async () => { posts += 1; }, createKey: () => 'key',
   });
-  const result = await controller.start('trip-a', new AbortController().signal);
+  const result = await controller.start('trip-a', new AbortController().signal, undefined, () => { readyReported = true; });
   assert.equal(result.kind, 'not-ready');
   assert.equal(posts, 0);
+  assert.equal(readyReported, false);
 });
 
 test('reuses an active job without posting a duplicate', async () => {
@@ -28,6 +30,62 @@ test('reuses an active job without posting a duplicate', async () => {
   });
   const result = await controller.start('trip-a', new AbortController().signal);
   assert.equal(result.kind, 'active');
+  assert.equal(posts, 0);
+});
+
+test('reuses the completed server job so the flow can import its plan instead of generating again', async () => {
+  let posts = 0;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({ latestJob: { id: 'job-done', status: 'SUCCEEDED', planId: 'plan-a' } }),
+    create: async () => { posts += 1; }, createKey: () => 'key',
+    isCurrentCompleted: async () => true,
+  });
+  const result = await controller.start('trip-a', new AbortController().signal);
+  assert.equal(result.kind, 'active');
+  assert.equal(result.data.latestJob.id, 'job-done');
+  assert.equal(posts, 0);
+});
+
+test('opening a cached current plan never creates a job when the fresh snapshot says it changed', async () => {
+  let posts = 0;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({
+      latestJob: { id: 'job-done', status: 'SUCCEEDED', planId: 'plan-a' },
+      latestPlan: { planId: 'plan-a', versionId: 'v1', status: 'DRAFT', current: false },
+    }),
+    create: async () => { posts += 1; }, createKey: () => 'key',
+    isCurrentCompleted: async () => false,
+  });
+  const result = await controller.start('trip-a', new AbortController().signal, undefined, undefined, { planId: 'plan-a', versionId: 'v1' });
+  assert.equal(result.kind, 'changed');
+  assert.equal(posts, 0);
+});
+
+test('stale completed job does not prevent a fresh generation job', async () => {
+  let posts = 0;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({ latestJob: { id: 'job-old', status: 'SUCCEEDED', planId: 'plan-old' } }),
+    create: async () => { posts += 1; return { id: 'job-new', status: 'QUEUED' }; }, createKey: () => 'new-key',
+    isCurrentCompleted: async () => false,
+  });
+  const result = await controller.start('trip-a', new AbortController().signal);
+  assert.equal(result.kind, 'started');
+  assert.equal(result.job.id, 'job-new');
+  assert.equal(posts, 1);
+});
+
+test('rechecks local edits after checking whether a completed plan is still current', async () => {
+  let blocked = undefined; let posts = 0; let release;
+  const controller = createGenerationStartController({
+    getLatest: async () => state({ latestJob: { id: 'job-done', status: 'SUCCEEDED', planId: 'plan-a' } }),
+    create: async () => { posts += 1; return { id: 'job-new', status: 'QUEUED' }; }, createKey: () => 'key',
+    isCurrentCompleted: () => new Promise(resolve => { release = resolve; }),
+  });
+  const pending = controller.start('trip-a', new AbortController().signal, () => blocked);
+  await new Promise(resolve => setImmediate(resolve));
+  blocked = '입력이 바뀌었어요.'; release(true);
+  const result = await pending;
+  assert.deepEqual(result, { kind: 'blocked', reason: '입력이 바뀌었어요.' });
   assert.equal(posts, 0);
 });
 
@@ -53,7 +111,7 @@ test('keeps an idempotency key after an uncertain error and changes it with inpu
   assert.deepEqual(keys, ['key-1', 'key-1', 'key-2']);
 });
 
-test('blocks locally without fetching or posting', async () => {
+test('blocks locally before fetching or posting', async () => {
   let gets = 0;
   const controller = createGenerationStartController({
     getLatest: async () => { gets += 1; return state(); },
@@ -78,6 +136,21 @@ test('rechecks local edits after a delayed readiness fetch before creating a job
   const result = await pending;
   assert.equal(result.kind, 'blocked');
   assert.equal(posts, 0);
+});
+
+test('reports authoritative ready state before starting the create request', async () => {
+  let readyReported = false;
+  let releaseCreate;
+  const controller = createGenerationStartController({
+    getLatest: async () => state(),
+    create: () => new Promise(resolve => { releaseCreate = resolve; }),
+    createKey: () => 'ready-key',
+  });
+  const pending = controller.start('trip-a', new AbortController().signal, undefined, () => { readyReported = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(readyReported, true);
+  releaseCreate({ id: 'job-ready', status: 'QUEUED' });
+  assert.equal((await pending).kind, 'started');
 });
 
 test('does not allow overlapping starts', async () => {
