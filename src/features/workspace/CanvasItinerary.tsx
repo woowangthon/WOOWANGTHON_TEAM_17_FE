@@ -22,20 +22,30 @@ const dateLabel = (date: string | null) => {
 const timeLabel = (value: string | null | undefined) => {
   if (!value) return '시간 미정';
   const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? '시간 미정' : parsed.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
+  return Number.isNaN(parsed.valueOf()) ? '시간 미정' : parsed.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Seoul' });
 };
 
-function SelectedPlaceDetail({ selected }: { selected: CanvasItineraryStop }) {
-  const hasExtraDetails = Boolean(selected.place?.menuText || selected.place?.openingHoursText || selected.place?.closedDaysText || selected.place?.tel || selected.place?.overviewText);
-  return <article className="canvas-itinerary-detail" aria-label={`${selected.place?.title ?? `장소 ${selected.node.contentid}`} 장소 정보`}>
+const visitTimeLabel = (start: string | null | undefined, end: string | null | undefined) => {
+  if (!start || timeLabel(start) === '시간 미정') return '시간 미정';
+  const endLabel = end ? timeLabel(end) : '시간 미정';
+  return `예상 ${timeLabel(start)}${endLabel === '시간 미정' ? '' : `–${endLabel}`}`;
+};
+
+function SelectedPlaceDetail({ selected, failedImageUrls, onImageError }: { selected: CanvasItineraryStop; failedImageUrls: Set<string>; onImageError: (url: string) => void }) {
+  const hasExtraDetails = Boolean(selected.place?.menuText || selected.place?.openingHoursText || selected.place?.closedDaysText || selected.place?.tel || selected.place?.overviewText || selected.place?.bookingText || selected.place?.parkingText || selected.place?.homepageUrl);
+  const imageUrl = selected.place?.imageUrl;
+  const hasPhoto = Boolean(imageUrl && !failedImageUrls.has(imageUrl));
+  const safeHomepage = selected.place?.homepageUrl && /^https?:\/\//i.test(selected.place.homepageUrl) ? selected.place.homepageUrl : null;
+  return <article className={`canvas-itinerary-detail${hasPhoto ? ' has-photo' : ''}`} aria-label={`${selected.place?.title ?? `장소 ${selected.node.contentid}`} 장소 정보`}>
+    {hasPhoto && <img className="canvas-itinerary-detail-photo" src={imageUrl!} alt="" onError={() => onImageError(imageUrl!)} />}
     <div className="canvas-itinerary-detail-copy">
       <h3>{selected.place?.title ?? `장소 ${selected.node.contentid}`}</h3>
       <dl>
-        <div><dt>방문</dt><dd>예상 {timeLabel(selected.node.schedule?.startAt)}</dd></div>
+        <div><dt>방문</dt><dd>{visitTimeLabel(selected.node.schedule?.startAt, selected.node.schedule?.endAt)}</dd></div>
         <div><dt>체류</dt><dd>{selected.place?.estimatedStayMinutes ? `${selected.place.estimatedStayMinutes}분` : '시간 미정'}</dd></div>
         {selected.place?.category && <div><dt>분류</dt><dd>{selected.place.category}</dd></div>}
         <div><dt>주소</dt><dd>{selected.place?.address ?? '주소 정보 미확인'}</dd></div>
-        <div><dt>비용</dt><dd>{selected.place?.priceLabel ?? selected.place?.feeText ?? '비용 미확인'}</dd></div>
+        <div><dt>비용</dt><dd>{selected.place?.priceLabel || selected.place?.feeText || '요금 미확인'}</dd></div>
       </dl>
       {hasExtraDetails && <details className="canvas-itinerary-place-more"><summary>장소 정보 더 보기</summary>
         <dl>
@@ -43,7 +53,10 @@ function SelectedPlaceDetail({ selected }: { selected: CanvasItineraryStop }) {
           {selected.place?.openingHoursText && <div><dt>운영</dt><dd>{selected.place.openingHoursText}</dd></div>}
           {selected.place?.closedDaysText && <div><dt>휴무</dt><dd>{selected.place.closedDaysText}</dd></div>}
           {selected.place?.tel && <div><dt>연락처</dt><dd>{selected.place.tel}</dd></div>}
+          {selected.place?.bookingText && <div><dt>예약</dt><dd>{selected.place.bookingText}</dd></div>}
+          {selected.place?.parkingText && <div><dt>주차</dt><dd>{selected.place.parkingText}</dd></div>}
           {selected.place?.overviewText && <div><dt>소개</dt><dd>{selected.place.overviewText}</dd></div>}
+          {safeHomepage && <div><dt>홈페이지</dt><dd><a href={safeHomepage} target="_blank" rel="noopener noreferrer">공식 홈페이지</a></dd></div>}
         </dl>
       </details>}
     </div>
@@ -59,7 +72,6 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
   const [failedDetails, setFailedDetails] = useState<Set<number>>(new Set());
   const [detailsRetry, setDetailsRetry] = useState(0);
   const [failedImageUrls, setFailedImageUrls] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'photo' | 'list'>('photo');
   const mapSectionRef = useRef<HTMLElement>(null);
   const selectedStopRef = useRef<HTMLButtonElement>(null);
   const attemptedDetails = useRef(new Set<string>());
@@ -127,6 +139,10 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
   const firstDate = itineraryDays.find(day => day.date)?.date ?? null;
   const lastDate = [...itineraryDays].reverse().find(day => day.date)?.date ?? null;
   const dateRange = firstDate && lastDate ? firstDate === lastDate ? dateLabel(firstDate) : `${dateLabel(firstDate)} – ${dateLabel(lastDate)}` : firstDate ? dateLabel(firstDate) : null;
+  const dayComments = document?.nodes.filter((node): node is Extract<typeof node, { kind: 'comment' }> => node.kind === 'comment' && node.dayId === selectedDay?.id) ?? [];
+  const confirmedNodeIds = new Set(selectedDay?.stops.map(stop => stop.node.id) ?? []);
+  const dayCandidates = document?.nodes.filter((node): node is CanvasPlaceNode => node.kind === 'place' && node.intent === 'candidate' && node.dayId === selectedDay?.id && !confirmedNodeIds.has(node.id)) ?? [];
+  const renderSelectedDetail = () => selected && <SelectedPlaceDetail selected={selected} failedImageUrls={failedImageUrls} onImageError={url => setFailedImageUrls(current => new Set([...current, url]))} />;
 
   return <section className="generation-workspace canvas-itinerary-page"><div className="canvas-itinerary prep-main" aria-label="여행 종합">
     <header className="canvas-itinerary-heading prep-page-heading"><div className="prep-heading-info"><h1>여행 종합</h1>{dateRange && <div className="prep-heading-meta">{dateRange}</div>}</div><div className="canvas-itinerary-actions"><span className={`canvas-itinerary-save is-${sync.status}`} role={sync.status === 'conflict' || sync.status === 'error' ? 'alert' : 'status'}>{sync.message || ({ loading: '불러오는 중', saving: '저장 중', saved: '저장됨', offline: '저장 대기', conflict: '저장 충돌', error: '오류' }[sync.status])}</span><PreparationActionButton label="일정 수정" onClick={onEditCanvas} /></div></header>
@@ -138,29 +154,35 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
     {!busy && !loadError && document && itineraryDays.length === 0 && <section className="canvas-itinerary-empty-document"><p>아직 일정 날짜가 없어요.</p><PreparationActionButton label="캔버스에서 일정 만들기" onClick={onEditCanvas} /></section>}
     {!busy && !loadError && document && itineraryDays.length > 0 && <>
       <nav className="canvas-itinerary-day-tabs" aria-label="여행 날짜">{itineraryDays.map((day, index) => <button className={`canvas-itinerary-day${day.id === selectedDay?.id ? ' is-selected' : ''}`} key={day.id} type="button" aria-pressed={day.id === selectedDay?.id} onClick={() => { setActiveDayId(day.id); setSelectedId(day.stops[0]?.node.id ?? null); }}><span>{index + 1}일차</span>{dateLabel(day.date) && <small>{dateLabel(day.date)}</small>}</button>)}</nav>
-    <section className="canvas-itinerary-card" aria-label="여행 코스">
-      <section className="canvas-itinerary-course" aria-label="여행 코스">
-        <div className="canvas-itinerary-section-heading"><h2>여행 코스</h2><div className="canvas-itinerary-view-toggle" role="group" aria-label="코스 보기 방식"><button type="button" aria-pressed={viewMode === 'photo'} onClick={() => setViewMode('photo')}>사진형</button><button type="button" aria-pressed={viewMode === 'list'} onClick={() => setViewMode('list')}>목록형</button></div><button type="button" className="canvas-itinerary-map-jump" disabled={!selected} onClick={() => { mapSectionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }); mapSectionRef.current?.focus({ preventScroll: true }); }}>지도 보기</button></div>
-        {selectedDay && selectedDay.stops.length === 0 ? <div className="canvas-itinerary-empty"><p>연결된 여행 코스가 아직 없어요.</p><PreparationActionButton label="캔버스에서 코스 연결하기" onClick={onEditCanvas} /></div> : selectedDay && <ol className={`canvas-itinerary-stops is-${viewMode}${selectedDay.stops.every(stop => !stop.place?.imageUrl || failedImageUrls.has(stop.place.imageUrl)) ? ' is-no-photos' : ''}`} aria-label="방문 장소 목록">{selectedDay.chains.map((chain, chainIndex) => <li className="canvas-itinerary-chain" key={chain.id}>
-          {chainIndex > 0 && <p className="canvas-itinerary-disconnected">연결되지 않은 코스</p>}
-          {chain.stops.map((stop, index) => { const next = chain.stops[index + 1]; const leg = next ? legSummary(stop.node.id, next.node.id) : null; const detailFailed = !stop.place && failedDetails.has(stop.node.contentid); const isSelected = stop.node.id === selected?.node.id; const imageUrl = stop.place?.imageUrl; const hasPhoto = Boolean(imageUrl && !failedImageUrls.has(imageUrl)); return <div className="canvas-itinerary-stop-wrap" key={stop.node.id}>
-            <button ref={isSelected ? selectedStopRef : undefined} type="button" className={`canvas-itinerary-stop${isSelected ? ' is-selected' : ''}${hasPhoto ? ' has-photo' : ''}`} aria-pressed={isSelected} onClick={() => setSelectedId(stop.node.id)}>{viewMode === 'photo' && hasPhoto && <img className="canvas-itinerary-stop-photo" src={imageUrl!} alt="" onError={() => setFailedImageUrls(current => new Set([...current, imageUrl!]))} />}<span className="canvas-itinerary-stop-copy"><span className="canvas-itinerary-stop-title"><span className="canvas-itinerary-number" aria-label={`${stop.order}번째 방문`}>{String(stop.order).padStart(2, '0')}</span><strong>{stop.place?.title ?? `장소 정보 ${detailFailed ? '확인 실패' : '불러오는 중'} (${stop.node.contentid})`}</strong></span><span className="canvas-itinerary-stop-meta"><span>예상 {timeLabel(stop.node.schedule?.startAt)}</span><span>체류 {stop.place?.estimatedStayMinutes ? `${stop.place.estimatedStayMinutes}분` : '시간 미정'}</span></span><small>{stop.place?.priceLabel ?? stop.place?.feeText ?? '비용 미확인'}</small>{viewMode === 'photo' && !hasPhoto && <small className="canvas-itinerary-no-photo">사진 정보 없음</small>}</span></button>
-            {isSelected && selected && <div className="canvas-itinerary-mobile-detail"><SelectedPlaceDetail selected={selected} /></div>}
-            {detailFailed && <span className="canvas-itinerary-retry"><small>장소 정보를 불러오지 못했어요.</small><PreparationActionButton label="다시 시도" onClick={() => retryPlaceDetail(stop.node.contentid)} /></span>}
-            {leg && <p className="canvas-itinerary-leg"><span>{leg.label}</span>{leg.route?.status === 'verified' && !leg.hasGeometry && <small>경로 선 정보가 제공되지 않았어요.</small>}{leg.route?.status !== 'verified' && <small>실제 경로를 확인하지 못했어요.</small>}</p>}
-          </div>; })}
-        </li>)}</ol>}
-      </section>
+    <section className="canvas-itinerary-layout" aria-label="여행 코스와 지도">
       <section ref={mapSectionRef} tabIndex={-1} className="canvas-itinerary-map-column" aria-label="지도·장소 정보">
-        <div className="canvas-itinerary-section-heading"><h2>지도·장소 정보</h2></div>
+        <div className="canvas-itinerary-section-heading"><h2>지도</h2></div>
         {selectedDay && selectedDay.stops.length > 0 && <>
           <ResultMap nodes={mapData.nodes} edges={mapData.edges} selectedId={selected?.node.id ?? null} onSelect={setSelectedId} fallbackConnections="none" presentation="summary" />
           <button type="button" className="canvas-itinerary-back-to-stop" onClick={() => { selectedStopRef.current?.scrollIntoView({ behavior: 'auto', block: 'center' }); selectedStopRef.current?.focus({ preventScroll: true }); }}>선택한 장소로 돌아가기</button>
           {mapData.nodes.some(node => !isValidWgs84(node.coordinate)) && <p className="canvas-itinerary-location-note">일부 장소의 위치를 확인할 수 없어요.</p>}
-          {selected && <div className="canvas-itinerary-desktop-detail"><SelectedPlaceDetail selected={selected} /></div>}
+          <div className="canvas-itinerary-desktop-detail">{renderSelectedDetail()}</div>
           <details className="canvas-itinerary-notes"><summary>일정 정보</summary><ul><li>방문 시각은 생성 당시 예상이며 수정 뒤 다시 계산되지 않아요.</li><li>전체 비용은 편집본 기준으로 산출되지 않아요.</li><li>검증된 도로 좌표가 있는 이동만 지도에 선으로 표시해요.</li></ul></details>
         </>}
       </section>
-    </section></>}
+      <section className="canvas-itinerary-course" aria-label="시간순 여행 일정">
+        <div className="canvas-itinerary-section-heading"><h2>여행 코스</h2><button type="button" className="canvas-itinerary-map-jump" disabled={!selected} onClick={() => { mapSectionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }); mapSectionRef.current?.focus({ preventScroll: true }); }}>지도 보기</button></div>
+        {selectedDay && selectedDay.stops.length === 0 ? <div className="canvas-itinerary-empty"><p>연결된 여행 코스가 아직 없어요.</p><PreparationActionButton label="캔버스에서 코스 연결하기" onClick={onEditCanvas} /></div> : selectedDay && <ol className="canvas-itinerary-stops" aria-label="방문 장소 목록">{selectedDay.chains.map((chain, chainIndex) => <li className="canvas-itinerary-chain" key={chain.id}>
+          {chainIndex > 0 && <p className="canvas-itinerary-disconnected">연결되지 않은 코스</p>}
+          {chain.stops.map((stop, index) => { const next = chain.stops[index + 1]; const leg = next ? legSummary(stop.node.id, next.node.id) : null; const detailFailed = !stop.place && failedDetails.has(stop.node.contentid); const isSelected = stop.node.id === selected?.node.id; return <div className={`canvas-itinerary-stop-wrap${leg ? ' has-leg' : ''}`} key={stop.node.id}>
+            <button ref={isSelected ? selectedStopRef : undefined} type="button" className={`canvas-itinerary-stop${isSelected ? ' is-selected' : ''}`} aria-pressed={isSelected} onClick={() => setSelectedId(stop.node.id)}><span className="canvas-itinerary-number" aria-label={`${stop.order}번째 방문`}>{String(stop.order).padStart(2, '0')}</span><span className="canvas-itinerary-stop-copy"><strong>{stop.place?.title ?? `장소 정보 ${detailFailed ? '확인 실패' : '불러오는 중'} (${stop.node.contentid})`}</strong><span className="canvas-itinerary-stop-meta"><span>{visitTimeLabel(stop.node.schedule?.startAt, stop.node.schedule?.endAt)}</span><span>체류 {stop.place?.estimatedStayMinutes ? `${stop.place.estimatedStayMinutes}분` : '시간 미정'}</span></span><small>{stop.place?.priceLabel || stop.place?.feeText || '요금 미확인'}</small></span></button>
+            {isSelected && <div className="canvas-itinerary-mobile-detail">{renderSelectedDetail()}</div>}
+            {detailFailed && <span className="canvas-itinerary-retry"><small>장소 정보를 불러오지 못했어요.</small><PreparationActionButton label="다시 시도" onClick={() => retryPlaceDetail(stop.node.contentid)} /></span>}
+            {leg && <p className="canvas-itinerary-leg"><span>{leg.label}</span>{leg.route?.status === 'verified' && !leg.hasGeometry && <small>경로 선 정보가 제공되지 않았어요.</small>}{leg.route?.status !== 'verified' && <small>실제 경로를 확인하지 못했어요.</small>}</p>}
+          </div>; })}
+        </li>)}</ol>}
+    {(dayComments.length > 0 || dayCandidates.length > 0) && <section className="canvas-itinerary-context" aria-label="캔버스 참고 내용">
+      {dayComments.length > 0 && <section aria-label="캔버스 메모"><h2>캔버스 메모</h2><ul>{dayComments.map(comment => <li key={comment.id}>{comment.text}</li>)}</ul></section>}
+      {dayCandidates.length > 0 && <section aria-label="검토 중인 장소"><h2>검토 중인 장소</h2><ul>{dayCandidates.map(candidate => <li key={candidate.id}>{places.get(candidate.contentid)?.title ?? `장소 정보 미확인 (${candidate.contentid})`}</li>)}</ul></section>}
+    </section>}
+      </section>
+    </section>
+
+    </>}
   </div></section>;
 }

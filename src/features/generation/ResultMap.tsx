@@ -91,12 +91,31 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
         const button = document.createElement('button');
         button.type = 'button';
         const initiallySelected = node.id === selectedIdRef.current;
-        button.className = `itinerary-map-marker${initiallySelected ? ' is-selected' : ''}`;
-        button.textContent = String(courseNodes.indexOf(node) + 1);
+        button.className = `itinerary-map-marker${initiallySelected ? ' is-selected' : ''}${presentation === 'summary' ? ' itinerary-map-marker--summary' : ''}`;
+        const markerNumber = String(courseNodes.indexOf(node) + 1);
+        if (presentation === 'summary') {
+          const pin = document.createElement('span');
+          pin.className = 'itinerary-map-marker-pin';
+          const shape = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          shape.classList.add('itinerary-map-marker-shape');
+          shape.setAttribute('viewBox', '0 0 44 44');
+          shape.setAttribute('aria-hidden', 'true');
+          shape.setAttribute('focusable', 'false');
+          const outline = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          outline.setAttribute('d', 'M22 43C18 37 7 28 7 18a15 15 0 1 1 30 0c0 10-11 19-15 25Z');
+          shape.appendChild(outline);
+          const number = document.createElement('span');
+          number.className = 'itinerary-map-marker-number';
+          number.textContent = markerNumber;
+          pin.append(shape, number);
+          button.appendChild(pin);
+        } else {
+          button.textContent = markerNumber;
+        }
         button.setAttribute('aria-label', `${courseNodes.indexOf(node) + 1}번 코스, ${node.title}`);
         button.dataset.courseId = node.id;
         button.setAttribute('aria-pressed', String(initiallySelected));
-        const overlay = new sdk.maps.CustomOverlay({ position: new sdk.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude), content: button, yAnchor: 0.5, xAnchor: 0.5, zIndex: initiallySelected ? 100 : 1 });
+        const overlay = new sdk.maps.CustomOverlay({ position: new sdk.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude), content: button, yAnchor: presentation === 'summary' ? 1 : 0.5, xAnchor: 0.5, zIndex: initiallySelected ? 100 : 1 });
         bounds.extend(new sdk.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude));
         overlay.setMap(map);
         const onClick = () => onSelect(node.id);
@@ -127,7 +146,7 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
       mapRef.current = null;
       mapHost?.replaceChildren();
     };
-  }, [courseEdges, courseNodes, locationsAvailable, mapSignature, onSelect]);
+  }, [courseEdges, courseNodes, locationsAvailable, mapSignature, onSelect, presentation]);
 
   useEffect(() => {
     const changed = priorSelectedIdRef.current !== selectedId;
