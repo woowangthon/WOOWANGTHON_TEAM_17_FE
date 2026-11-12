@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, getBezierPath, Handle, MarkerType, Position, ReactFlow, useNodesInitialized, useStore, useStoreApi, useReactFlow, useUpdateNodeInternals, type Connection, type OnConnectStart, type OnConnectEnd, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance, type Rect } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Button from '../../components/ui/Button';
-import PreparationActionButton from '../preparation/PreparationActionButton';
 import CanvasToolIcon from './CanvasToolIcon';
 import CanvasCommentEditor from './CanvasCommentEditor';
 import { getPlaceDetail, recommendPlace, searchPlaces, type PlaceSearchResult } from './canvasApi';
@@ -753,7 +752,7 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
   return <section className={`tw-canvas-embedded ${preview?'is-preview':''}`} aria-label="공동 일정 캔버스" onKeyDown={keydown} tabIndex={-1}>
     <header className="tw-canvas-header">
       <div className="tw-canvas-heading"><h1>일정 캔버스</h1><span>{tripRangeLabel}</span><span className={`tw-canvas-save-state status-${preview?'preview':sync.status}`} role="status">{syncLabel}</span></div>
-      <div className="tw-canvas-header-actions"><PreparationActionButton label="결과 종합" className="tw-canvas-summary-action" onClick={onSummary} /><button ref={drawerTrigger} className="tw-canvas-panel-toggle" title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button></div>
+      <div className="tw-canvas-header-actions"><button type="button" className="tw-canvas-header-action" onClick={onSummary}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 4h9l4 4v12H6zM15 4v5h4M9 13h7M9 16h7" /></svg><span>결과 종합</span></button><button type="button" ref={drawerTrigger} className="tw-canvas-header-action tw-canvas-panel-toggle" title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button></div>
     </header>
     {preview&&<p className="tw-preview-banner">예시 미리보기 · 이 화면의 변경은 실제 여행방과 공유되지 않아요.</p>}
     {!preview&&['offline','conflict','error'].includes(sync.status)&&<div className={`tw-sync-status status-${sync.status}`} role="alert"><span>{sync.message||'캔버스 상태를 확인해 주세요.'}</span>{['offline','error'].includes(sync.status)&&sync.state&&<Button variant="secondary" onClick={sync.retry}>다시 저장</Button>}{sync.status==='conflict'&&<><Button variant="secondary" onClick={()=>sync.resolve('local')}>내 변경 유지</Button><Button variant="secondary" onClick={()=>sync.resolve('remote')}>최신 내용 사용</Button></>}</div>}
