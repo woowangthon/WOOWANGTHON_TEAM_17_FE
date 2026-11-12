@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { addEdge, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, getBezierPath, Handle, MarkerType, Position, ReactFlow, useNodesInitialized, useStore, useStoreApi, useReactFlow, useUpdateNodeInternals, type Connection, type OnConnectStart, type OnConnectEnd, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance, type Rect } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import Button from '../../components/ui/Button';
+import PreparationActionButton from '../preparation/PreparationActionButton';
 import CanvasToolIcon from './CanvasToolIcon';
 import CanvasCommentEditor from './CanvasCommentEditor';
 import { getPlaceDetail, recommendPlace, searchPlaces, type PlaceSearchResult } from './canvasApi';
@@ -221,13 +222,13 @@ function boardOf(doc: CanvasDocument, details: Map<number,CanvasPlaceDetail>): B
 function docOf(nodes: FlowNode[], edges: Edge[], base: CanvasDocument): CanvasDocument { return { ...base, nodes:nodes.filter(n=>n.type!=='dayFrame').map((n)=>n.data.model), edges:edges.filter(edge=>edge.type!=='dayOrder').map(({id,source,target})=>({id,source,target})) }; }
 
 
-type CanvasPreviewProps = { tripId:string; preview?:boolean; startDate?:string|null; endDate?:string|null; conditionsVersion?:number|null; transport?:CanvasTravelMode; handoff?:CanvasHandoff|null };
+type CanvasPreviewProps = { tripId:string; preview?:boolean; startDate?:string|null; endDate?:string|null; conditionsVersion?:number|null; transport?:CanvasTravelMode; handoff?:CanvasHandoff|null; onSummary:()=>void };
 export default function CanvasPreview(props: CanvasPreviewProps) {
   const sync = useCanvasSync(props.tripId, props.preview ?? false);
   const sourceKey = canvasSourceKey(sync.state?.sourcePlan);
   return <CanvasPreviewSource key={`${props.tripId}:${props.preview ? 'preview' : 'shared'}:${sync.sourceEpoch}:${sourceKey}`} {...props} sync={sync} sourceKey={sourceKey} />;
 }
-function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, conditionsVersion = null, transport = null, handoff, sync, sourceKey }: CanvasPreviewProps & { sync: ReturnType<typeof useCanvasSync>; sourceKey: string }) {
+function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, conditionsVersion = null, transport = null, handoff, onSummary, sync, sourceKey }: CanvasPreviewProps & { sync: ReturnType<typeof useCanvasSync>; sourceKey: string }) {
   const doc = sync.document;
   const sourceScope = canvasViewScope(tripId,preview,sourceKey);
   const [isCurrentSource] = useState(() => sync.isCurrentSource);
@@ -752,7 +753,7 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
   return <section className={`tw-canvas-embedded ${preview?'is-preview':''}`} aria-label="공동 일정 캔버스" onKeyDown={keydown} tabIndex={-1}>
     <header className="tw-canvas-header">
       <div className="tw-canvas-heading"><h1>일정 캔버스</h1><span>{tripRangeLabel}</span><span className={`tw-canvas-save-state status-${preview?'preview':sync.status}`} role="status">{syncLabel}</span></div>
-      <button ref={drawerTrigger} className="tw-canvas-panel-toggle" title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button>
+      <div className="tw-canvas-header-actions"><PreparationActionButton label="결과 종합" className="tw-canvas-summary-action" onClick={onSummary} /><button ref={drawerTrigger} className="tw-canvas-panel-toggle" title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button></div>
     </header>
     {preview&&<p className="tw-preview-banner">예시 미리보기 · 이 화면의 변경은 실제 여행방과 공유되지 않아요.</p>}
     {!preview&&['offline','conflict','error'].includes(sync.status)&&<div className={`tw-sync-status status-${sync.status}`} role="alert"><span>{sync.message||'캔버스 상태를 확인해 주세요.'}</span>{['offline','error'].includes(sync.status)&&sync.state&&<Button variant="secondary" onClick={sync.retry}>다시 저장</Button>}{sync.status==='conflict'&&<><Button variant="secondary" onClick={()=>sync.resolve('local')}>내 변경 유지</Button><Button variant="secondary" onClick={()=>sync.resolve('remote')}>최신 내용 사용</Button></>}</div>}

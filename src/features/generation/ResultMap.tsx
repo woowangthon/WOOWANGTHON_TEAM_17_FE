@@ -6,7 +6,7 @@ declare global { interface Window { kakao?: any; __kakaoMapPromise?: Promise<any
 
 type CourseNode = Plan['document']['days'][number]['nodes'][number];
 type CourseEdge = Plan['document']['days'][number]['edges'][number];
-type Props = { nodes: CourseNode[]; edges: CourseEdge[]; selectedId: string | null; onSelect: (id: string) => void; fallbackConnections?: 'schematic' | 'none' };
+type Props = { nodes: CourseNode[]; edges: CourseEdge[]; selectedId: string | null; onSelect: (id: string) => void; fallbackConnections?: 'schematic' | 'none'; presentation?: 'generation' | 'summary' };
 type MapMarker = { overlay: any; button: HTMLButtonElement; onClick: () => void };
 type Point = { x: number; y: number };
 
@@ -53,7 +53,7 @@ function formatTime(value: string | null) {
   return Number.isNaN(date.getTime()) ? '시간 미정' : date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
 }
 
-export default function ResultMap({ nodes, edges, selectedId, onSelect, fallbackConnections = 'schematic' }: Props) {
+export default function ResultMap({ nodes, edges, selectedId, onSelect, fallbackConnections = 'schematic', presentation = 'generation' }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const markers = useRef<MapMarker[]>([]);
@@ -70,6 +70,7 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
   const locationsAvailable = courseNodes.some((node) => isValidWgs84(node.coordinate));
   const mapSignature = courseNodes.map((node) => `${node.id}:${node.coordinate?.latitude ?? ''}:${node.coordinate?.longitude ?? ''}`).join('|');
   const mapAvailable = locationsAvailable && mapState.signature === mapSignature && !mapState.error;
+  const summaryMessage = courseNodes.length === 0 ? '이 날짜에는 표시할 여행 코스가 없어요.' : !locationsAvailable ? '장소 위치 정보가 없어 지도를 표시할 수 없어요.' : mapAvailable ? '' : mapState.signature === mapSignature && mapState.error ? '지도를 불러오지 못했어요. 장소 목록과 상세는 계속 볼 수 있어요.' : '지도를 불러오고 있어요.';
 
   useEffect(() => {
     let active = true;
@@ -145,23 +146,24 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
     y: 50 + Math.sin(index * 1.7) * Math.min(21, 21 * Math.sqrt(courseNodes.length / 4)),
   })), [courseNodes]);
   const missingCoordinateCount = courseNodes.filter(node => !isValidWgs84(node.coordinate)).length;
-  const mapAnnouncement = courseNodes.length === 0 ? '이 날짜에는 표시할 여행 코스가 없어요.' : !locationsAvailable ? '장소 위치 정보를 확인할 수 없어 코스 순서 도식을 표시해요.' : mapAvailable ? '지도 표시를 선택하면 선택한 코스와 상세가 함께 바뀌어요.' : mapState.signature === mapSignature ? mapState.error : '지도를 불러오고 있어요. 코스 순서 도식을 먼저 표시해요.';
+  const mapAnnouncement = presentation === 'summary' ? summaryMessage || '지도가 표시됐어요. 지도 표시를 선택하면 일정 목록과 상세가 함께 바뀌어요.' : courseNodes.length === 0 ? '이 날짜에는 표시할 여행 코스가 없어요.' : !locationsAvailable ? '장소 위치 정보를 확인할 수 없어 코스 순서 도식을 표시해요.' : mapAvailable ? '지도 표시를 선택하면 선택한 코스와 상세가 함께 바뀌어요.' : mapState.signature === mapSignature ? mapState.error : '지도를 불러오고 있어요. 코스 순서 도식을 먼저 표시해요.';
 
   return (
     <div className="itinerary-map-wrap">
-      <div className={`itinerary-map ${mapAvailable ? 'is-live-map' : 'is-course-schematic'}`}>
-        <div className="itinerary-map-grid" aria-hidden="true" />
+      <div className={`itinerary-map ${mapAvailable ? 'is-live-map' : presentation === 'summary' ? 'is-map-unavailable' : 'is-course-schematic'}`}>
+        {presentation !== 'summary' && <div className="itinerary-map-grid" aria-hidden="true" />}
         <div ref={host} className={`itinerary-map-canvas ${mapAvailable ? '' : 'is-hidden'}`} role="region" aria-label="선택한 날짜의 여행 장소 지도" />
-        {!mapAvailable && courseNodes.length > 0 && <div className="itinerary-map-schematic" role="group" aria-label={fallbackConnections === 'none' ? '장소 위치가 표시되지 않은 코스 목록' : '실제 지리가 아닌 코스 순서 도식'}>
+        {presentation === 'summary' && summaryMessage && <p className="itinerary-map-summary-message">{summaryMessage}</p>}
+        {presentation !== 'summary' && !mapAvailable && courseNodes.length > 0 && <div className="itinerary-map-schematic" role="group" aria-label={fallbackConnections === 'none' ? '장소 위치가 표시되지 않은 코스 목록' : '실제 지리가 아닌 코스 순서 도식'}>
           {fallbackConnections === 'schematic' && <svg className="itinerary-map-path" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d={routePath(schematicPoints)} /></svg>}
           {courseNodes.map((node, index) => <button key={node.id} type="button" className={`itinerary-map-node ${node.id === selectedId ? 'is-selected' : ''}`} style={{ left: `${schematicPoints[index].x}%`, top: `${schematicPoints[index].y}%` }} aria-pressed={node.id === selectedId} aria-label={`${index + 1}번 코스 선택: ${node.title}`} onClick={() => onSelect(node.id)}>{index + 1}</button>)}
         </div>}
-        {courseNodes.length === 0 && <div className="itinerary-map-empty"><span aria-hidden="true">○</span><p>코스가 추가되면 이곳에 표시돼요.</p></div>}
-        <span className="itinerary-map-note">{mapAvailable ? `장소 위치 정보${missingCoordinateCount ? ` · 위치 미확인 ${missingCoordinateCount}곳` : ''} · 확인된 경로만 선으로 표시해요` : fallbackConnections === 'none' ? `지도 경로를 표시할 수 없어요${missingCoordinateCount ? ` · 위치 미확인 ${missingCoordinateCount}곳` : ''}` : '코스 순서 도식 · 실제 이동 경로가 아니에요'}</span>
-        {selected && <div className="itinerary-map-selected"><span>{courseNodes.findIndex((node) => node.id === selected.id) + 1}</span><div><strong>{selected.title}</strong><small>{formatTime(selected.estimatedStartAt)} · 일정에서 선택됨</small></div></div>}
+        {presentation !== 'summary' && courseNodes.length === 0 && <div className="itinerary-map-empty"><span aria-hidden="true">○</span><p>코스가 추가되면 이곳에 표시돼요.</p></div>}
+        {presentation !== 'summary' && <span className="itinerary-map-note">{mapAvailable ? `장소 위치 정보${missingCoordinateCount ? ` · 위치 미확인 ${missingCoordinateCount}곳` : ''} · 확인된 경로만 선으로 표시해요` : fallbackConnections === 'none' ? `지도 경로를 표시할 수 없어요${missingCoordinateCount ? ` · 위치 미확인 ${missingCoordinateCount}곳` : ''}` : '코스 순서 도식 · 실제 이동 경로가 아니에요'}</span>}
+        {presentation !== 'summary' && selected && <div className="itinerary-map-selected"><span>{courseNodes.findIndex((node) => node.id === selected.id) + 1}</span><div><strong>{selected.title}</strong><small>{formatTime(selected.estimatedStartAt)} · 일정에서 선택됨</small></div></div>}
       </div>
       <p className="visually-hidden" role="status">{mapAnnouncement}</p>
-      {courseNodes.length > 0 && <nav className="itinerary-map-index" aria-label="지도에서 여행 코스 선택">{courseNodes.map((node, index) => <button key={node.id} type="button" className={node.id === selectedId ? 'is-selected' : ''} aria-pressed={node.id === selectedId} onClick={() => onSelect(node.id)}><span>{index + 1}</span>{node.title}</button>)}</nav>}
+      {presentation !== 'summary' && courseNodes.length > 0 && <nav className="itinerary-map-index" aria-label="지도에서 여행 코스 선택">{courseNodes.map((node, index) => <button key={node.id} type="button" className={node.id === selectedId ? 'is-selected' : ''} aria-pressed={node.id === selectedId} onClick={() => onSelect(node.id)}><span>{index + 1}</span>{node.title}</button>)}</nav>}
     </div>
   );
 }
