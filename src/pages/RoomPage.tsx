@@ -457,7 +457,7 @@ export default function RoomPage() {
               : localGenerationBlocker || sharedGenerationBlocker || generationStart.message
                 || (generationStart.busy ? '저장된 조건을 확인하고 있어요.' : '준비 완료한 사람의 취향으로 경로를 만들어요.')}</p>
           </div>
-          <PreparationActionButton label={isPreview ? '일정 만들기' : entry?.member.role !== 'OWNER' ? '방장이 시작할 수 있어요' : generationStart.hasCurrentPlan ? '일정 열기' : '새 일정 만들기'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || entry.member.role !== 'OWNER' || fatalAccess || generationStart.busy || Boolean(generationCtaBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); }} ariaDescribedBy="tw-generation-note" />
+          <PreparationActionButton label={isPreview || entry?.member.role === 'OWNER' ? '일정 만들기' : '방장이 시작할 수 있어요'} loading={generationStart.busy} loadingLabel="생성 가능 여부 확인 중" disabled={isPreview || status !== 'ready' || !entry || entry.member.role !== 'OWNER' || fatalAccess || generationStart.busy || Boolean(generationCtaBlocker)} onClick={() => { if (entry?.member.role === 'OWNER') void generationStart.start(); }} ariaDescribedBy="tw-generation-note" />
         </section>
       </section>}
     </div>}

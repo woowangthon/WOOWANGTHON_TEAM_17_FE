@@ -6,7 +6,8 @@ declare global { interface Window { kakao?: any; __kakaoMapPromise?: Promise<any
 
 type CourseNode = Plan['document']['days'][number]['nodes'][number];
 type CourseEdge = Plan['document']['days'][number]['edges'][number];
-type Props = { nodes: CourseNode[]; edges: CourseEdge[]; selectedId: string | null; onSelect: (id: string) => void; fallbackConnections?: 'schematic' | 'none'; presentation?: 'generation' | 'summary' };
+type MapNode = Pick<CourseNode, 'id' | 'title' | 'coordinate'>;
+type Props = { nodes: CourseNode[]; edges: CourseEdge[]; selectedId: string | null; onSelect: (id: string) => void; fallbackConnections?: 'schematic' | 'none'; presentation?: 'generation' | 'summary'; focusRequest?: number };
 type MapMarker = { overlay: any; button: HTMLButtonElement; onClick: () => void };
 type Point = { x: number; y: number };
 
@@ -53,22 +54,27 @@ function formatTime(value: string | null) {
   return Number.isNaN(date.getTime()) ? '시간 미정' : date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
 }
 
-export default function ResultMap({ nodes, edges, selectedId, onSelect, fallbackConnections = 'schematic', presentation = 'generation' }: Props) {
+export default function ResultMap({ nodes, edges, selectedId, onSelect, fallbackConnections = 'schematic', presentation = 'generation', focusRequest = 0 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const markers = useRef<MapMarker[]>([]);
   const polylines = useRef<any[]>([]);
   const selectedIdRef = useRef(selectedId);
   const priorSelectedIdRef = useRef(selectedId);
+  const priorFocusRequestRef = useRef(focusRequest);
+  const onSelectRef = useRef(onSelect);
   useLayoutEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+  useLayoutEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   const [mapState, setMapState] = useState({ signature: '', error: '' });
+  const [mapRevision, setMapRevision] = useState(0);
 
   const courseNodes = useMemo(() => nodes.filter((node) => node.kind === 'PLACE'), [nodes]);
   const courseIds = useMemo(() => new Set(courseNodes.map((node) => node.id)), [courseNodes]);
   const courseEdges = useMemo(() => edges.filter((edge) => courseIds.has(edge.fromNodeId) && courseIds.has(edge.toNodeId)), [courseIds, edges]);
   const selected = courseNodes.find((node) => node.id === selectedId) ?? null;
   const locationsAvailable = courseNodes.some((node) => isValidWgs84(node.coordinate));
-  const mapSignature = courseNodes.map((node) => `${node.id}:${node.coordinate?.latitude ?? ''}:${node.coordinate?.longitude ?? ''}`).join('|');
+  const mapSignature = JSON.stringify(nodes.filter((node) => node.kind === 'PLACE').map(({ id, title, coordinate }) => ({ id, title, coordinate })));
+  const mapNodes = useMemo(() => JSON.parse(mapSignature) as MapNode[], [mapSignature]);
   const mapAvailable = locationsAvailable && mapState.signature === mapSignature && !mapState.error;
   const summaryMessage = courseNodes.length === 0 ? '이 날짜에는 표시할 여행 코스가 없어요.' : !locationsAvailable ? '장소 위치 정보가 없어 지도를 표시할 수 없어요.' : mapAvailable ? '' : mapState.signature === mapSignature && mapState.error ? '지도를 불러오지 못했어요. 장소 목록과 상세는 계속 볼 수 있어요.' : '지도를 불러오고 있어요.';
 
@@ -80,19 +86,19 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
 
     void loadKakao().then((sdk) => {
       if (!active || !host.current) return;
-      const centerNode = courseNodes.find((node) => isValidWgs84(node.coordinate));
+      const centerNode = mapNodes.find((node) => isValidWgs84(node.coordinate));
       if (!centerNode || !isValidWgs84(centerNode.coordinate)) throw new Error('장소 위치 정보를 확인할 수 없어 코스 순서 도식으로 표시해요.');
       const map = new sdk.maps.Map(host.current, { center: new sdk.maps.LatLng(centerNode.coordinate.latitude, centerNode.coordinate.longitude), level: 8 });
       mapRef.current = map;
       const bounds = new sdk.maps.LatLngBounds();
 
-      for (const node of courseNodes) {
+      for (const node of mapNodes) {
         if (!isValidWgs84(node.coordinate)) continue;
         const button = document.createElement('button');
         button.type = 'button';
         const initiallySelected = node.id === selectedIdRef.current;
         button.className = `itinerary-map-marker${initiallySelected ? ' is-selected' : ''}${presentation === 'summary' ? ' itinerary-map-marker--summary' : ''}`;
-        const markerNumber = String(courseNodes.indexOf(node) + 1);
+        const markerNumber = String(mapNodes.indexOf(node) + 1);
         if (presentation === 'summary') {
           const pin = document.createElement('span');
           pin.className = 'itinerary-map-marker-pin';
@@ -112,24 +118,19 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
         } else {
           button.textContent = markerNumber;
         }
-        button.setAttribute('aria-label', `${courseNodes.indexOf(node) + 1}번 코스, ${node.title}`);
+        button.setAttribute('aria-label', `${mapNodes.indexOf(node) + 1}번 코스, ${node.title}`);
         button.dataset.courseId = node.id;
         button.setAttribute('aria-pressed', String(initiallySelected));
         const overlay = new sdk.maps.CustomOverlay({ position: new sdk.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude), content: button, yAnchor: presentation === 'summary' ? 1 : 0.5, xAnchor: 0.5, zIndex: initiallySelected ? 100 : 1 });
         bounds.extend(new sdk.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude));
         overlay.setMap(map);
-        const onClick = () => onSelect(node.id);
+        const onClick = () => onSelectRef.current(node.id);
         button.addEventListener('click', onClick);
         markers.current.push({ overlay, button, onClick });
       }
 
-      for (const edge of courseEdges) {
-        const geometry = verifiedEdgeGeometry(edge);
-        if (!geometry) continue;
-        const line = new sdk.maps.Polyline({ map, path: geometry.map((point) => new sdk.maps.LatLng(point.latitude, point.longitude)), strokeWeight: 4, strokeColor: '#93b329', strokeOpacity: 0.82, strokeStyle: 'solid' });
-        polylines.current.push(line);
-      }
-      if (courseNodes.filter(node => isValidWgs84(node.coordinate)).length > 1) map.setBounds(bounds);
+      if (mapNodes.filter(node => isValidWgs84(node.coordinate)).length > 1) map.setBounds(bounds);
+      setMapRevision(value => value + 1);
       setMapState({ signature: mapSignature, error: '' });
     }).catch((error: unknown) => {
       if (active) setMapState({ signature: mapSignature, error: error instanceof Error ? error.message : '지도를 불러오지 못했어요. 코스 순서 도식으로 표시해요.' });
@@ -146,11 +147,40 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
       mapRef.current = null;
       mapHost?.replaceChildren();
     };
-  }, [courseEdges, courseNodes, locationsAvailable, mapSignature, onSelect, presentation]);
+  }, [locationsAvailable, mapNodes, mapSignature, presentation]);
 
   useEffect(() => {
-    const changed = priorSelectedIdRef.current !== selectedId;
+    for (const line of polylines.current) line.setMap(null);
+    polylines.current = [];
+    const sdk = window.kakao;
+    const map = mapRef.current;
+    if (!sdk?.maps || !map || !mapAvailable) return;
+    for (const edge of courseEdges) {
+      const geometry = verifiedEdgeGeometry(edge);
+      if (!geometry) continue;
+      polylines.current.push(new sdk.maps.Polyline({ map, path: geometry.map((point) => new sdk.maps.LatLng(point.latitude, point.longitude)), strokeWeight: 4, strokeColor: '#93b329', strokeOpacity: 0.82, strokeStyle: 'solid' }));
+    }
+  }, [courseEdges, mapAvailable, mapRevision]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const element = host.current;
+    if (!map || !element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const center = map.getCenter?.();
+      const level = map.getLevel?.();
+      map.relayout?.();
+      if (center) map.setCenter?.(center);
+      if (typeof level === 'number') map.setLevel?.(level, { animate: false });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [mapRevision, mapSignature, presentation]);
+
+  useEffect(() => {
+    const changed = priorSelectedIdRef.current !== selectedId || priorFocusRequestRef.current !== focusRequest;
     priorSelectedIdRef.current = selectedId;
+    priorFocusRequestRef.current = focusRequest;
     for (const item of markers.current) {
       const isSelected = item.button.dataset.courseId === selectedId;
       item.button.setAttribute('aria-pressed', String(isSelected));
@@ -158,7 +188,24 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
       item.overlay.setZIndex(isSelected ? 100 : 1);
       if (changed && isSelected && mapRef.current) mapRef.current.panTo(item.overlay.getPosition());
     }
-  }, [courseNodes, mapAvailable, selected, selectedId]);
+  }, [courseNodes, focusRequest, mapAvailable, selected, selectedId]);
+
+  const validCoordinates = courseNodes.filter((node) => isValidWgs84(node.coordinate));
+  const fitAllLocations = () => {
+    const sdk = window.kakao;
+    const map = mapRef.current;
+    if (!sdk?.maps || !map) return;
+    const points = [...validCoordinates.map(node => node.coordinate), ...courseEdges.flatMap(edge => verifiedEdgeGeometry(edge) ?? [])].filter((point): point is NonNullable<typeof point> => Boolean(point && Number.isFinite(point.latitude) && Number.isFinite(point.longitude) && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180));
+    if (!points.length) return;
+    if (points.length === 1) { map.setCenter(new sdk.maps.LatLng(points[0].latitude, points[0].longitude)); return; }
+    const bounds = new sdk.maps.LatLngBounds();
+    for (const point of points) bounds.extend(new sdk.maps.LatLng(point.latitude, point.longitude));
+    map.setBounds(bounds);
+  };
+  const centerSelected = () => {
+    const node = courseNodes.find(item => item.id === selectedId);
+    if (node && isValidWgs84(node.coordinate) && window.kakao?.maps) mapRef.current?.panTo?.(new window.kakao.maps.LatLng(node.coordinate.latitude, node.coordinate.longitude));
+  };
 
   const schematicPoints = useMemo(() => courseNodes.map((_, index) => ({
     x: courseNodes.length === 1 ? 50 : 13 + (74 * index) / (courseNodes.length - 1),
@@ -182,6 +229,7 @@ export default function ResultMap({ nodes, edges, selectedId, onSelect, fallback
         {presentation !== 'summary' && selected && <div className="itinerary-map-selected"><span>{courseNodes.findIndex((node) => node.id === selected.id) + 1}</span><div><strong>{selected.title}</strong><small>{formatTime(selected.estimatedStartAt)} · 일정에서 선택됨</small></div></div>}
       </div>
       <p className="visually-hidden" role="status">{mapAnnouncement}</p>
+      {presentation === 'summary' && <div className="itinerary-map-summary-controls" aria-label="지도 보기 조작"><button type="button" disabled={!mapAvailable || !selected || !isValidWgs84(selected.coordinate)} onClick={centerSelected}>선택 장소 위치</button><button type="button" disabled={!mapAvailable || validCoordinates.length === 0} onClick={fitAllLocations}>전체 경로 보기</button></div>}
       {presentation !== 'summary' && courseNodes.length > 0 && <nav className="itinerary-map-index" aria-label="지도에서 여행 코스 선택">{courseNodes.map((node, index) => <button key={node.id} type="button" className={node.id === selectedId ? 'is-selected' : ''} aria-pressed={node.id === selectedId} onClick={() => onSelect(node.id)}><span>{index + 1}</span>{node.title}</button>)}</nav>}
     </div>
   );
