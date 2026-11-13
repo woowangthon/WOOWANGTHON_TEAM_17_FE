@@ -140,5 +140,14 @@ export function useCanvasRoutes(
     }
     return byEdge;
   }, [plan, states]);
-  return { labels, routesByEdge, hasIssue, retry, routeCount: plan.requests.length };
+  const phasesByEdge = useMemo(() => {
+    const byEdge = new Map<string, 'loading' | 'ready' | 'error' | 'stale'>();
+    for (const request of plan.requests) {
+      const state = states.get(canvasRouteKey(request));
+      const currentState = state?.scope === plan.scope ? state : undefined;
+      for (const edgeId of request.edgeIds) byEdge.set(edgeId, currentState?.phase ?? 'loading');
+    }
+    return byEdge;
+  }, [plan, states]);
+  return { labels, routesByEdge, phasesByEdge, hasIssue, retry, routeCount: plan.requests.length };
 }
