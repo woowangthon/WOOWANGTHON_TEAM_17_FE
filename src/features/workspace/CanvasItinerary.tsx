@@ -40,12 +40,12 @@ function SelectedPlaceDetail({ selected, failedImageUrls, onImageError }: { sele
     {hasPhoto && <img className="canvas-itinerary-detail-photo" src={imageUrl!} alt="" onError={() => onImageError(imageUrl!)} />}
     <div className="canvas-itinerary-detail-copy">
       <h3>{selected.place?.title ?? `장소 ${selected.node.contentid}`}</h3>
-      <dl>
+      <dl className="canvas-itinerary-primary-facts">
         <div><dt>방문</dt><dd>{visitTimeLabel(selected.node.schedule?.startAt, selected.node.schedule?.endAt)}</dd></div>
         <div><dt>체류</dt><dd>{selected.place?.estimatedStayMinutes ? `${selected.place.estimatedStayMinutes}분` : '시간 미정'}</dd></div>
         {selected.place?.category && <div><dt>분류</dt><dd>{selected.place.category}</dd></div>}
-        <div><dt>주소</dt><dd>{selected.place?.address ?? '주소 정보 미확인'}</dd></div>
         <div><dt>비용</dt><dd>{selected.place?.priceLabel || selected.place?.feeText || '요금 미확인'}</dd></div>
+        <div className="canvas-itinerary-address-fact"><dt>주소</dt><dd>{selected.place?.address ?? '주소 정보 미확인'}</dd></div>
       </dl>
       {hasExtraDetails && <details className="canvas-itinerary-place-more"><summary>장소 정보 더 보기</summary>
         <dl>
@@ -156,7 +156,6 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
       <nav className="canvas-itinerary-day-tabs" aria-label="여행 날짜">{itineraryDays.map((day, index) => <button className={`canvas-itinerary-day${day.id === selectedDay?.id ? ' is-selected' : ''}`} key={day.id} type="button" aria-pressed={day.id === selectedDay?.id} onClick={() => { setActiveDayId(day.id); setSelectedId(day.stops[0]?.node.id ?? null); }}><span>{index + 1}일차</span>{dateLabel(day.date) && <small>{dateLabel(day.date)}</small>}</button>)}</nav>
     <section className="canvas-itinerary-layout" aria-label="여행 코스와 지도">
       <section ref={mapSectionRef} tabIndex={-1} className="canvas-itinerary-map-column" aria-label="지도·장소 정보">
-        <div className="canvas-itinerary-section-heading"><h2>지도</h2></div>
         {selectedDay && selectedDay.stops.length > 0 && <>
           <ResultMap nodes={mapData.nodes} edges={mapData.edges} selectedId={selected?.node.id ?? null} onSelect={setSelectedId} fallbackConnections="none" presentation="summary" />
           <button type="button" className="canvas-itinerary-back-to-stop" onClick={() => { selectedStopRef.current?.scrollIntoView({ behavior: 'auto', block: 'center' }); selectedStopRef.current?.focus({ preventScroll: true }); }}>선택한 장소로 돌아가기</button>
@@ -166,7 +165,7 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
         </>}
       </section>
       <section className="canvas-itinerary-course" aria-label="시간순 여행 일정">
-        <div className="canvas-itinerary-section-heading"><h2>여행 코스</h2><button type="button" className="canvas-itinerary-map-jump" disabled={!selected} onClick={() => { mapSectionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }); mapSectionRef.current?.focus({ preventScroll: true }); }}>지도 보기</button></div>
+        <button type="button" className="canvas-itinerary-map-jump" disabled={!selected} onClick={() => { mapSectionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }); mapSectionRef.current?.focus({ preventScroll: true }); }}>지도 보기</button>
         {selectedDay && selectedDay.stops.length === 0 ? <div className="canvas-itinerary-empty"><p>연결된 여행 코스가 아직 없어요.</p><PreparationActionButton label="캔버스에서 코스 연결하기" onClick={onEditCanvas} /></div> : selectedDay && <ol className="canvas-itinerary-stops" aria-label="방문 장소 목록">{selectedDay.chains.map((chain, chainIndex) => <li className="canvas-itinerary-chain" key={chain.id}>
           {chainIndex > 0 && <p className="canvas-itinerary-disconnected">연결되지 않은 코스</p>}
           {chain.stops.map((stop, index) => { const next = chain.stops[index + 1]; const leg = next ? legSummary(stop.node.id, next.node.id) : null; const detailFailed = !stop.place && failedDetails.has(stop.node.contentid); const isSelected = stop.node.id === selected?.node.id; return <div className={`canvas-itinerary-stop-wrap${leg ? ' has-leg' : ''}`} key={stop.node.id}>
