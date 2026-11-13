@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { emptyPersonalDraft, type PersonalDraft } from '../room/roomData.ts';
+import { draftChangeInvalidatesAtomicProfile, emptyPersonalDraft, projectInterpretedWalking, type PersonalDraft } from '../room/roomData.ts';
 import {
   confirmMyPreferences, fetchMyPreferences, interpretMyPreferences, PersonalApiError, saveMyPreferences,
   type PersonalConfirmation,
@@ -43,9 +43,11 @@ function fatalError(error: unknown): boolean {
 function errorMessage(error: unknown, write = false, confirming = false): string {
   if (error instanceof PersonalApiError) {
     if (error.uncertain) return confirming ? '확인 결과를 알 수 없어요. 입력을 보존했어요. 새로고침해 최신 상태를 확인해 주세요.' : '저장 결과를 확인할 수 없어요. 입력은 유지했어요. 새로고침해 최신 저장 상태를 확인해 주세요.';
+    if (error.code === 'STALE_AI_RESULT') return '분석 결과가 최신 입력과 맞지 않아요. 원문을 다시 분석해 주세요.';
     if (error.status === 409) return confirming ? '공통 조건이나 저장된 취향이 바뀌었어요. 최신 내용을 다시 불러와 확인해 주세요.' : '다른 변경이 먼저 저장됐어요. 입력은 유지했어요. 새로고침해 최신 상태를 확인해 주세요.';
     if (error.code === 'ORIGINAL_TEXT_REQUIRED') return '먼저 개인 원문을 저장해 주세요.';
-    if (error.code === 'PREFERENCES_INCOMPLETE' || error.code === 'WALKING_REQUIRED') return '걷기 시간을 선택해 주세요.';
+    if (error.code === 'WALKING_REQUIRED') return '걷기 시간을 선택해 주세요.';
+    if (error.code === 'PREFERENCES_INCOMPLETE') return Object.values(error.fieldErrors).filter(Boolean).join(' ') || '저장된 취향과 세부 조건을 확인해 주세요.';
     if (error.code === 'AI_UNAVAILABLE' || error.code === 'AI_TIMEOUT' || error.code === 'AI_INVALID_RESPONSE') return 'AI 해석을 완료하지 못했어요. 입력을 확인하고 다시 시도해 주세요.';
     if (Object.keys(error.fieldErrors).length) return Object.values(error.fieldErrors).filter(Boolean).join(' ');
     if (error.status === 401 || error.status === 403 || error.status === 404 || error.code === 'TRIP_CLOSED' || error.code === 'MEMBERSHIP_INACTIVE') return '이 여행방의 개인 준비 정보를 볼 수 없어요.';
@@ -55,7 +57,11 @@ function errorMessage(error: unknown, write = false, confirming = false): string
 }
 
 function hasStoredResults(draft: PersonalDraft): boolean {
-  return Boolean(draft.likes || draft.avoid || draft.food || draft.walking);
+  return Boolean(draft.likes || draft.avoid || draft.food || draft.walking || draft.atomicPreferences);
+}
+
+function hasCurrentAtomicProfile(draft: PersonalDraft): boolean {
+  return draft.atomicPreferences?.status === 'current' && Boolean(draft.originalText.trim());
 }
 
 function hasSavedPreparation(draft: PersonalDraft, preferenceVersion: number): boolean {
@@ -136,7 +142,7 @@ export function usePersonalPreparation({
       }
       update({
         tripId, draft: result.draft, savedDraft: result.draft, state: conditionsMatch ? 'ready' : 'error', phase: 'idle',
-        resultStatus: hasStoredResults(result.draft) ? 'stored' : 'empty', resultsVisible: retained.resultsVisible || hasSavedPreparation(result.draft, result.preferenceVersion), analysisStep: null, dirty: false,
+        resultStatus: result.draft.atomicPreferences?.status === 'stale' ? 'stale' : hasStoredResults(result.draft) ? 'stored' : 'empty', resultsVisible: retained.resultsVisible || hasSavedPreparation(result.draft, result.preferenceVersion), analysisStep: null, dirty: false,
         message: conditionsMatch ? '' : '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.', operationError: conditionsMatch ? '' : '공통 여행 조건이 바뀌었어요. 개인 준비를 새로고침해 주세요.', needsWalkingAnswer: false, confirmation: result.confirmation,
         loadedConditionsVersion: result.conditionsVersion, preferenceVersion: result.preferenceVersion, clarifications: result.clarifications,
       });
@@ -181,7 +187,10 @@ export function usePersonalPreparation({
       if ((current.state === 'ready' || current.state === 'loading') && !current.dirty && current.phase === 'idle' && enabled) {
         void reload();
       } else {
-        update({ ...current, phase: 'idle', analysisStep: null, resultStatus: hasStoredResults(current.draft) ? 'stale' : 'empty', message: '공통 여행 조건이 바뀌었어요. 최신 조건을 확인한 뒤 개인 준비를 다시 확인해 주세요.' });
+        const draft = current.draft.atomicPreferences?.status === 'current'
+          ? { ...current.draft, atomicPreferences: { ...current.draft.atomicPreferences, status: 'stale' as const } }
+          : current.draft;
+        update({ ...current, draft, phase: 'idle', analysisStep: null, resultStatus: hasStoredResults(draft) ? 'stale' : 'empty', message: '공통 여행 조건이 바뀌었어요. 최신 조건을 확인한 뒤 개인 준비를 다시 확인해 주세요.' });
       }
     }
   }, [conditionsVersion, enabled, reload, tripId, update]);
@@ -191,9 +200,10 @@ export function usePersonalPreparation({
     if (!tripId || current.tripId !== tripId || current.state !== 'ready' || current.phase !== 'idle') return;
     const draft = { ...current.draft, [key]: value };
     editRevision.current += 1;
-    const rawTextChanged = key === 'originalText' && value !== current.draft.originalText;
+    const sourceChanged = draftChangeInvalidatesAtomicProfile(key) && value !== current.draft[key];
+    if (sourceChanged && draft.atomicPreferences?.status === 'current') draft.atomicPreferences = { ...draft.atomicPreferences, status: 'stale' };
     update({ ...current, draft, dirty: JSON.stringify(draft) !== JSON.stringify(current.savedDraft),
-      resultStatus: rawTextChanged ? (hasStoredResults(current.draft) ? 'stale' : 'empty') : current.resultStatus,
+      resultStatus: sourceChanged ? (hasStoredResults(current.draft) ? 'stale' : 'empty') : current.resultStatus,
       needsWalkingAnswer: key === 'walking' && value !== '' ? false : current.needsWalkingAnswer, message: '', operationError: '' });
   }, [tripId, update]);
 
@@ -267,11 +277,13 @@ export function usePersonalPreparation({
         avoidImportance: interpreted.suggestions.avoidImportance,
         food: interpreted.suggestions.food,
         foodImportance: interpreted.suggestions.foodImportance,
-        walking: interpreted.needsWalkingAnswer ? savedRaw.draft.walking : interpreted.suggestions.walking,
+        walking: projectInterpretedWalking(savedRaw.draft.walking, interpreted.suggestions.walking,
+          interpreted.needsWalkingAnswer, interpreted.suggestions.atomicPreferences ?? undefined),
         scheduleItems: interpreted.suggestions.scheduleItems,
+        ...(interpreted.suggestions.atomicPreferences ? { atomicPreferences: interpreted.suggestions.atomicPreferences } : {}),
       };
       update({ ...internalRef.current, draft: merged, resultsVisible: true, dirty: JSON.stringify(merged) !== JSON.stringify(savedRaw.draft), clarifications: interpreted.clarifications, needsWalkingAnswer: interpreted.needsWalkingAnswer, phase: 'analyzing', analysisStep: 'result', message: '분석 결과를 저장하고 있어요.' });
-      const finalResult = await saveMyPreferences(tripId, conditionsVersion, savedRaw.preferenceVersion, merged, { signal: controller.signal });
+      const finalResult = await saveMyPreferences(tripId, conditionsVersion, savedRaw.preferenceVersion, merged, { signal: controller.signal, ...(interpreted.analysisMeta?.requestId ? { analysisReceipt: interpreted.analysisMeta.requestId } : {}) });
       if (controller.signal.aborted || requestId !== sequence.current) return false;
       if (revision !== editRevision.current) {
         update({ ...internalRef.current, savedDraft: finalResult.draft, preferenceVersion: finalResult.preferenceVersion, confirmation: finalResult.confirmation, clarifications: finalResult.clarifications, phase: 'idle', resultsVisible: true, analysisStep: null, resultStatus: 'stale', dirty: true, message: '입력이 바뀌어 분석 결과를 화면에 적용하지 않았어요. 새로고침해 확인해 주세요.' });
@@ -330,10 +342,10 @@ export function usePersonalPreparation({
         update({ ...internalRef.current, phase: 'idle', message: '입력이나 공통 조건이 바뀌어 준비 완료로 처리하지 않았어요. 최신 내용을 확인해 다시 눌러 주세요.' });
         return false;
       }
-      const valid = saved.draft.originalText.trim() && saved.draft.likes.trim() &&
-        (saved.draft.walking === '20' || saved.draft.walking === '40' || saved.draft.walking === 'unlimited');
+      const valid = hasCurrentAtomicProfile(saved.draft) || (saved.draft.originalText.trim() && saved.draft.likes.trim() &&
+        (saved.draft.walking === '20' || saved.draft.walking === '40' || saved.draft.walking === 'unlimited'));
       if (!valid) {
-        update({ ...internalRef.current, phase: 'idle', message: '원하는 여행 내용, 좋아하는 것, 걷기 시간을 입력한 뒤 다시 눌러 주세요.' });
+        update({ ...internalRef.current, phase: 'idle', message: '원하는 여행 내용과 필요한 취향을 확인한 뒤 다시 눌러 주세요.' });
         return false;
       }
       if (saved.confirmation.status === 'confirmed' && saved.confirmation.confirmedConditionsVersion === conditionsVersion && saved.confirmation.confirmedPreferenceVersion === saved.preferenceVersion) {

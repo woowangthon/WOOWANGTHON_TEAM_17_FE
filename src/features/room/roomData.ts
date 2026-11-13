@@ -64,6 +64,49 @@ export function validateRoomDraft(draft: RoomDraft): Partial<Record<keyof RoomDr
 }
 
 export type PreferenceImportance = 'required' | 'preferred';
+export type AtomicCondition = {
+  id: string; dimension: 'activity' | 'food' | 'walking' | 'visit_count' | 'meal_plan' | 'atmosphere' | 'accessibility' | 'other';
+  target: string; polarity: 'prefer' | 'avoid' | 'limit'; priority: 'required' | 'preferred' | 'unspecified';
+  priorityBasis: 'explicit' | 'unspecified' | 'user'; scope: 'trip' | 'day' | 'segment' | 'unspecified';
+  audience: 'personal' | 'group' | 'unspecified'; frequency: null | { count: number; operator: 'exact' | 'min' | 'max' | 'target'; period: 'trip' | 'day' };
+  value: number | string | null; unit: string | null; approximate: boolean; evidence: string; origin: 'model' | 'user';
+};
+export type AtomicPreferences = { schemaVersion: 2; sourceDigest: string; status: 'current' | 'stale'; conditions: AtomicCondition[]; unresolved: Array<{ code: string; evidence: string; message: string }> };
+const countUnits = new Set(['번', '회', '곳', '군데', '끼', '개']);
+export function countValueRepresentedByFrequency(condition: AtomicCondition): boolean {
+  return Boolean(condition.frequency && condition.value === condition.frequency.count && condition.unit && countUnits.has(condition.unit));
+}
+export function editAtomicCondition(condition: AtomicCondition, patch: Partial<AtomicCondition>): AtomicCondition {
+  const next = { ...condition, ...patch, origin: 'user' as const };
+  if (patch.priority !== undefined) next.priorityBasis = 'user';
+  if (patch.frequency && condition.frequency) {
+    const frequency = { ...condition.frequency, ...patch.frequency };
+    next.frequency = frequency;
+    if (patch.frequency.count !== undefined && countValueRepresentedByFrequency(condition)) {
+      next.value = frequency.count;
+    }
+    if (patch.frequency.operator === 'target') next.approximate = true;
+    if (patch.frequency.operator === 'exact') next.approximate = false;
+    if (patch.frequency.period !== undefined) next.scope = frequency.period === 'day' ? 'day' : 'trip';
+  }
+  return next;
+}
+export function projectInterpretedWalking(
+  savedWalking: PersonalDraft['walking'],
+  suggestedWalking: PersonalDraft['walking'],
+  needsWalkingAnswer: boolean,
+  profile?: AtomicPreferences,
+): PersonalDraft['walking'] {
+  if (!profile) return needsWalkingAnswer || !suggestedWalking ? savedWalking : suggestedWalking;
+  const walking = profile.conditions.find(condition => condition.dimension === 'walking');
+  if (!walking || typeof walking.value !== 'number' || walking.unit !== '분') return '';
+  if (walking.value === 20) return '20';
+  if (walking.value === 40) return '40';
+  return '';
+}
+export function draftChangeInvalidatesAtomicProfile(key: keyof PersonalDraft): boolean {
+  return key === 'originalText';
+}
 export type ScheduleItem = {
   id: string;
   kind: 'lodging' | 'appointment';
@@ -84,6 +127,7 @@ export type PersonalDraft = {
   foodImportance: PreferenceImportance;
   walking: '20' | '40' | 'unlimited' | '';
   scheduleItems: ScheduleItem[];
+  atomicPreferences?: AtomicPreferences | null;
 };
 
 export const emptyPersonalDraft: PersonalDraft = {

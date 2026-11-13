@@ -110,6 +110,29 @@ test('interpret accepts extracted schedule items and validates canonical identit
   assert.throws(() => parseInterpretation({ sourceConditionsVersion: 2, sourcePreferenceVersion: 1, suggestions: { likes: null, avoid: null, avoidImportance: 'required', food: null, foodImportance: 'preferred', walking: '20', scheduleItems: [{ ...item, id: item.id.toUpperCase() }] }, needsWalkingAnswer: false }), /개인 준비 응답/u)
 })
 
+test('v2 atomic profile preserves unresolved and permits absent walking; final save echoes receipt', async () => {
+  const profile = { schemaVersion: 2, sourceDigest: 'a'.repeat(64), status: 'current', conditions: [{
+    id: 'ap-a-001', dimension: 'food', target: '초밥', polarity: 'prefer', priority: 'unspecified', priorityBasis: 'unspecified',
+    scope: 'trip', audience: 'personal', frequency: { count: 1, operator: 'exact', period: 'trip' }, value: null, unit: null,
+    approximate: false, evidence: '여행 중 초밥 한번', origin: 'model',
+  }], unresolved: [{ code: 'AMBIGUOUS_WALKING', evidence: '오래 걷기는 어려워요', message: '걷기 조건의 기준은 아직 정하지 않았어요.' }] }
+  const requestId = '12345678-1234-4234-8234-123456789abc'
+  const parsed = parseInterpretation({ sourceConditionsVersion: 2, sourcePreferenceVersion: 6,
+    suggestions: { likes: null, avoid: null, avoidImportance: 'required', food: '초밥', foodImportance: 'preferred', walking: null, atomicPreferences: profile },
+    needsWalkingAnswer: false, analysisMeta: { requestId } })
+  assert.equal(parsed.needsWalkingAnswer, false)
+  assert.deepEqual(parsed.suggestions.atomicPreferences.unresolved, profile.unresolved)
+  const staleProfile = parsePersonalPreferences(dto({ draft: { ...dto().draft, atomicPreferences: { ...profile, status: 'stale' } } }))
+  assert.equal(staleProfile.draft.atomicPreferences.status, 'stale')
+  let call
+  const saved = { ...emptyPersonalDraft, originalText: '여행 중 초밥 한번', atomicPreferences: profile }
+  await saveMyPreferences('trip-1', 2, 6, saved, { analysisReceipt: requestId, fetcher: async (url, init) => { call = { url, init }; return response(dto({ preferenceVersion: 7, draft: { ...dto().draft, originalText: saved.originalText, atomicPreferences: profile } })) } })
+  const body = JSON.parse(call.init.body)
+  assert.equal(call.init.headers['X-Preference-Schema'], '2')
+  assert.equal(body.analysisReceipt, requestId)
+  assert.deepEqual(body.draft.atomicPreferences, profile)
+})
+
 test('rejects malformed DTOs, unknown enums, overlong values, and inconsistent confirmation', () => {
   assert.throws(() => parsePersonalPreferences(dto({ preferenceVersion: -1 })), /개인 준비 응답/u)
   assert.throws(() => parsePersonalPreferences(dto({ draft: { ...dto().draft, walking: '60' } })), /개인 준비 응답/u)

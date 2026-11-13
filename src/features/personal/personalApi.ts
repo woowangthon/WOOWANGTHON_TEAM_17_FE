@@ -1,4 +1,4 @@
-import type { PersonalDraft, PreferenceImportance, ScheduleItem } from '../room/roomData.ts';
+import type { AtomicCondition, AtomicPreferences, PersonalDraft, PreferenceImportance, ScheduleItem } from '../room/roomData.ts';
 
 export type PersonalConfirmation = {
   status: 'writing' | 'confirmed';
@@ -21,6 +21,7 @@ export type Interpretation = {
   suggestions: Omit<PersonalDraft, 'originalText'>;
   needsWalkingAnswer: boolean;
   clarifications: PersonalPreferences['clarifications'];
+  analysisMeta?: { requestId: string };
 };
 
 export class PersonalApiError extends Error {
@@ -43,8 +44,9 @@ export class PersonalApiError extends Error {
   }
 }
 
-type RequestOptions = { signal?: AbortSignal; fetcher?: typeof fetch };
+type RequestOptions = { signal?: AbortSignal; fetcher?: typeof fetch; analysisReceipt?: string };
 const keys = ['originalText', 'likes', 'avoid', 'avoidImportance', 'food', 'foodImportance', 'walking'] as const;
+const errorKeys = [...keys, 'atomicPreferences'] as const;
 const importanceValues = ['required', 'preferred'] as const satisfies readonly PreferenceImportance[];
 const walkingValues = ['20', '40', 'unlimited'] as const;
 const textLimits = { originalText: 5000, likes: 500, avoid: 500, food: 500 } as const;
@@ -91,7 +93,7 @@ function parseScheduleItems(value: unknown, optional = false): ScheduleItem[] {
 }
 
 function parseDraft(value: unknown): PersonalDraft {
-  if (!record(value) || !([Object.keys(value).sort().join('|') === [...keys].sort().join('|'), Object.keys(value).sort().join('|') === [...keys, 'scheduleItems'].sort().join('|')].some(Boolean))) return invalidDto();
+  if (!record(value) || !([Object.keys(value).sort().join('|') === [...keys].sort().join('|'), Object.keys(value).sort().join('|') === [...keys, 'scheduleItems'].sort().join('|'), Object.keys(value).sort().join('|') === [...keys, 'scheduleItems', 'atomicPreferences'].sort().join('|'), Object.keys(value).sort().join('|') === [...keys, 'atomicPreferences'].sort().join('|')].some(Boolean))) return invalidDto();
   if (!validText(value.originalText, textLimits.originalText, true) || !validText(value.likes, textLimits.likes, true) || !validText(value.avoid, textLimits.avoid, true) || !validText(value.food, textLimits.food, true)) return invalidDto();
   if (typeof value.avoidImportance !== 'string' || !importanceValues.includes(value.avoidImportance as PreferenceImportance)) return invalidDto();
   if (typeof value.foodImportance !== 'string' || !importanceValues.includes(value.foodImportance as PreferenceImportance)) return invalidDto();
@@ -102,7 +104,31 @@ function parseDraft(value: unknown): PersonalDraft {
     foodImportance: value.foodImportance as PreferenceImportance,
     walking: (value.walking ?? '') as PersonalDraft['walking'],
     scheduleItems: parseScheduleItems(value.scheduleItems, true),
+    ...(value.atomicPreferences !== undefined ? { atomicPreferences: value.atomicPreferences === null ? null : parseAtomicPreferences(value.atomicPreferences) } : {}),
   };
+}
+
+const enums = {
+  dimension: ['activity','food','walking','visit_count','meal_plan','atmosphere','accessibility','other'],
+  polarity: ['prefer','avoid','limit'], priority: ['required','preferred','unspecified'],
+  priorityBasis: ['explicit','unspecified','user'], scope: ['trip','day','segment','unspecified'],
+  audience: ['personal','group','unspecified'], origin: ['model','user'],
+  frequencyOperator: ['exact','min','max','target'], period: ['trip','day'],
+} as const;
+function oneOf<T extends readonly string[]>(value: unknown, values: T): value is T[number] { return typeof value === 'string' && values.includes(value); }
+export function parseAtomicPreferences(value: unknown): AtomicPreferences {
+  if (!record(value) || Object.keys(value).sort().join('|') !== ['schemaVersion','sourceDigest','status','conditions','unresolved'].sort().join('|') || value.schemaVersion !== 2 || typeof value.sourceDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(value.sourceDigest) || !oneOf(value.status, ['current','stale'] as const) || !Array.isArray(value.conditions) || value.conditions.length > 80 || !Array.isArray(value.unresolved) || value.unresolved.length > 80) return invalidDto();
+  const ids = new Set<string>();
+  const conditions = value.conditions.map((item): AtomicCondition => {
+    if (!record(item) || Object.keys(item).sort().join('|') !== ['id','dimension','target','polarity','priority','priorityBasis','scope','audience','frequency','value','unit','approximate','evidence','origin'].sort().join('|') || typeof item.id !== 'string' || !item.id || ids.has(item.id) || !oneOf(item.dimension,enums.dimension) || typeof item.target !== 'string' || !item.target.trim() || item.target.length > 240 || !oneOf(item.polarity,enums.polarity) || !oneOf(item.priority,enums.priority) || !oneOf(item.priorityBasis,enums.priorityBasis) || !oneOf(item.scope,enums.scope) || !oneOf(item.audience,enums.audience) || (item.frequency !== null && (!record(item.frequency) || Object.keys(item.frequency).sort().join('|') !== ['count','operator','period'].sort().join('|') || !Number.isSafeInteger(item.frequency.count) || (item.frequency.count as number) < 0 || (item.frequency.count as number) > 365 || !oneOf(item.frequency.operator,enums.frequencyOperator) || !oneOf(item.frequency.period,enums.period))) || !(item.value === null || (typeof item.value === 'number' && Number.isFinite(item.value)) || (typeof item.value === 'string' && item.value.trim().length > 0 && item.value.length <= 160)) || !(item.unit === null || (typeof item.unit === 'string' && item.unit.length <= 40)) || typeof item.approximate !== 'boolean' || typeof item.evidence !== 'string' || item.evidence.length > 1000 || !oneOf(item.origin,enums.origin)) return invalidDto();
+    ids.add(item.id);
+    return item as unknown as AtomicCondition;
+  });
+  const unresolved = value.unresolved.map(item => {
+    if (!record(item) || Object.keys(item).sort().join('|') !== ['code','evidence','message'].sort().join('|') || typeof item.code !== 'string' || typeof item.evidence !== 'string' || typeof item.message !== 'string' || item.code.length > 48 || item.evidence.length > 1000 || item.message.length > 240) return invalidDto();
+    return { code: item.code, evidence: item.evidence, message: item.message };
+  });
+  return { schemaVersion: 2, sourceDigest: value.sourceDigest, status: value.status, conditions, unresolved };
 }
 
 function parseClarifications(value: unknown): PersonalPreferences['clarifications'] {
@@ -144,21 +170,30 @@ export function parsePersonalPreferences(value: unknown): PersonalPreferences {
 }
 
 export function parseInterpretation(value: unknown): Interpretation {
-  if (!record(value) || !([Object.keys(value).sort().join('|') === ['sourceConditionsVersion', 'sourcePreferenceVersion', 'suggestions', 'needsWalkingAnswer'].sort().join('|'), Object.keys(value).sort().join('|') === ['sourceConditionsVersion', 'sourcePreferenceVersion', 'suggestions', 'needsWalkingAnswer', 'clarifications'].sort().join('|')].some(Boolean)) || !validVersion(value.sourceConditionsVersion) || !validVersion(value.sourcePreferenceVersion) || typeof value.needsWalkingAnswer !== 'boolean' || !record(value.suggestions)) return invalidDto();
-  if (Object.keys(value.suggestions).filter(key => key !== 'scheduleItems').sort().join('|') !== ['likes', 'avoid', 'avoidImportance', 'food', 'foodImportance', 'walking'].sort().join('|')) return invalidDto();
+  const base = ['sourceConditionsVersion','sourcePreferenceVersion','suggestions','needsWalkingAnswer'];
+  if (!record(value) || ![base, [...base,'clarifications'], [...base,'analysisMeta'], [...base,'clarifications','analysisMeta'], [...base,'atomicPreferences'], [...base,'clarifications','atomicPreferences'], [...base,'atomicPreferences','analysisMeta'], [...base,'clarifications','atomicPreferences','analysisMeta']].some(keys => Object.keys(value).sort().join('|') === [...keys].sort().join('|')) || !validVersion(value.sourceConditionsVersion) || !validVersion(value.sourcePreferenceVersion) || typeof value.needsWalkingAnswer !== 'boolean' || !record(value.suggestions)) return invalidDto();
+  if (Object.keys(value.suggestions).filter(key => key !== 'scheduleItems' && key !== 'atomicPreferences').sort().join('|') !== ['likes', 'avoid', 'avoidImportance', 'food', 'foodImportance', 'walking'].sort().join('|')) return invalidDto();
   const scheduleItems = parseScheduleItems(value.suggestions.scheduleItems, true);
-  const suggestions = parseDraft({ originalText: null, ...value.suggestions });
-  if (suggestions.originalText !== '' || value.needsWalkingAnswer !== (suggestions.walking === '')) return invalidDto();
+  const atomValue = value.suggestions.atomicPreferences ?? value.atomicPreferences;
+  const atomicPreferences = atomValue === undefined ? undefined : parseAtomicPreferences(atomValue);
+  const suggestions = parseDraft({ originalText: null, ...value.suggestions, ...(atomicPreferences ? { atomicPreferences } : {}) });
+  if (suggestions.originalText !== '' || (atomicPreferences ? value.needsWalkingAnswer !== false : value.needsWalkingAnswer !== (suggestions.walking === ''))) return invalidDto();
+  let analysisMeta: { requestId: string } | undefined;
+  if (value.analysisMeta !== undefined) {
+    if (!record(value.analysisMeta) || typeof value.analysisMeta.requestId !== 'string' || !/^[0-9a-f-]{36}$/u.test(value.analysisMeta.requestId)) return invalidDto();
+    analysisMeta = { requestId: value.analysisMeta.requestId };
+  }
   return {
     sourceConditionsVersion: value.sourceConditionsVersion,
     sourcePreferenceVersion: value.sourcePreferenceVersion,
     suggestions: {
       likes: suggestions.likes, avoid: suggestions.avoid, avoidImportance: suggestions.avoidImportance,
       food: suggestions.food, foodImportance: suggestions.foodImportance, walking: suggestions.walking,
-      scheduleItems,
+      scheduleItems, ...(atomicPreferences ? { atomicPreferences } : {}),
     },
     needsWalkingAnswer: value.needsWalkingAnswer,
     clarifications: parseClarifications(value.clarifications),
+    ...(analysisMeta ? { analysisMeta } : {}),
   };
 }
 
@@ -167,7 +202,7 @@ function normalizeFieldErrors(value: unknown): Partial<Record<keyof PersonalDraf
   const result: Partial<Record<keyof PersonalDraft, string>> = {};
   for (const [field, message] of Object.entries(value)) {
     const normalized = field.startsWith('draft.') ? field.slice(6) : field.startsWith('suggestions.') ? field.slice(12) : field;
-    if ((keys as readonly string[]).includes(normalized) && typeof message === 'string') result[normalized as keyof PersonalDraft] = message;
+    if ((errorKeys as readonly string[]).includes(normalized) && typeof message === 'string') result[normalized as keyof PersonalDraft] = message;
   }
   return result;
 }
@@ -190,6 +225,7 @@ function abortError(): DOMException { return new DOMException('The operation was
 async function request(path: string, method: string, body: unknown, options: RequestOptions, idempotencyKey?: string): Promise<unknown> {
   if (options.signal?.aborted) throw abortError();
   const headers: Record<string, string> = {};
+  headers['X-Preference-Schema'] = '2';
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   try {
@@ -223,12 +259,14 @@ export async function saveMyPreferences(tripId: string, expectedConditionsVersio
     avoid: draft.avoid.trim() || null, avoidImportance: draft.avoidImportance,
     food: draft.food.trim() || null, foodImportance: draft.foodImportance,
     walking: draft.walking || null, scheduleItems: draft.scheduleItems ?? [],
+    ...(draft.atomicPreferences !== undefined ? { atomicPreferences: draft.atomicPreferences } : {}),
   });
-  const payload = await request(path(tripId), 'PUT', { expectedConditionsVersion, expectedPreferenceVersion, draft: {
+  const payload = await request(path(tripId), 'PUT', { expectedConditionsVersion, expectedPreferenceVersion, ...(options.analysisReceipt ? { analysisReceipt: options.analysisReceipt } : {}), draft: {
     originalText: normalized.originalText || null, likes: normalized.likes || null, avoid: normalized.avoid || null,
     avoidImportance: normalized.avoidImportance, food: normalized.food || null, foodImportance: normalized.foodImportance,
     walking: normalized.walking || null,
     scheduleItems: normalized.scheduleItems,
+    ...(normalized.atomicPreferences !== undefined ? { atomicPreferences: normalized.atomicPreferences } : {}),
   } }, options);
   try { return parsePersonalPreferences(payload); }
   catch { throw new PersonalApiError({ status: 0, code: 'INVALID_WRITE_RESPONSE', message: '저장 결과를 확인할 수 없어요. 입력은 유지했어요. 새로고침해 최신 상태를 확인해 주세요.', uncertain: true }); }

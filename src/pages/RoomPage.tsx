@@ -10,6 +10,7 @@ import { useGenerationStart, type GenerationCanvasHandoff } from '../features/ge
 import { summarizePreparationReadiness } from '../features/generation/generationReadiness.ts';
 import { GenerationLoadingOverlay } from '../features/generation/GenerationLoadingOverlay';
 import ScheduleItemsEditor from '../features/personal/ScheduleItemsEditor';
+import AtomicPreferenceReview from '../features/personal/AtomicPreferenceReview';
 import PreparationScheduleFields from '../features/preparation/PreparationScheduleFields';
 import { conditionsToDraft } from '../features/room/preparationApi';
 import { withPreservedHiddenConditions } from '../features/preparation/preparationModel';
@@ -433,7 +434,7 @@ export default function RoomPage() {
                 {(personalHook.resultsVisible || isPreview) ? <>
                   <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
                   <p className="prep-importance-hint" id="tw-importance-hint">선호는 가능한 만큼 반영해요. 필수로 고른 조건은 장소 정보로 확인돼야 일정을 만들 수 있어요.</p>
-                  <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
+                  {!personal.atomicPreferences && <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
                     <RankedPreferenceField field="avoid" label="피하고 싶은 장소·활동" placeholder="예: 붐비는 시장, 가파른 등산로"
                       value={personal.avoid} importance={personal.avoidImportance} issue={issueMessage('avoid')}
                       onChange={value => updatePersonal('avoid', value)} onImportanceChange={value => updatePersonal('avoidImportance', value)} />
@@ -441,7 +442,8 @@ export default function RoomPage() {
                       value={personal.food} importance={personal.foodImportance} issue={issueMessage('food')}
                       onChange={value => updatePersonal('food', value)} onImportanceChange={value => updatePersonal('foodImportance', value)} />
                     <fieldset className="prep-walking" aria-describedby={issueFor('walking') ? 'tw-walking-issue' : undefined} aria-invalid={Boolean(issueFor('walking'))}><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div>{issueFor('walking') && <p className="prep-personal-field-error" id="tw-walking-issue" role="alert">{issueMessage('walking')}</p>}</fieldset>
-                  </div>
+                  </div>}
+                  {!isPreview && personal.atomicPreferences && <AtomicPreferenceReview profile={personal.atomicPreferences} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={value => personalHook.updateDraft('atomicPreferences', value)} />}
                   {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
                 </> : <div className="prep-parsed-empty"><h3>내 취향</h3><p>원하는 내용을 적고 분석하면 여기에 정리돼요.</p></div>}
                 {isPreview ? <div className="prep-confirm-row"><span role="status">{localPersonalMessage || '예시 입력은 실제 여행방 상태에 반영되지 않아요.'}</span></div> : <div className="prep-confirm-row prep-personal-actions">
