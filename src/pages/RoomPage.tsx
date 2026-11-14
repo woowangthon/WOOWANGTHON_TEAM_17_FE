@@ -10,6 +10,7 @@ import { useGenerationStart, type GenerationCanvasHandoff } from '../features/ge
 import { summarizePreparationReadiness } from '../features/generation/generationReadiness.ts';
 import { GenerationLoadingOverlay } from '../features/generation/GenerationLoadingOverlay';
 import ScheduleItemsEditor from '../features/personal/ScheduleItemsEditor';
+import AtomicPreferenceReview from '../features/personal/AtomicPreferenceReview';
 import PreparationScheduleFields from '../features/preparation/PreparationScheduleFields';
 import { conditionsToDraft } from '../features/room/preparationApi';
 import { withPreservedHiddenConditions } from '../features/preparation/preparationModel';
@@ -108,15 +109,44 @@ export default function RoomPage() {
   const participantTriggerRef = useRef<HTMLButtonElement>(null);
   const participantPanelId = useId();
   const [localPersonalMessage, setLocalPersonalMessage] = useState('');
+  const [replaceAnalysisFor, setReplaceAnalysisFor] = useState<PersonalDraft | null>(null);
+  const [preferenceEditorOpen, setPreferenceEditorOpen] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const requestRef = useRef(0);
   const shared = useSharedPreparation(tripId, entry, Boolean(!isPreview && status === 'ready' && entry));
   const baseFatalAccess = status === 'ready' && Boolean(entry) && !isPreview && (shared.state === 'fatal' || accessLostTripId === tripId);
   const onGenerationAccessLost = useCallback(() => setAccessLostTripId(tripId), [tripId]);
   const personalHook = usePersonalPreparation({ tripId, enabled: Boolean(!isPreview && status === 'ready' && entry && shared.state === 'ready' && !baseFatalAccess), conditionsVersion: shared.preparation?.conditionsVersion ?? 0, onSaved: () => { void shared.refreshAfterPersonalMutation(); } });
+  const replaceAnalysisPending = replaceAnalysisFor === personalHook.draft;
+  const hasUserReviewToReplace = Boolean(
+    personalHook.draft.atomicPreferences?.conditions.some(condition => condition.origin === 'user')
+    || personalHook.savedDraft.atomicPreferences?.conditions.some(condition => condition.origin === 'user')
+    || personalHook.reviewAcknowledgements?.items.length
+    || personalHook.savedReviewAcknowledgements?.items.length
+    || (personalHook.dirty && JSON.stringify(personalHook.draft.atomicPreferences?.conditions) !== JSON.stringify(personalHook.savedDraft.atomicPreferences?.conditions))
+  );
+  const sourceChangeBlocked = conditionDirty || shared.saving || rebaseRequired;
+  const appendPreference = (sentence: string) => {
+    if (sourceChangeBlocked || personalHook.state !== 'ready' || personalHook.phase !== 'idle' || !sentence.trim()) return;
+    const source = personalHook.draft.originalText;
+    const separator = source && !source.endsWith('\n') ? '\n' : '';
+    setReplaceAnalysisFor(null);
+    setShowOriginal(false);
+    void personalHook.analyzeAndSave(source + separator + sentence.trim());
+  };
+  const runAnalysis = () => {
+    if (preferenceEditorOpen || sourceChangeBlocked) return;
+    if (hasUserReviewToReplace && !replaceAnalysisPending) { setReplaceAnalysisFor(personalHook.draft); return; }
+    setReplaceAnalysisFor(null);
+    setShowOriginal(false);
+    void personalHook.analyzeAndSave();
+  };
   const fatalAccess = baseFatalAccess || (!isPreview && personalHook.state === 'fatal');
   const participantsOpen = openParticipantRoomId === entry?.trip.id && view === 'preparation' && !fatalAccess;
-  const localGenerationBlocker = conditionDirty || shared.saving || rebaseRequired
+  const localGenerationBlocker = sourceChangeBlocked
     ? '여행 기본조건의 미저장 변경을 먼저 저장하거나 취소해 주세요.'
+    : preferenceEditorOpen
+      ? '편집 중인 취향을 적용하거나 취소해 주세요.'
     : !isPreview && personalHook.state !== 'ready'
       ? '내 취향과 준비 상태를 불러온 뒤 다시 시도해 주세요.'
     : !isPreview && personalHook.saveStatus !== 'confirmed'
@@ -150,6 +180,8 @@ export default function RoomPage() {
     // These transient controls belong to the current room, view, and access state.
     setCopyFeedback(null);
     setOpenParticipantRoomId(null);
+    setShowOriginal(false);
+    setReplaceAnalysisFor(null);
     return () => {
       invalidateCopyFeedback();
     };
@@ -287,6 +319,10 @@ export default function RoomPage() {
     window.history.replaceState(null, '', `${window.location.pathname}?${nextQuery.toString()}`);
   }
   const personal = isPreview ? previewPersonal : personalHook.draft;
+  const hasCurrentProfile = !isPreview && personalHook.resultsVisible && personal.atomicPreferences?.status === 'current'
+    && personalHook.resultStatus !== 'stale' && personalHook.phase !== 'analyzing' && !personalHook.operationError;
+  const originalVisible = !hasCurrentProfile || showOriginal;
+  const reviewStale = personalHook.resultStatus === 'stale' || personal.atomicPreferences?.status === 'stale';
   const updatePersonal = <K extends keyof PersonalDraft>(key: K, value: PersonalDraft[K]) => {
     if (isPreview) { setPreviewPersonal((draft) => ({ ...draft, [key]: value })); setLocalPersonalMessage('미리보기 취향을 수정했어요.'); }
     else {
@@ -334,7 +370,7 @@ export default function RoomPage() {
     if (field === 'likes') return '좋아하는 것과 피하고 싶은 것이 함께 있어요. 싫어하는 항목을 ‘피하고 싶은 장소·활동’으로 옮겨 주세요.';
     return '걷기 제한을 선택하고 내 취향을 다시 저장해 주세요.';
   };
-  const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '미저장', saved: '저장됨', confirmed: '준비 완료', unknown: '확인 필요', empty: '입력 전' }[personalHook.saveStatus];
+  const privateSaveLabel = { loading: '불러오는 중', saving: '저장 중', unsaved: '수정사항 저장 전', saved: '취향 저장됨 · 준비 완료 전', confirmed: '준비 완료', unknown: '최신 상태 확인 필요', empty: '입력 전' }[personalHook.saveStatus];
   return <main className="travel-workspace prep-room-shell">
     <header className="tw-topbar prep-topbar">
       <a className="tw-brand" href="/">충북 여행 계획</a>
@@ -381,7 +417,7 @@ export default function RoomPage() {
             >
               <span>참여자</span>
               <span className="prep-participant-donut" aria-hidden="true" style={{ '--roster-progress': `${confirmedRatio * 360}deg` } as CSSProperties} />
-              <span className="prep-participant-count">{confirmedMemberCount}/{participantCount}</span>
+              <span className="prep-participant-count">준비 완료 {confirmedMemberCount}/{participantCount}</span>
               <svg className="prep-participant-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
             </button>
             {participantsOpen && <section className="prep-participant-panel" id={participantPanelId} aria-label="참여자 준비 상태">
@@ -423,17 +459,24 @@ export default function RoomPage() {
             {(!isPreview && personalHook.state === 'fatal') ? null : <>
               {!isPreview && personalHook.state === 'error' && <div className="prep-recovery" role="alert"><p>{personalHook.conditionsChangedNotice ? '개인 입력의 저장 상태를 확인해야 해요.' : personalHook.message} 현재 입력은 남아 있어요. 저장본을 불러오면 미저장 입력이 대체돼요.</p><Button variant="secondary" onClick={() => void personalHook.reload()}>미저장 입력을 지우고 저장본 불러오기</Button></div>}
               <fieldset className="prep-personal-editor" disabled={!isPreview && (personalHook.state !== 'ready' || personalHook.phase !== 'idle')}>
+                {hasCurrentProfile && <button type="button" className="prep-original-toggle"
+                  aria-expanded={showOriginal} aria-controls="prep-original-controls" disabled={preferenceEditorOpen}
+                  onClick={() => { setShowOriginal(!showOriginal); setReplaceAnalysisFor(null); }}>
+                  내가 쓴 내용 <span aria-hidden="true" />
+                </button>}
+                <div id="prep-original-controls" hidden={!originalVisible}>
                 <div className={`prep-original-wrap ${!isPreview && personalHook.phase === 'analyzing' ? 'is-busy' : ''}`} aria-busy={!isPreview && personalHook.phase === 'analyzing'}>
-                  <div className="prep-original-field"><label htmlFor="tw-original">어떤 여행을 하고 싶나요?</label><textarea id="tw-original" maxLength={5000} className="text-input prep-original-input" value={personal.originalText} onChange={(event) => updatePersonal('originalText', event.target.value)} placeholder="예: 자연 풍경을 보며 여유롭게 쉬고 싶어요. 오래 걷는 일정은 어려워요." /></div>
+                  <div className="prep-original-field"><label htmlFor="tw-original">어떤 여행을 하고 싶나요?</label><textarea id="tw-original" maxLength={5000} className="text-input prep-original-input" readOnly={preferenceEditorOpen} value={personal.originalText} onChange={(event) => updatePersonal('originalText', event.target.value)} placeholder="예: 자연 풍경을 보며 여유롭게 쉬고 싶어요. 오래 걷는 일정은 어려워요." /></div>
                   {!isPreview && personalHook.phase === 'analyzing' && <div className="prep-progress" role="status"><svg className="prep-progress-spinner" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /></svg>{personalHook.analysisStep === 'source' ? '입력 내용을 저장하고 있어요' : personalHook.analysisStep === 'interpret' ? '취향을 분석하고 있어요' : '분석 결과를 저장하고 있어요'}</div>}
                 </div>
-                <div className="prep-analysis-row"><PreparationActionButton label="취향 분석하기" loading={personalHook.phase === 'analyzing'} loadingLabel="취향 분석 중" disabled={isPreview || personalHook.state !== 'ready' || personalHook.phase !== 'idle' || !personal.originalText.trim()} onClick={() => { if (!isPreview) void personalHook.analyzeAndSave(); }} />{isPreview && <span>예시 화면에서는 분석할 수 없어요.</span>}</div>
+                <div className="prep-analysis-row"><PreparationActionButton label={replaceAnalysisPending ? '분석 결과로 바꾸기' : '취향 분석하기'} loading={personalHook.phase === 'analyzing'} loadingLabel="취향 분석 중" disabled={isPreview || personalHook.state !== 'ready' || personalHook.phase !== 'idle' || preferenceEditorOpen || sourceChangeBlocked || !personal.originalText.trim()} onClick={() => { if (!isPreview) runAnalysis(); }} />{replaceAnalysisPending && <><span role="status">직접 정리한 조건과 확인 기록이 새 분석 결과로 바뀝니다.</span><button type="button" className="atomic-review__text-button" onClick={() => setReplaceAnalysisFor(null)}>취소</button></>}{isPreview && <span>예시 화면에서는 분석할 수 없어요.</span>}</div>
+                </div>
                 {!isPreview && personalHook.state === 'ready' && personalHook.phase === 'idle' && personalHook.operationError && <p className="prep-operation-error" role="alert">{personalHook.operationError}</p>}
-                {(!isPreview && personalHook.state === 'ready' && personalHook.resultStatus === 'stale' && personalHook.phase === 'idle') && <p className="prep-stale-note" role="status">입력 내용이 바뀌었어요. 필요하면 다시 분석해 주세요.</p>}
+                {(!isPreview && personalHook.state === 'ready' && reviewStale && personalHook.phase === 'idle') && <p id="prep-stale-note" className="prep-stale-note" role="status">{personal.atomicPreferences ? '입력 내용이 바뀌었어요. 취향을 다시 분석한 뒤 준비 완료를 눌러 주세요.' : '입력 내용이 바뀌었어요. 필요하면 다시 분석해 주세요.'}</p>}
                 {(personalHook.resultsVisible || isPreview) ? <>
                   <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
-                  <p className="prep-importance-hint" id="tw-importance-hint">선호는 가능한 만큼 반영해요. 필수로 고른 조건은 장소 정보로 확인돼야 일정을 만들 수 있어요.</p>
-                  <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
+                  {!personal.atomicPreferences && <p className="prep-importance-hint" id="tw-importance-hint">선호는 가능한 만큼 반영해요. 필수로 고른 조건은 장소 정보로 확인돼야 일정을 만들 수 있어요.</p>}
+                  {!personal.atomicPreferences && <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
                     <RankedPreferenceField field="avoid" label="피하고 싶은 장소·활동" placeholder="예: 붐비는 시장, 가파른 등산로"
                       value={personal.avoid} importance={personal.avoidImportance} issue={issueMessage('avoid')}
                       onChange={value => updatePersonal('avoid', value)} onImportanceChange={value => updatePersonal('avoidImportance', value)} />
@@ -441,12 +484,21 @@ export default function RoomPage() {
                       value={personal.food} importance={personal.foodImportance} issue={issueMessage('food')}
                       onChange={value => updatePersonal('food', value)} onImportanceChange={value => updatePersonal('foodImportance', value)} />
                     <fieldset className="prep-walking" aria-describedby={issueFor('walking') ? 'tw-walking-issue' : undefined} aria-invalid={Boolean(issueFor('walking'))}><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div>{issueFor('walking') && <p className="prep-personal-field-error" id="tw-walking-issue" role="alert">{issueMessage('walking')}</p>}</fieldset>
-                  </div>
+                  </div>}
+                  {!isPreview && personal.atomicPreferences && <AtomicPreferenceReview
+                    key={`${entry.trip.id}:${personal.originalText}:${personal.atomicPreferences.sourceDigest}:${personalHook.preferenceVersion}`}
+                    profile={personal.atomicPreferences} originalText={personal.originalText}
+                    disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || reviewStale}
+                    acknowledgements={personalHook.reviewAcknowledgements} savedAcknowledgements={personalHook.savedReviewAcknowledgements}
+                    onChange={value => personalHook.updateDraft('atomicPreferences', value)} onAcknowledge={personalHook.acknowledgeUnresolved}
+                    onAppendPreference={appendPreference} replaceOnAppend={hasUserReviewToReplace} sourceChangeBlocked={sourceChangeBlocked}
+                    onEditingChange={setPreferenceEditorOpen}
+                  />}
                   {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
                 </> : <div className="prep-parsed-empty"><h3>내 취향</h3><p>원하는 내용을 적고 분석하면 여기에 정리돼요.</p></div>}
                 {isPreview ? <div className="prep-confirm-row"><span role="status">{localPersonalMessage || '예시 입력은 실제 여행방 상태에 반영되지 않아요.'}</span></div> : <div className="prep-confirm-row prep-personal-actions">
                   {!personalHook.resultsVisible && personalHook.dirty && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span><PreparationActionButton label="초안 저장" loading={personalHook.phase === 'saving'} loadingLabel="초안 저장 중" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || conditionDirty || shared.saving || rebaseRequired} onClick={() => void personalHook.save()} /></div>}
-                  {personalHook.resultsVisible && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span>{!(personalHook.saveStatus === 'confirmed' && !personalHook.dirty) && <PreparationActionButton label="저장하고 준비 완료" loading={personalHook.phase === 'saving' || personalHook.phase === 'confirming'} loadingLabel={personalHook.phase === 'saving' ? '취향 저장 중' : '준비 완료 처리 중'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || conditionDirty || shared.saving || rebaseRequired} onClick={() => void personalHook.saveAndConfirm()} />}</div>}
+                  {personalHook.resultsVisible && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{preferenceEditorOpen ? '편집을 마치면 준비를 완료할 수 있어요.' : privateSaveLabel}</span>{!(personalHook.saveStatus === 'confirmed' && !personalHook.dirty) && <PreparationActionButton label="저장하고 준비 완료" ariaDescribedBy={reviewStale ? 'prep-stale-note' : undefined} loading={personalHook.phase === 'saving' || personalHook.phase === 'confirming'} loadingLabel={personalHook.phase === 'saving' ? '취향 저장 중' : '준비 완료 처리 중'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || reviewStale || preferenceEditorOpen || sourceChangeBlocked} onClick={() => void personalHook.saveAndConfirm()} />}</div>}
                 </div>}
               </fieldset>
             </>}

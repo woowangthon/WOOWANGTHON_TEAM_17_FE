@@ -481,16 +481,16 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
       if(controller.signal.aborted||sequence!==placeChoiceSequence.current||!isCurrentSource())return;
       if(currentTargetRef.current.dayId!==targetDay||currentTargetRef.current.replaceTargetId!==targetNodeId){setSearchMessage('날짜나 교체 대상이 바뀌어 선택을 취소했어요.');return;}
       if(targetNodeId){
-        let replaced=false;let vanished=false;
+        let replaced=false;let vanished=false;let unchanged=false;
         const updated=sync.update(current=>{
           const target=current.nodes.find(node=>node.id===targetNodeId);
           if(!target||target.kind!=='place'){vanished=true;return current;}
-          if(target.contentid===full.contentid){replaced=true;return current;}
+          if(target.contentid===full.contentid){replaced=true;unchanged=true;return current;}
           replaced=true;
           const normalized=materializeProjectedDay(current,target.dayId,measuredSizes);
           return {...normalized,nodes:normalized.nodes.map(node=>node.id===targetNodeId&&node.kind==='place'?replaceCanvasPlace(node,full.contentid):node)};
         });
-        if(!updated||!replaced){setSearchMessage(vanished?'바꿀 장소가 일정에서 사라졌어요.':'장소를 바꾸지 못했어요. 최신 공유 상태를 확인해 주세요.');return;}
+        if(!updated||!replaced){if(unchanged){setReplaceTargetId('');selectCard(targetNodeId);setMessage('이미 같은 장소예요.');return;}setSearchMessage(vanished?'바꿀 장소가 일정에서 사라졌어요.':'장소를 바꾸지 못했어요. 최신 공유 상태를 확인해 주세요.');return;}
         setDetails(previous=>new Map(previous).set(full.contentid,full));setReplaceTargetId('');selectCard(targetNodeId);setDayId(targetDay);setTab('ai');setMessage(`${full.title}로 장소를 바꿨어요. 기존 연결은 유지돼요.`);
       }else{
         if(!doc?.days.some(day=>day.id===targetDay)){setSearchMessage('선택한 날짜가 더 이상 없어요. 날짜 그룹을 다시 선택해 주세요.');return;}
