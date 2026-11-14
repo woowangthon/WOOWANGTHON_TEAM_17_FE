@@ -8,8 +8,9 @@ import { isGenerationAccessLost } from './generationAccess.ts';
 import type { GenerationLoadingPhase } from './generationProgress.ts';
 import { mayCompleteHandoff, waitForTwoPaints } from './generationHandoff.ts';
 import { readinessMessage } from './generationReadiness.ts';
+import { readGenerationPlanWarningCodes, type GenerationPlanWarningCode } from './generationWarnings.ts';
 
-export type GenerationPlanWarningCode = 'MEAL_SLOT_UNFILLED' | 'TRANSFER_TIME_ESTIMATED' | 'STAY_TIME_ESTIMATED';
+export type { GenerationPlanWarningCode } from './generationWarnings.ts';
 export type GenerationCanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string; warningCodes?: GenerationPlanWarningCode[] };
 type Options = { tripId: string | null; enabled: boolean; blockedReason?: string; onStarted: (handoff: GenerationCanvasHandoff) => void; onAccessLost: () => void };
 function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -156,11 +157,8 @@ export function useGenerationStart({ tripId, enabled, blockedReason, onStarted, 
         setData(current => current?.latestJob?.id === job.id && current.latestJob ? { ...current, latestJob: { ...current.latestJob, status: 'STALE' } } : current);
         throw new GenerationError(409, 'PLAN_STALE', '여행 조건이 바뀌어 생성한 일정을 가져오지 못했어요. 최신 조건으로 다시 만들어 주세요.');
       }
-      const supportedWarnings = new Set<GenerationPlanWarningCode>(['MEAL_SLOT_UNFILLED', 'TRANSFER_TIME_ESTIMATED', 'STAY_TIME_ESTIMATED']);
       const warnings = plan.document?.validation?.warnings;
-      const warningCodes = Array.isArray(warnings)
-        ? [...new Set(warnings.filter((code): code is GenerationPlanWarningCode => supportedWarnings.has(code as GenerationPlanWarningCode)))]
-        : [];
+      const warningCodes = readGenerationPlanWarningCodes(warnings);
       await importCompletedPlan(id, plan.planId, plan.versionId, plan.status, warningCodes, signal, own);
     } finally {
       if (processing.current === initialJob.id) processing.current = null;

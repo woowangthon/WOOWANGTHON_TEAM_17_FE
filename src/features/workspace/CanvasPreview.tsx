@@ -18,6 +18,8 @@ import { CanvasPlaceCardContent, CanvasPlaceCandidate, CanvasPlaceMenuSummary, C
 import { CanvasEdgeEditor } from './CanvasEdgeEditor.tsx';
 import { modeLabel, resolveCanvasEdgeTime } from './canvasEdgePreferences.ts';
 import { useCanvasEdgePreferences } from './useCanvasEdgePreferences.ts';
+import { GenerationPlanNotice } from '../generation/GenerationPlanNotice.tsx';
+import { useGenerationPlanWarnings } from '../generation/useGenerationPlanWarnings.ts';
 
 type FlowNode = Node<{ model: CanvasNode; title?: string; detail?: CanvasPlaceDetail; visitLabel?: string; dayTitle?: string; isActive?:boolean; tone?: string; placeCount?: number; mealCount?: number; commentCount?: number; connectionCandidate?:boolean; connectionStart?:boolean; connectionHasOutgoing?:boolean; sourceSide?:Position; targetSide?:Position }, 'place'|'comment'|'dayFrame'>;
 type Board = { nodes: FlowNode[]; edges: Edge[] };
@@ -229,6 +231,7 @@ export default function CanvasPreview(props: CanvasPreviewProps) {
 }
 function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, conditionsVersion = null, transport = null, handoff, onSummary, sync, sourceKey }: CanvasPreviewProps & { sync: ReturnType<typeof useCanvasSync>; sourceKey: string }) {
   const doc = sync.document;
+  const generationWarningCodes = useGenerationPlanWarnings(tripId, preview, sync.state?.sourcePlan, handoff);
   const sourceScope = canvasViewScope(tripId,preview,sourceKey);
   const [isCurrentSource] = useState(() => sync.isCurrentSource);
   const viewScope=canvasViewScope(tripId,preview,sourceKey); const savedView=readCanvasView(viewScope);
@@ -755,6 +758,7 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
       <div className="tw-canvas-header-actions"><button type="button" className="tw-canvas-header-action" onClick={onSummary}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 4h9l4 4v12H6zM15 4v5h4M9 13h7M9 16h7" /></svg><span>결과 종합</span></button><button type="button" ref={drawerTrigger} className="tw-canvas-header-action tw-canvas-panel-toggle" title={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-label={drawerOpen?'장소 패널 닫기':'장소 패널 열기'} aria-expanded={drawerOpen} onClick={()=>runCommand('toggle-drawer')}><CanvasToolIcon command="toggle-drawer" /><span>{drawerOpen?'패널 닫기':'장소 찾기'}</span></button></div>
     </header>
     {preview&&<p className="tw-preview-banner">예시 미리보기 · 이 화면의 변경은 실제 여행방과 공유되지 않아요.</p>}
+    <GenerationPlanNotice codes={generationWarningCodes} />
     {!preview&&['offline','conflict','error'].includes(sync.status)&&<div className={`tw-sync-status status-${sync.status}`} role="alert"><span>{sync.message||'캔버스 상태를 확인해 주세요.'}</span>{['offline','error'].includes(sync.status)&&sync.state&&<Button variant="secondary" onClick={sync.retry}>다시 저장</Button>}{sync.status==='conflict'&&<><Button variant="secondary" onClick={()=>sync.resolve('local')}>내 변경 유지</Button><Button variant="secondary" onClick={()=>sync.resolve('remote')}>최신 내용 사용</Button></>}</div>}
     <div className={`tw-canvas-shell ${drawerOpen?'':'is-drawer-closed'}`} onKeyDownCapture={event=>{
       if(!placeConnectionMode||(event.key!=='Enter'&&event.key!==' '&&event.key!=='Spacebar'))return;

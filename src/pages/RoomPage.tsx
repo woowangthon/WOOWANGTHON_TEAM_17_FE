@@ -319,8 +319,9 @@ export default function RoomPage() {
     window.history.replaceState(null, '', `${window.location.pathname}?${nextQuery.toString()}`);
   }
   const personal = isPreview ? previewPersonal : personalHook.draft;
+  const isAnalyzing = !isPreview && personalHook.phase === 'analyzing';
   const hasCurrentProfile = !isPreview && personalHook.resultsVisible && personal.atomicPreferences?.status === 'current'
-    && personalHook.resultStatus !== 'stale' && personalHook.phase !== 'analyzing' && !personalHook.operationError;
+    && personalHook.resultStatus !== 'stale' && !isAnalyzing && !personalHook.operationError;
   const originalVisible = !hasCurrentProfile || showOriginal;
   const reviewStale = personalHook.resultStatus === 'stale' || personal.atomicPreferences?.status === 'stale';
   const updatePersonal = <K extends keyof PersonalDraft>(key: K, value: PersonalDraft[K]) => {
@@ -465,41 +466,43 @@ export default function RoomPage() {
                   내가 쓴 내용 <span aria-hidden="true" />
                 </button>}
                 <div id="prep-original-controls" hidden={!originalVisible}>
-                <div className={`prep-original-wrap ${!isPreview && personalHook.phase === 'analyzing' ? 'is-busy' : ''}`} aria-busy={!isPreview && personalHook.phase === 'analyzing'}>
+                <div className={`prep-original-wrap ${isAnalyzing ? 'is-busy' : ''}`} aria-busy={isAnalyzing}>
                   <div className="prep-original-field"><label htmlFor="tw-original">어떤 여행을 하고 싶나요?</label><textarea id="tw-original" maxLength={5000} className="text-input prep-original-input" readOnly={preferenceEditorOpen} value={personal.originalText} onChange={(event) => updatePersonal('originalText', event.target.value)} placeholder="예: 자연 풍경을 보며 여유롭게 쉬고 싶어요. 오래 걷는 일정은 어려워요." /></div>
-                  {!isPreview && personalHook.phase === 'analyzing' && <div className="prep-progress" role="status"><svg className="prep-progress-spinner" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /></svg>{personalHook.analysisStep === 'source' ? '입력 내용을 저장하고 있어요' : personalHook.analysisStep === 'interpret' ? '취향을 분석하고 있어요' : '분석 결과를 저장하고 있어요'}</div>}
+                  {isAnalyzing && <div className="prep-progress" role="status"><svg className="prep-progress-spinner" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" /></svg>{personalHook.analysisStep === 'source' ? '입력 내용을 저장하고 있어요' : personalHook.analysisStep === 'interpret' ? '취향을 분석하고 있어요' : '분석 결과를 저장하고 있어요'}</div>}
                 </div>
-                <div className="prep-analysis-row"><PreparationActionButton label={replaceAnalysisPending ? '분석 결과로 바꾸기' : '취향 분석하기'} loading={personalHook.phase === 'analyzing'} loadingLabel="취향 분석 중" disabled={isPreview || personalHook.state !== 'ready' || personalHook.phase !== 'idle' || preferenceEditorOpen || sourceChangeBlocked || !personal.originalText.trim()} onClick={() => { if (!isPreview) runAnalysis(); }} />{replaceAnalysisPending && <><span role="status">직접 정리한 조건과 확인 기록이 새 분석 결과로 바뀝니다.</span><button type="button" className="atomic-review__text-button" onClick={() => setReplaceAnalysisFor(null)}>취소</button></>}{isPreview && <span>예시 화면에서는 분석할 수 없어요.</span>}</div>
+                <div className="prep-analysis-row"><PreparationActionButton label={replaceAnalysisPending ? '분석 결과로 바꾸기' : '취향 분석하기'} loading={isAnalyzing} loadingLabel="취향 분석 중" disabled={isPreview || personalHook.state !== 'ready' || personalHook.phase !== 'idle' || preferenceEditorOpen || sourceChangeBlocked || !personal.originalText.trim()} onClick={() => { if (!isPreview) runAnalysis(); }} />{replaceAnalysisPending && <><span role="status">직접 정리한 조건과 확인 기록이 새 분석 결과로 바뀝니다.</span><button type="button" className="atomic-review__text-button" onClick={() => setReplaceAnalysisFor(null)}>취소</button></>}{isPreview && <span>예시 화면에서는 분석할 수 없어요.</span>}</div>
                 </div>
                 {!isPreview && personalHook.state === 'ready' && personalHook.phase === 'idle' && personalHook.operationError && <p className="prep-operation-error" role="alert">{personalHook.operationError}</p>}
                 {(!isPreview && personalHook.state === 'ready' && reviewStale && personalHook.phase === 'idle') && <p id="prep-stale-note" className="prep-stale-note" role="status">{personal.atomicPreferences ? '입력 내용이 바뀌었어요. 취향을 다시 분석한 뒤 준비 완료를 눌러 주세요.' : '입력 내용이 바뀌었어요. 필요하면 다시 분석해 주세요.'}</p>}
-                {(personalHook.resultsVisible || isPreview) ? <>
-                  <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
-                  {!personal.atomicPreferences && <p className="prep-importance-hint" id="tw-importance-hint">선호는 가능한 만큼 반영해요. 필수로 고른 조건은 장소 정보로 확인돼야 일정을 만들 수 있어요.</p>}
-                  {!personal.atomicPreferences && <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
-                    <RankedPreferenceField field="avoid" label="피하고 싶은 장소·활동" placeholder="예: 붐비는 시장, 가파른 등산로"
-                      value={personal.avoid} importance={personal.avoidImportance} issue={issueMessage('avoid')}
-                      onChange={value => updatePersonal('avoid', value)} onImportanceChange={value => updatePersonal('avoidImportance', value)} />
-                    <RankedPreferenceField field="food" label="음식 취향" placeholder="예: 회는 먹고 싶고, 우유는 피하고 싶어요"
-                      value={personal.food} importance={personal.foodImportance} issue={issueMessage('food')}
-                      onChange={value => updatePersonal('food', value)} onImportanceChange={value => updatePersonal('foodImportance', value)} />
-                    <fieldset className="prep-walking" aria-describedby={issueFor('walking') ? 'tw-walking-issue' : undefined} aria-invalid={Boolean(issueFor('walking'))}><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div>{issueFor('walking') && <p className="prep-personal-field-error" id="tw-walking-issue" role="alert">{issueMessage('walking')}</p>}</fieldset>
+                {!isAnalyzing && <>
+                  {(personalHook.resultsVisible || isPreview) ? <>
+                    <div className="prep-parsed-heading"><h3>내 취향</h3><span>{isPreview ? '예시 결과' : personalHook.resultStatus === 'analyzed' ? '분석 완료' : '저장된 내용'}</span></div>
+                    {!personal.atomicPreferences && <p className="prep-importance-hint" id="tw-importance-hint">선호는 가능한 만큼 반영해요. 필수로 고른 조건은 장소 정보로 확인돼야 일정을 만들 수 있어요.</p>}
+                    {!personal.atomicPreferences && <div className="prep-personal-fields"><div className="field"><label htmlFor="tw-likes">좋아하는 것</label><input id="tw-likes" className="text-input" maxLength={500} value={personal.likes} placeholder="예: 자연 풍경, 조용한 카페" aria-invalid={Boolean(issueFor('likes'))} aria-describedby={issueFor('likes') ? 'tw-likes-issue' : undefined} onChange={(event) => updatePersonal('likes', event.target.value)} />{issueFor('likes') && <p className="prep-personal-field-error" id="tw-likes-issue" role="alert">{issueMessage('likes')}</p>}</div>
+                      <RankedPreferenceField field="avoid" label="피하고 싶은 장소·활동" placeholder="예: 붐비는 시장, 가파른 등산로"
+                        value={personal.avoid} importance={personal.avoidImportance} issue={issueMessage('avoid')}
+                        onChange={value => updatePersonal('avoid', value)} onImportanceChange={value => updatePersonal('avoidImportance', value)} />
+                      <RankedPreferenceField field="food" label="음식 취향" placeholder="예: 회는 먹고 싶고, 우유는 피하고 싶어요"
+                        value={personal.food} importance={personal.foodImportance} issue={issueMessage('food')}
+                        onChange={value => updatePersonal('food', value)} onImportanceChange={value => updatePersonal('foodImportance', value)} />
+                      <fieldset className="prep-walking" aria-describedby={issueFor('walking') ? 'tw-walking-issue' : undefined} aria-invalid={Boolean(issueFor('walking'))}><legend>걷기</legend><div>{([['20', '20분 이내'], ['40', '40분 이내'], ['unlimited', '제한 없음']] as const).map(([value, label]) => <button type="button" key={value} className={personal.walking === value ? 'is-selected' : ''} aria-pressed={personal.walking === value} onClick={() => updatePersonal('walking', value)}>{label}</button>)}</div>{issueFor('walking') && <p className="prep-personal-field-error" id="tw-walking-issue" role="alert">{issueMessage('walking')}</p>}</fieldset>
+                    </div>}
+                    {!isPreview && personal.atomicPreferences && <AtomicPreferenceReview
+                      key={`${entry.trip.id}:${personal.originalText}:${personal.atomicPreferences.sourceDigest}:${personalHook.preferenceVersion}`}
+                      profile={personal.atomicPreferences} originalText={personal.originalText}
+                      disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || reviewStale}
+                      acknowledgements={personalHook.reviewAcknowledgements} savedAcknowledgements={personalHook.savedReviewAcknowledgements}
+                      onChange={value => personalHook.updateDraft('atomicPreferences', value)} onAcknowledge={personalHook.acknowledgeUnresolved}
+                      onAppendPreference={appendPreference} replaceOnAppend={hasUserReviewToReplace} sourceChangeBlocked={sourceChangeBlocked}
+                      onEditingChange={setPreferenceEditorOpen}
+                    />}
+                    {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
+                  </> : <div className="prep-parsed-empty"><h3>내 취향</h3><p>원하는 내용을 적고 분석하면 여기에 정리돼요.</p></div>}
+                  {isPreview ? <div className="prep-confirm-row"><span role="status">{localPersonalMessage || '예시 입력은 실제 여행방 상태에 반영되지 않아요.'}</span></div> : <div className="prep-confirm-row prep-personal-actions">
+                    {!personalHook.resultsVisible && personalHook.dirty && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span><PreparationActionButton label="초안 저장" loading={personalHook.phase === 'saving'} loadingLabel="초안 저장 중" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || conditionDirty || shared.saving || rebaseRequired} onClick={() => void personalHook.save()} /></div>}
+                    {personalHook.resultsVisible && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{preferenceEditorOpen ? '편집을 마치면 준비를 완료할 수 있어요.' : privateSaveLabel}</span>{!(personalHook.saveStatus === 'confirmed' && !personalHook.dirty) && <PreparationActionButton label="저장하고 준비 완료" ariaDescribedBy={reviewStale ? 'prep-stale-note' : undefined} loading={personalHook.phase === 'saving' || personalHook.phase === 'confirming'} loadingLabel={personalHook.phase === 'saving' ? '취향 저장 중' : '준비 완료 처리 중'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || reviewStale || preferenceEditorOpen || sourceChangeBlocked} onClick={() => void personalHook.saveAndConfirm()} />}</div>}
                   </div>}
-                  {!isPreview && personal.atomicPreferences && <AtomicPreferenceReview
-                    key={`${entry.trip.id}:${personal.originalText}:${personal.atomicPreferences.sourceDigest}:${personalHook.preferenceVersion}`}
-                    profile={personal.atomicPreferences} originalText={personal.originalText}
-                    disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || reviewStale}
-                    acknowledgements={personalHook.reviewAcknowledgements} savedAcknowledgements={personalHook.savedReviewAcknowledgements}
-                    onChange={value => personalHook.updateDraft('atomicPreferences', value)} onAcknowledge={personalHook.acknowledgeUnresolved}
-                    onAppendPreference={appendPreference} replaceOnAppend={hasUserReviewToReplace} sourceChangeBlocked={sourceChangeBlocked}
-                    onEditingChange={setPreferenceEditorOpen}
-                  />}
-                  {!isPreview && personal.scheduleItems.length > 0 && <ScheduleItemsEditor tripId={tripId ?? ''} items={personal.scheduleItems} clarifications={personalHook.clarifications} canSetGroup={entry.member.role === 'OWNER'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle'} onChange={items => personalHook.updateDraft('scheduleItems', items)} />}
-                </> : <div className="prep-parsed-empty"><h3>내 취향</h3><p>원하는 내용을 적고 분석하면 여기에 정리돼요.</p></div>}
-                {isPreview ? <div className="prep-confirm-row"><span role="status">{localPersonalMessage || '예시 입력은 실제 여행방 상태에 반영되지 않아요.'}</span></div> : <div className="prep-confirm-row prep-personal-actions">
-                  {!personalHook.resultsVisible && personalHook.dirty && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{privateSaveLabel}</span><PreparationActionButton label="초안 저장" loading={personalHook.phase === 'saving'} loadingLabel="초안 저장 중" disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || conditionDirty || shared.saving || rebaseRequired} onClick={() => void personalHook.save()} /></div>}
-                  {personalHook.resultsVisible && <div className="prep-personal-save-row"><span className="prep-private-save-status" role="status">{preferenceEditorOpen ? '편집을 마치면 준비를 완료할 수 있어요.' : privateSaveLabel}</span>{!(personalHook.saveStatus === 'confirmed' && !personalHook.dirty) && <PreparationActionButton label="저장하고 준비 완료" ariaDescribedBy={reviewStale ? 'prep-stale-note' : undefined} loading={personalHook.phase === 'saving' || personalHook.phase === 'confirming'} loadingLabel={personalHook.phase === 'saving' ? '취향 저장 중' : '준비 완료 처리 중'} disabled={personalHook.state !== 'ready' || personalHook.phase !== 'idle' || reviewStale || preferenceEditorOpen || sourceChangeBlocked} onClick={() => void personalHook.saveAndConfirm()} />}</div>}
-                </div>}
+                </>}
               </fieldset>
             </>}
           </section>

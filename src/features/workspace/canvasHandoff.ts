@@ -1,6 +1,7 @@
 import type { CanvasDocument } from './canvasModel.ts';
+import type { GenerationPlanWarningCode } from '../generation/generationWarnings.ts';
 
-export type CanvasWarningCode = 'MEAL_SLOT_UNFILLED' | 'TRANSFER_TIME_ESTIMATED' | 'STAY_TIME_ESTIMATED';
+export type CanvasWarningCode = GenerationPlanWarningCode;
 export type CanvasHandoff = { tripId: string; planId: string; versionId: string; handoffId: string; warningCodes?: CanvasWarningCode[] };
 export type CanvasHandoffTarget = { dayId: string; nodeIds: string[]; matched: boolean };
 export type CanvasViewport = { x: number; y: number; zoom: number };
