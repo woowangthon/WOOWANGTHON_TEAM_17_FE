@@ -1,4 +1,4 @@
-import type { AtomicCondition, AtomicPreferences, PersonalDraft, PreferenceImportance, ScheduleItem } from '../room/roomData.ts';
+import type { AtomicCondition, AtomicPreferences, PersonalDraft, PreferenceImportance, ScheduleItem, UnresolvedAcknowledgement, UnresolvedAcknowledgements } from '../room/roomData.ts';
 
 export type PersonalConfirmation = {
   status: 'writing' | 'confirmed';
@@ -13,6 +13,7 @@ export type PersonalPreferences = {
   draft: PersonalDraft;
   confirmation: PersonalConfirmation;
   clarifications: Array<{ itemId: string; fields: string[]; code: string; candidates: Array<{ contentid: number; title: string; address: string | null }> }>;
+  unresolvedAcknowledgements: UnresolvedAcknowledgements | null;
 };
 
 export type Interpretation = {
@@ -44,7 +45,11 @@ export class PersonalApiError extends Error {
   }
 }
 
-type RequestOptions = { signal?: AbortSignal; fetcher?: typeof fetch; analysisReceipt?: string };
+type RequestOptions = { signal?: AbortSignal; fetcher?: typeof fetch; analysisReceipt?: string; unresolvedAcknowledgements?: UnresolvedAcknowledgements };
+type SaveOptions = RequestOptions & (
+  | { sourceOnly: true; analysisReceipt?: never; unresolvedAcknowledgements?: never }
+  | { sourceOnly?: false; analysisReceipt?: string; unresolvedAcknowledgements?: UnresolvedAcknowledgements }
+);
 const keys = ['originalText', 'likes', 'avoid', 'avoidImportance', 'food', 'foodImportance', 'walking'] as const;
 const errorKeys = [...keys, 'atomicPreferences'] as const;
 const importanceValues = ['required', 'preferred'] as const satisfies readonly PreferenceImportance[];
@@ -145,7 +150,7 @@ function parseClarifications(value: unknown): PersonalPreferences['clarification
 }
 
 export function parsePersonalPreferences(value: unknown): PersonalPreferences {
-  if (!record(value) || !([Object.keys(value).sort().join('|') === ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion'].sort().join('|'), Object.keys(value).sort().join('|') === ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion', 'clarifications'].sort().join('|')].some(Boolean)) || !validVersion(value.conditionsVersion) || !validVersion(value.preferenceVersion) || !record(value.confirmation)) return invalidDto();
+  if (!record(value) || ![ ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion'], ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion', 'clarifications'], ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion', 'unresolvedAcknowledgements'], ['conditionsVersion', 'confirmation', 'draft', 'preferenceVersion', 'clarifications', 'unresolvedAcknowledgements'] ].some(keys => Object.keys(value).sort().join('|') === [...keys].sort().join('|')) || !validVersion(value.conditionsVersion) || !validVersion(value.preferenceVersion) || !record(value.confirmation)) return invalidDto();
   const confirmation = value.confirmation;
   if (Object.keys(confirmation).sort().join('|') !== ['status', 'confirmedConditionsVersion', 'confirmedPreferenceVersion', 'confirmedAt'].sort().join('|')) return invalidDto();
   if ((confirmation.status !== 'writing' && confirmation.status !== 'confirmed') ||
@@ -155,6 +160,8 @@ export function parsePersonalPreferences(value: unknown): PersonalPreferences {
   if (confirmation.status === 'confirmed' && (confirmation.confirmedConditionsVersion !== value.conditionsVersion || confirmation.confirmedPreferenceVersion !== value.preferenceVersion || confirmation.confirmedAt === null)) return invalidDto();
   if (confirmation.status === 'writing' && (confirmation.confirmedConditionsVersion !== null || confirmation.confirmedPreferenceVersion !== null || confirmation.confirmedAt !== null)) return invalidDto();
   const clarifications = parseClarifications(value.clarifications);
+  const unresolvedAcknowledgements = value.unresolvedAcknowledgements === undefined || value.unresolvedAcknowledgements === null
+    ? null : parseUnresolvedAcknowledgements(value.unresolvedAcknowledgements);
   return {
     conditionsVersion: value.conditionsVersion,
     preferenceVersion: value.preferenceVersion,
@@ -165,8 +172,19 @@ export function parsePersonalPreferences(value: unknown): PersonalPreferences {
       confirmedPreferenceVersion: confirmation.confirmedPreferenceVersion,
       confirmedAt: confirmation.confirmedAt,
     },
-    clarifications,
+    clarifications, unresolvedAcknowledgements,
   };
+}
+
+export function parseUnresolvedAcknowledgements(value: unknown): UnresolvedAcknowledgements {
+  if (!record(value) || Object.keys(value).sort().join('|') !== ['sourceDigest','items'].sort().join('|') || typeof value.sourceDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(value.sourceDigest) || !Array.isArray(value.items) || value.items.length > 80) return invalidDto();
+  const items = value.items.map((entry): UnresolvedAcknowledgement => {
+    if (!record(entry) || Object.keys(entry).sort().join('|') !== ['note','disposition'].sort().join('|') || !record(entry.note) || Object.keys(entry.note).sort().join('|') !== ['code','evidence','message'].sort().join('|') || typeof entry.note.code !== 'string' || entry.note.code.length > 48 || typeof entry.note.evidence !== 'string' || entry.note.evidence.length > 1000 || typeof entry.note.message !== 'string' || entry.note.message.length > 240 || (entry.disposition !== 'handled' && entry.disposition !== 'ignored')) return invalidDto();
+    return { note: { code: entry.note.code, evidence: entry.note.evidence, message: entry.note.message }, disposition: entry.disposition };
+  });
+  const unique = new Set(items.map(item => `${item.note.code}\u0000${item.note.evidence}\u0000${item.note.message}`));
+  if (unique.size !== items.length) return invalidDto();
+  return { sourceDigest: value.sourceDigest, items };
 }
 
 export function parseInterpretation(value: unknown): Interpretation {
@@ -252,21 +270,25 @@ export async function fetchMyPreferences(tripId: string, options: RequestOptions
   return parsePersonalPreferences(await request(path(tripId), 'GET', undefined, options));
 }
 
-export async function saveMyPreferences(tripId: string, expectedConditionsVersion: number, expectedPreferenceVersion: number, draft: PersonalDraft, options: RequestOptions = {}): Promise<PersonalPreferences> {
+export async function saveMyPreferences(tripId: string, expectedConditionsVersion: number, expectedPreferenceVersion: number, draft: PersonalDraft, options: SaveOptions = {}): Promise<PersonalPreferences> {
   if (!validVersion(expectedConditionsVersion) || !validVersion(expectedPreferenceVersion)) throw new Error('저장 버전을 확인할 수 없어요. 다시 불러와 주세요.');
+  // A source write intentionally leaves the server's old extracted profile in place as stale.
+  // Ignore profile/receipt metadata even if an untyped caller passes it at runtime.
+  const sourceOnly = options.sourceOnly === true;
   const normalized = parseDraft({
     originalText: draft.originalText.trim() || null, likes: draft.likes.trim() || null,
     avoid: draft.avoid.trim() || null, avoidImportance: draft.avoidImportance,
     food: draft.food.trim() || null, foodImportance: draft.foodImportance,
     walking: draft.walking || null, scheduleItems: draft.scheduleItems ?? [],
-    ...(draft.atomicPreferences !== undefined ? { atomicPreferences: draft.atomicPreferences } : {}),
+    ...(!sourceOnly && draft.atomicPreferences !== undefined ? { atomicPreferences: draft.atomicPreferences } : {}),
   });
-  const payload = await request(path(tripId), 'PUT', { expectedConditionsVersion, expectedPreferenceVersion, ...(options.analysisReceipt ? { analysisReceipt: options.analysisReceipt } : {}), draft: {
+  const acknowledgementCommand = sourceOnly || options.unresolvedAcknowledgements === undefined ? {} : { unresolvedAcknowledgements: parseUnresolvedAcknowledgements(options.unresolvedAcknowledgements) };
+  const payload = await request(path(tripId), 'PUT', { expectedConditionsVersion, expectedPreferenceVersion, ...(!sourceOnly && options.analysisReceipt ? { analysisReceipt: options.analysisReceipt } : {}), ...acknowledgementCommand, draft: {
     originalText: normalized.originalText || null, likes: normalized.likes || null, avoid: normalized.avoid || null,
     avoidImportance: normalized.avoidImportance, food: normalized.food || null, foodImportance: normalized.foodImportance,
     walking: normalized.walking || null,
     scheduleItems: normalized.scheduleItems,
-    ...(normalized.atomicPreferences !== undefined ? { atomicPreferences: normalized.atomicPreferences } : {}),
+    ...(!sourceOnly && normalized.atomicPreferences !== undefined ? { atomicPreferences: normalized.atomicPreferences } : {}),
   } }, options);
   try { return parsePersonalPreferences(payload); }
   catch { throw new PersonalApiError({ status: 0, code: 'INVALID_WRITE_RESPONSE', message: '저장 결과를 확인할 수 없어요. 입력은 유지했어요. 새로고침해 최신 상태를 확인해 주세요.', uncertain: true }); }

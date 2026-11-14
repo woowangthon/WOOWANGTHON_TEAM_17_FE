@@ -57,6 +57,36 @@ test('PUT sends all strict fields, nulls blank text, and uses current versions',
   assert.equal(body.draft.walking, '40')
 })
 
+test('source-only PUT omits profile and review metadata before parsing and leaves the caller draft untouched', async () => {
+  const sourceDraft = { ...emptyPersonalDraft, originalText: '  새 원문  ', scheduleItems: [], atomicPreferences: { intentionally: 'invalid stale DTO' } }
+  const before = structuredClone(sourceDraft)
+  let call
+  await saveMyPreferences('trip-1', 2, 7, sourceDraft, {
+    sourceOnly: true,
+    // Runtime callers cannot smuggle analysis metadata into a source write.
+    analysisReceipt: '12345678-1234-4234-8234-123456789abc',
+    unresolvedAcknowledgements: { sourceDigest: 'a'.repeat(64), items: [] },
+    fetcher: async (url, init) => {
+      call = { url, init }
+      return response(dto({ preferenceVersion: 8, draft: { ...dto().draft, originalText: '새 원문' } }))
+    },
+  })
+  const body = JSON.parse(call.init.body)
+  assert.deepEqual(Object.keys(body).sort(), ['draft', 'expectedConditionsVersion', 'expectedPreferenceVersion'].sort())
+  assert.equal(body.draft.originalText, '새 원문')
+  assert.equal('atomicPreferences' in body.draft, false)
+  assert.deepEqual(sourceDraft, before)
+})
+
+test('ordinary PUT preserves explicit null profile while omission stays omitted', async () => {
+  const bodies = []
+  const fetcher = async (_url, init) => { bodies.push(JSON.parse(init.body)); return response(dto()) }
+  await saveMyPreferences('trip-1', 2, 0, { ...emptyPersonalDraft, atomicPreferences: null }, { fetcher })
+  await saveMyPreferences('trip-1', 2, 0, emptyPersonalDraft, { fetcher })
+  assert.equal(bodies[0].draft.atomicPreferences, null)
+  assert.equal('atomicPreferences' in bodies[1].draft, false)
+})
+
 test('confirmation uses the explicit reviewed endpoint with both expected versions and no preference data', async () => {
   let call
   const confirmed = dto({ preferenceVersion: 5, draft: { ...dto().draft, originalText: 'private source', likes: 'nature', walking: '40' }, confirmation: {
@@ -131,6 +161,33 @@ test('v2 atomic profile preserves unresolved and permits absent walking; final s
   assert.equal(call.init.headers['X-Preference-Schema'], '2')
   assert.equal(body.analysisReceipt, requestId)
   assert.deepEqual(body.draft.atomicPreferences, profile)
+})
+
+test('top-level unresolved acknowledgement metadata validates and round trips without entering canonical draft', async () => {
+  const sourceDigest = 'd'.repeat(64)
+  const items = [
+    { note: { code: 'AMBIGUOUS_WALKING', evidence: '오래 걸으면 어려워요', message: '걷기 시간을 확인해 주세요.' }, disposition: 'ignored' },
+    { note: { code: 'AMBIGUOUS_MEAL', evidence: '오래 걸으면 어려워요', message: '식사 조건을 확인해 주세요.' }, disposition: 'handled' },
+  ]
+  const savedMeta = { sourceDigest, items }
+  assert.deepEqual(parsePersonalPreferences(dto({ unresolvedAcknowledgements: savedMeta })).unresolvedAcknowledgements, savedMeta)
+  let call
+  await saveMyPreferences('trip-1', 2, 4, emptyPersonalDraft, {
+    unresolvedAcknowledgements: savedMeta,
+    fetcher: async (url, init) => { call = { url, init }; return response(dto({ preferenceVersion: 5, unresolvedAcknowledgements: savedMeta })) },
+  })
+  const body = JSON.parse(call.init.body)
+  assert.deepEqual(body.unresolvedAcknowledgements, savedMeta)
+  assert.equal('unresolvedAcknowledgements' in body.draft, false)
+  assert.equal('atomicPreferences' in body.draft, false)
+  let resetCall
+  await saveMyPreferences('trip-1', 2, 5, emptyPersonalDraft, {
+    unresolvedAcknowledgements: { sourceDigest, items: [] },
+    fetcher: async (url, init) => { resetCall = JSON.parse(init.body); return response(dto({ preferenceVersion: 6, unresolvedAcknowledgements: { sourceDigest, items: [] } })) },
+  })
+  assert.deepEqual(resetCall.unresolvedAcknowledgements, { sourceDigest, items: [] })
+  assert.throws(() => parsePersonalPreferences(dto({ unresolvedAcknowledgements: { ...savedMeta, sourceDigest: 'bad' } })), /개인 준비 응답/u)
+  assert.throws(() => parsePersonalPreferences(dto({ unresolvedAcknowledgements: { sourceDigest, items: [items[0], items[0]] } })), /개인 준비 응답/u)
 })
 
 test('rejects malformed DTOs, unknown enums, overlong values, and inconsistent confirmation', () => {

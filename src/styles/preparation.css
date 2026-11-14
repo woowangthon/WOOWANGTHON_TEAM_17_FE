@@ -134,6 +134,28 @@
 .prep-recovery { margin: 0 0 var(--space-3); padding: var(--space-2); border: 1px solid var(--prep-line); border-radius: 7px; }
 .prep-recovery p { margin: 0 0 var(--space-2); color: var(--prep-muted); font-size: 13px; }
 .prep-original-wrap { position: relative; }
+.prep-original-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--prep-muted);
+  font: inherit;
+  font-size: var(--text-size-secondary);
+  cursor: pointer;
+}
+.prep-original-toggle > span {
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-2px) rotate(45deg);
+}
+.prep-original-toggle[aria-expanded="true"] > span { transform: translateY(2px) rotate(225deg); }
+.prep-original-toggle:disabled { color: var(--color-disabled-text); cursor: default; }
 .prep-original-wrap.is-busy { border-radius: 8px; box-shadow: 0 0 0 2px var(--prep-soft); }
 .prep-original-field { display: grid; gap: var(--space-1); }
 .prep-original-input { min-height: 164px; resize: vertical; line-height: 1.65; }
