@@ -7,6 +7,7 @@ import { GenerationError, createJob, getGeneration, getJob, getPlan, getSelfRevi
 import { isValidWgs84 } from './mapUtils';
 import { emptyReviewChoices, getReviewIssues, getUnmappedReasonLabel, restoreReviewChoices, reviewFieldName, type ReviewChoices, type ReviewField } from './personalReviewModel';
 import { courseEdgesForPlaces, courseNodesForDay, resolveSelectedCourse, selectCourseDay, totalBudgetSummary } from './itineraryPresentation';
+import { generationWarningLabel } from './generationWarnings.ts';
 import ResultMap from './ResultMap';
 import '../../styles/generation.css';
 
@@ -26,6 +27,8 @@ function validationLabel(code: string) {
   return labels[code] ?? '일정 조건을 다시 확인해 주세요.';
 }
 function warningLabel(code: string) {
+  const sharedLabel = generationWarningLabel(code);
+  if (sharedLabel) return sharedLabel;
   const labels: Record<string, string> = {
     OTHER_TRAVEL_EXPENSES_UNKNOWN: '전체 식비·유류비·주차비 등 추가 비용은 확인되지 않았어요.',
     ROUTE_NOT_CONFIGURED: '경로 확인 서비스가 설정되지 않아 이동 경로를 확인하지 못했어요.', ROUTE_UNAVAILABLE: '경로 확인에 실패해 이동 경로를 확인하지 못했어요.', ROUTE_TIMEOUT: '경로 확인 시간이 초과되어 이동 경로를 확인하지 못했어요.', ROUTE_RATE_LIMITED: '경로 서비스 요청이 많아 이동 경로를 확인하지 못했어요.', ROUTE_MODE_UNSUPPORTED: '이 이동수단의 경로를 확인할 수 없어요.', ROUTE_UNVERIFIED: '이동 경로를 확인하지 못했어요.',

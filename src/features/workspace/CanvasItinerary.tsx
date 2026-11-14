@@ -10,6 +10,8 @@ import { canvasItineraryCosts } from './canvasItineraryCosts.ts';
 import { useCanvasEdgePreferences } from './useCanvasEdgePreferences.ts';
 import { useCanvasRoutes } from './useCanvasRoutes.ts';
 import { useCanvasSync } from './useCanvasSync.ts';
+import { GenerationPlanNotice } from '../generation/GenerationPlanNotice.tsx';
+import { useGenerationPlanWarnings } from '../generation/useGenerationPlanWarnings.ts';
 import { modeLabel, resolveCanvasEdgeTime } from './canvasEdgePreferences.ts';
 import '../../styles/generation.css';
 import '../../styles/canvas-itinerary.css';
@@ -105,6 +107,7 @@ function SelectedPlaceDetail({ selected, detailFailed, preview, feeNeedsSearch, 
 
 export default function CanvasItinerary({ tripId, preview, conditionsVersion, transport, expectedPeople, onEditCanvas }: Props) {
   const sync = useCanvasSync(tripId, preview); const document = sync.document;
+  const generationWarningCodes = useGenerationPlanWarnings(tripId, preview, sync.state?.sourcePlan);
   const [activeDayId, setActiveDayId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectionFocusRequest, setSelectionFocusRequest] = useState(0);
@@ -295,6 +298,7 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
 
   return <section className="generation-workspace canvas-itinerary-page"><div className="canvas-itinerary prep-main" aria-label="여행 종합">
     <header className="canvas-itinerary-heading prep-page-heading"><div className="prep-heading-info"><h1>여행 종합</h1>{dateRange && <div className="prep-heading-meta">{dateRange}</div>}</div><div className="canvas-itinerary-actions"><span className={`canvas-itinerary-save is-${sync.status}`} role={sync.status === 'conflict' || sync.status === 'error' ? 'alert' : 'status'}>{sync.message || ({ loading: '불러오는 중', saving: '저장 중', saved: '저장됨', offline: '저장 대기', conflict: '저장 충돌', error: '오류' }[sync.status])}</span><PreparationActionButton label="일정 수정" onClick={onEditCanvas} /></div></header>
+    <GenerationPlanNotice codes={generationWarningCodes} />
     {busy && <section className="canvas-itinerary-state" role="status">최신 캔버스 일정을 불러오고 있어요.</section>}
     {loadError && <section className="canvas-itinerary-state" role="alert"><p>{sync.message || '일정을 불러오지 못했어요.'}</p><PreparationActionButton label="다시 시도" onClick={sync.retry} /></section>}
     {sync.status === 'conflict' && sync.state && <section className="canvas-itinerary-state" role="alert"><p>{sync.message || '다른 참여자가 일정을 수정했어요.'}</p><div className="canvas-itinerary-action-group"><PreparationActionButton label="내 변경 유지" onClick={() => sync.resolve('local')} /><PreparationActionButton label="최신 내용 사용" onClick={() => sync.resolve('remote')} /></div></section>}

@@ -1,0 +1,11 @@
+.generation-plan-notice {
+  min-width: 0;
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-inline-start: 3px solid var(--color-accent-hover);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
