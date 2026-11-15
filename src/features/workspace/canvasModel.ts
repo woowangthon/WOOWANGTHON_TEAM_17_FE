@@ -1,12 +1,14 @@
+import { canEditCanvasVisitTime, parseCanvasVisitTime, type CanvasVisitTime } from './canvasVisitTime.ts';
+
 export type CanvasColor = 'default' | 'lime' | 'sky' | 'rose' | 'amber';
 export type CanvasDay = { id: string; date: string | null; position?: { x: number; y: number } };
 export type CanvasDayLink = { id: string; source: string; target: string };
-export type CanvasPlaceNode = { id: string; kind: 'place'; dayId: string; position: { x: number; y: number }; color: CanvasColor; contentid: number; intent: 'route' | 'candidate'; source?: { planId: string; versionId: string; nodeId: string }; schedule?: { startAt: string | null; endAt: string | null; locked: boolean } };
+export type CanvasPlaceNode = { id: string; kind: 'place'; dayId: string; position: { x: number; y: number }; color: CanvasColor; contentid: number; intent: 'route' | 'candidate'; source?: { planId: string; versionId: string; nodeId: string }; schedule?: { startAt: string | null; endAt: string | null; locked: boolean }; visitTime?: CanvasVisitTime };
 export type CanvasCommentNode = { id: string; kind: 'comment'; dayId: string; position: { x: number; y: number }; color: CanvasColor; text: string };
 export type CanvasNode = CanvasPlaceNode | CanvasCommentNode;
 export type CanvasEdge = { id: string; source: string; target: string };
 export type CanvasDocumentV3 = { schemaVersion: 3; days: CanvasDay[]; nodes: CanvasNode[]; edges: CanvasEdge[] };
-export type CanvasDocumentV4 = { schemaVersion: 4; days: CanvasDay[]; nodes: CanvasNode[]; edges: CanvasEdge[]; dayLinks: CanvasDayLink[] };
+export type CanvasDocumentV4 = { schemaVersion: 4; days: CanvasDay[]; nodes: CanvasNode[]; edges: CanvasEdge[]; dayLinks: CanvasDayLink[]; visitTimeVersion?: 1 | 2 };
 export type CanvasDocument = CanvasDocumentV3 | CanvasDocumentV4;
 export type CanvasPlaceDetail = { contentid: number; title: string; address: string | null; adminCity: string | null; category: string | null; planningRole: string | null; coordinate: { latitude: number; longitude: number; crs: 'WGS84' } | null; overviewText: string | null; menuText: string | null; openingHoursText: string | null; closedDaysText: string | null; feeText: string | null; priceLabel?: string | null; bookingText: string | null; parkingText: string | null; tel: string | null; homepageUrl: string | null; imageUrl?: string | null; estimatedStayMinutes?: number | null };
 export type CanvasState = { tripId: string; revision: number; document: CanvasDocument; places: CanvasPlaceDetail[]; sourcePlan: { planId: string; versionId: string } | null; updatedAt: string };
@@ -40,6 +42,25 @@ function asCanvasDocumentV4(document: CanvasDocument): CanvasDocumentV4 {
   return document.schemaVersion === 4
     ? document
     : { schemaVersion: 4, days: document.days, nodes: document.nodes, edges: document.edges, dayLinks: getDayLinks(document) };
+}
+
+export function setCanvasVisitTime(document: CanvasDocument, nodeId: string, visitTime: CanvasVisitTime | null): CanvasDocument | null {
+  const node = document.nodes.find((item): item is CanvasPlaceNode => item.kind === 'place' && item.id === nodeId);
+  if (!node || !canEditCanvasVisitTime(node)) return null;
+  const version: 1 | 2 = visitTime && 'startTime' in visitTime ? 2 : 1;
+  const oldVersion = document.schemaVersion === 4 ? document.visitTimeVersion ?? 0 : 0;
+  const marker = Math.max(oldVersion, visitTime ? version : 0) as 1 | 2 | 0;
+  const canonical = visitTime && parseCanvasVisitTime(node, visitTime, marker === 0 ? 1 : marker);
+  if (visitTime && !canonical) return null;
+  const nodes = document.nodes.map(item => {
+    if (item.id !== nodeId || item.kind !== 'place') return item;
+    const next = { ...item };
+    if (canonical) next.visitTime = canonical;
+    else delete next.visitTime;
+    return next;
+  });
+  const promoted = asCanvasDocumentV4(document);
+  return { ...promoted, ...(marker ? { visitTimeVersion: marker } : {}), nodes };
 }
 
 export function moveDayFrame(document: CanvasDocument, dayId: string, position: { x: number; y: number }): CanvasDocument | null {
@@ -90,7 +111,7 @@ export const safeCanvasText = (value: unknown, max: number): value is string => 
 
 export function canvasClipboardCopy(node: CanvasNode): CanvasNode {
   const copy = structuredClone(node);
-  if (copy.kind === 'place') { delete copy.source; delete copy.schedule; }
+  if (copy.kind === 'place') { delete copy.source; delete copy.schedule; delete copy.visitTime; }
   return copy;
 }
 
@@ -100,7 +121,7 @@ export function copyCanvasNode(node: CanvasNode, newId: string, dayId: string, o
 }
 
 export function replaceCanvasPlace(node: CanvasPlaceNode, contentid: number): CanvasPlaceNode {
-  const { source: _source, schedule: _schedule, ...editable } = node;
+  const { source: _source, schedule: _schedule, visitTime: _visitTime, ...editable } = node;
   return { ...editable, contentid };
 }
 
@@ -116,9 +137,11 @@ export function canConnectRoute(source: string, target: string, nodeDays: Map<st
 
 export function parseCanvasDocument(value: unknown): CanvasDocument | null {
   if (!isRecord(value) || (value.schemaVersion !== 3 && value.schemaVersion !== 4)
-    || !(value.schemaVersion === 3 ? keys(value, ['schemaVersion', 'days', 'nodes', 'edges']) : keys(value, ['schemaVersion', 'days', 'nodes', 'edges', 'dayLinks']))
+    || !(value.schemaVersion === 3 ? keys(value, ['schemaVersion', 'days', 'nodes', 'edges']) : keys(value, ['schemaVersion', 'days', 'nodes', 'edges', 'dayLinks']) || keys(value, ['schemaVersion', 'days', 'nodes', 'edges', 'dayLinks', 'visitTimeVersion']))
     || !Array.isArray(value.days) || value.days.length < 1 || value.days.length > 31 || !Array.isArray(value.nodes) || value.nodes.length > 500 || !Array.isArray(value.edges) || value.edges.length > 500
-    || (value.schemaVersion === 4 && (!Array.isArray(value.dayLinks) || value.dayLinks.length > 500))) return null;
+    || (value.schemaVersion === 4 && (!Array.isArray(value.dayLinks) || value.dayLinks.length > 500))
+    || (value.schemaVersion === 4 && Object.hasOwn(value, 'visitTimeVersion') && value.visitTimeVersion !== 1 && value.visitTimeVersion !== 2)) return null;
+  const visitTimeMarker = value.schemaVersion === 4 && (value.visitTimeVersion === 1 || value.visitTimeVersion === 2) ? value.visitTimeVersion : undefined;
   try { if (new TextEncoder().encode(JSON.stringify(value)).length > 1_048_576) return null; } catch { return null; }
   const days: CanvasDay[] = []; const dayIds = new Set<string>(); const dayDates = new Set<string>();
   for (const item of value.days) {
@@ -132,8 +155,13 @@ export function parseCanvasDocument(value: unknown): CanvasDocument | null {
   const nodes: CanvasNode[] = []; const nodeIds = new Set<string>();
   for (const item of value.nodes) {
     if (!isRecord(item) || !uuid(item.id) || nodeIds.has(item.id) || !uuid(item.dayId) || !dayIds.has(item.dayId) || !isRecord(item.position) || !keys(item.position, ['x', 'y']) || typeof item.position.x !== 'number' || !Number.isFinite(item.position.x) || Math.abs(item.position.x) > 100000 || typeof item.position.y !== 'number' || !Number.isFinite(item.position.y) || Math.abs(item.position.y) > 100000 || !colors.includes(item.color as CanvasColor)) return null;
-    if (item.kind === 'place' && (keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent']) || keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent', 'source', 'schedule'])) && typeof item.contentid === 'number' && Number.isInteger(item.contentid) && item.contentid >= -2147483648 && item.contentid <= 2147483647 && (item.intent === 'route' || item.intent === 'candidate')) {
-      let source: CanvasPlaceNode['source']; let schedule: CanvasPlaceNode['schedule'];
+    if (item.kind === 'place' && [
+      ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent'],
+      ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent', 'visitTime'],
+      ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent', 'source', 'schedule'],
+      ['id', 'kind', 'dayId', 'position', 'color', 'contentid', 'intent', 'source', 'schedule', 'visitTime'],
+    ].some(expected => keys(item, expected)) && typeof item.contentid === 'number' && Number.isInteger(item.contentid) && item.contentid >= -2147483648 && item.contentid <= 2147483647 && (item.intent === 'route' || item.intent === 'candidate')) {
+      let source: CanvasPlaceNode['source']; let schedule: CanvasPlaceNode['schedule']; let visitTime: CanvasPlaceNode['visitTime'];
       if ('source' in item || 'schedule' in item) {
         if (!isRecord(item.source) || !keys(item.source, ['planId', 'versionId', 'nodeId']) || !uuid(item.source.planId) || !uuid(item.source.versionId) || !uuid(item.source.nodeId) || !isRecord(item.schedule) || !keys(item.schedule, ['startAt', 'endAt', 'locked']) || typeof item.schedule.locked !== 'boolean') return null;
         const validTime = (v: unknown) => v === null || (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(v) && !Number.isNaN(Date.parse(v)));
@@ -141,7 +169,12 @@ export function parseCanvasDocument(value: unknown): CanvasDocument | null {
         source = { planId: item.source.planId, versionId: item.source.versionId, nodeId: item.source.nodeId };
         schedule = { startAt: item.schedule.startAt as string | null, endAt: item.schedule.endAt as string | null, locked: item.schedule.locked };
       }
-      nodes.push({ id: item.id, kind: 'place', dayId: item.dayId, position: { x: item.position.x, y: item.position.y }, color: item.color as CanvasColor, contentid: item.contentid, intent: item.intent, ...(source ? { source } : {}), ...(schedule ? { schedule } : {}) });
+      if (Object.hasOwn(item, 'visitTime')) {
+        const parsed = visitTimeMarker && parseCanvasVisitTime({ source, schedule } as CanvasPlaceNode, item.visitTime, visitTimeMarker);
+        if (!parsed) return null;
+        visitTime = parsed;
+      }
+      nodes.push({ id: item.id, kind: 'place', dayId: item.dayId, position: { x: item.position.x, y: item.position.y }, color: item.color as CanvasColor, contentid: item.contentid, intent: item.intent, ...(source ? { source } : {}), ...(schedule ? { schedule } : {}), ...(visitTime ? { visitTime } : {}) });
     }
     else if (item.kind === 'comment' && keys(item, ['id', 'kind', 'dayId', 'position', 'color', 'text']) && typeof item.text === 'string' && text(item.text, 1, 1000) && item.text.trim()) nodes.push({ id: item.id, kind: 'comment', dayId: item.dayId, position: { x: item.position.x, y: item.position.y }, color: item.color as CanvasColor, text: item.text });
     else return null;
@@ -161,7 +194,7 @@ export function parseCanvasDocument(value: unknown): CanvasDocument | null {
     linkIds.add(item.id); linkPairs.add(pair);
     dayLinks.push({ id: item.id, source: item.source, target: item.target });
   }
-  return { schemaVersion: 4, days, nodes, edges, dayLinks };
+  return { schemaVersion: 4, days, nodes, edges, dayLinks, ...(visitTimeMarker ? { visitTimeVersion: visitTimeMarker } : {}) };
 }
 
 export function mergeCanvasDocuments(base: CanvasDocument, local: CanvasDocument, remote: CanvasDocument, conflictChoice?: 'local' | 'remote'): { document: CanvasDocument | null; conflicts: string[] } {
@@ -175,12 +208,19 @@ export function mergeCanvasDocuments(base: CanvasDocument, local: CanvasDocument
       if (!bv) { if (lv && rv) { if (same(lv, rv)) out.push(lv); else conflicts.push(`${path}:add`); } else if (lv || rv) out.push((lv ?? rv)!); continue; }
       if (!lv || !rv) { if (conflictChoice) { const chosen = conflictChoice === 'local' ? lv : rv; if (chosen) out.push(chosen); continue; } conflicts.push(`${path}:delete`); continue; }
       const merged = { ...bv } as Record<string, unknown>; const br = bv as Record<string, unknown>; const lr = lv as Record<string, unknown>; const rr = rv as Record<string, unknown>;
+      const identityChanged = (side: Record<string, unknown>) => placeIdentityFields.some(key => !same(side[key], br[key]));
+      const timingIdentityConflict = kind === 'node' && br.kind === 'place' &&
+        ((!same(rr.visitTime, br.visitTime) && identityChanged(lr) && !identityChanged(rr)) ||
+         (!same(lr.visitTime, br.visitTime) && identityChanged(rr) && !identityChanged(lr)));
+      if (timingIdentityConflict && !conflictChoice) conflicts.push(`${path}.identity/visitTime`);
       const selectField = (source: Record<string, unknown>, key: string) => {
         if (Object.hasOwn(source, key)) merged[key] = source[key];
         else delete merged[key];
       };
       for (const key of new Set([...Object.keys(br), ...Object.keys(lr), ...Object.keys(rr)])) {
-        if (same(lr[key], br[key])) selectField(rr, key);
+        if (timingIdentityConflict && (key === 'visitTime' || placeIdentityFields.includes(key))) {
+          selectField(conflictChoice === 'remote' ? rr : lr, key);
+        } else if (same(lr[key], br[key])) selectField(rr, key);
         else if (same(rr[key], br[key]) || same(lr[key], rr[key])) selectField(lr, key);
         else if (conflictChoice) selectField(conflictChoice === 'local' ? lr : rr, key);
         else conflicts.push(`${path}.${key}`);
@@ -194,9 +234,15 @@ export function mergeCanvasDocuments(base: CanvasDocument, local: CanvasDocument
   const edges = mergeFields('edge', base.edges, local.edges, remote.edges);
   const schemaVersion = Math.max(base.schemaVersion, local.schemaVersion, remote.schemaVersion) as 3 | 4;
   const dayLinks = schemaVersion === 4 ? mergeFields('dayLink', getDayLinks(base), getDayLinks(local), getDayLinks(remote)) : undefined;
-  const merged = schemaVersion === 4 ? { schemaVersion, days, nodes, edges, dayLinks } : { schemaVersion, days, nodes, edges };
+  const visitTimeVersion = schemaVersion === 4 ? Math.max(
+    ...[base, local, remote].map(doc => doc.schemaVersion === 4 ? doc.visitTimeVersion ?? 0 : 0),
+    ...nodes.filter((node): node is CanvasPlaceNode => node.kind === 'place' && !!node.visitTime)
+      .map(node => node.visitTime && 'startTime' in node.visitTime ? 2 : 1),
+  ) as 1 | 2 | 0 : 0;
+  const merged = schemaVersion === 4 ? { schemaVersion, days, nodes, edges, dayLinks, ...(visitTimeVersion ? { visitTimeVersion } : {}) } : { schemaVersion, days, nodes, edges };
   const doc = parseCanvasDocument(merged);
   if (!doc) conflicts.push('graph:invalid');
   return { document: conflicts.length ? null : doc, conflicts };
 }
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+const placeIdentityFields = ['kind', 'contentid', 'source', 'schedule'];

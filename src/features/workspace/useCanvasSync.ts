@@ -41,6 +41,7 @@ export function useCanvasSync(tripId: string, preview: boolean) {
     return { ...snapshot, sourceEpoch, isCurrentSource,
       update: (next: Parameters<typeof engine.update>[0]) => isCurrentSource() && engine.update(next),
       updateLatest: (next: Parameters<typeof engine.update>[0]) => isCurrentSource() && engine.update(next),
+      saveNow: () => { if (isCurrentSource()) void engine.save(); },
       retry: () => { if (isCurrentSource()) engine.retry(); },
       resolve: (choice: 'local' | 'remote') => { if (isCurrentSource()) engine.resolve(choice); },
       undo: () => isCurrentSource() && engine.undo(),
