@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CanvasSyncEngine } from '../src/features/workspace/canvasSyncEngine.ts';
 import { CanvasHttpError } from '../src/features/workspace/canvasApi.ts';
-import { moveDayFrame } from '../src/features/workspace/canvasModel.ts';
+import { moveDayFrame, replaceCanvasPlace, setCanvasVisitTime } from '../src/features/workspace/canvasModel.ts';
 
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const trip = id(99);
@@ -78,6 +78,91 @@ test('undoing and redoing the first v3 day move keeps an absent position absent'
   assert.deepEqual(h.engine.getSnapshot().document.days[0].position, { x: -40, y: 120 });
   assert.equal(h.engine.getSnapshot().document.nodes[0].color, 'sky');
   assert.deepEqual(h.read().document, h.engine.getSnapshot().document);
+});
+
+test('visit time history remains undoable after a backend acknowledgement normalizes UTC milliseconds', async () => {
+  const initial = document();
+  initial.nodes[0] = { ...initial.nodes[0], intent: 'route', source: { planId: id(40), versionId: id(41), nodeId: id(42) },
+    schedule: { startAt: '2026-11-11T00:00:00.000Z', endAt: '2026-11-11T01:00:00.000Z', locked: false } };
+  let server = state(initial);
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: server, transport: {
+    load: async () => structuredClone(server),
+    save: async request => {
+      const normalized = structuredClone(request.body);
+      for (const node of normalized.nodes) if (node.visitTime) {
+        node.visitTime.startAt = new Date(node.visitTime.startAt).toISOString();
+        node.visitTime.endAt = new Date(node.visitTime.endAt).toISOString();
+      }
+      server = state(normalized, server.revision + 1);
+      return structuredClone(server);
+    },
+  } });
+  const edited = { startAt: '2026-11-11T01:30:00.000Z', endAt: '2026-11-11T02:30:00.000Z' };
+  assert.equal(engine.update(current => setCanvasVisitTime(current, id(2), edited) ?? current), true);
+  await engine.save();
+  assert.deepEqual(engine.getSnapshot().document.nodes[0].visitTime, edited);
+  assert.equal(engine.getSnapshot().document.visitTimeVersion, 1);
+  assert.equal(engine.undo(), true);
+  await engine.save();
+  assert.equal(engine.getSnapshot().document.nodes[0].visitTime, undefined);
+  assert.equal(engine.getSnapshot().document.visitTimeVersion, 1, 'undo preserves the permanent marker');
+  assert.deepEqual(server.document, engine.getSnapshot().document);
+  assert.equal(engine.redo(), true);
+  await engine.save();
+  assert.deepEqual(engine.getSnapshot().document.nodes[0].visitTime, edited);
+  assert.deepEqual(server.document, engine.getSnapshot().document);
+});
+
+test('undoing an acknowledged replacement restores the complete imported visit identity', async () => {
+  const initial = document();
+  initial.nodes[0] = { ...initial.nodes[0], intent: 'route', source: { planId: id(50), versionId: id(51), nodeId: id(52) },
+    schedule: { startAt: '2026-11-11T00:00:00.000Z', endAt: '2026-11-11T01:00:00.000Z', locked: false } };
+  const seeded = setCanvasVisitTime(initial, id(2), { startAt: '2026-11-11T00:30:00.000Z', endAt: '2026-11-11T01:30:00.000Z' });
+  assert.ok(seeded);
+  let server = state(seeded);
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: server, transport: {
+    load: async () => structuredClone(server),
+    save: async request => { server = state(request.body, server.revision + 1); return structuredClone(server); },
+  } });
+  assert.equal(engine.update(current => ({ ...current, nodes: current.nodes.map(node => node.id === id(2) ? replaceCanvasPlace(node, 505) : node) })), true);
+  await engine.save();
+  assert.equal(engine.getSnapshot().document.nodes[0].contentid, 505);
+  assert.equal(engine.undo(), true);
+  await engine.save();
+  const restored = engine.getSnapshot().document.nodes[0];
+  assert.equal(restored.contentid, 2);
+  assert.ok(restored.source);
+  assert.deepEqual(restored.schedule, seeded.nodes[0].schedule);
+  assert.deepEqual(restored.visitTime, seeded.nodes[0].visitTime);
+  assert.deepEqual(server.document, engine.getSnapshot().document);
+});
+
+test('relative visit history keeps schema marker 2 after acknowledged undo and redo', async () => {
+  const initial = document();
+  initial.nodes[0] = { ...initial.nodes[0], source: undefined, schedule: undefined };
+  // Keep the manual node strict by removing absent provenance fields.
+  delete initial.nodes[0].source;
+  delete initial.nodes[0].schedule;
+  let server = state(initial);
+  const engine = new CanvasSyncEngine(trip, { autoSave: false, initialState: server, transport: {
+    load: async () => structuredClone(server),
+    save: async request => { server = state(request.body, server.revision + 1); return structuredClone(server); },
+  } });
+  const relative = { startTime: '10:00', endTime: '11:30' };
+  assert.equal(engine.update(current => setCanvasVisitTime(current, id(2), relative) ?? current), true);
+  await engine.save();
+  assert.equal(engine.getSnapshot().document.visitTimeVersion, 2);
+  assert.deepEqual(engine.getSnapshot().document.nodes[0].visitTime, relative);
+  assert.equal(engine.undo(), true);
+  await engine.save();
+  assert.equal(engine.getSnapshot().document.visitTimeVersion, 2);
+  assert.equal(engine.getSnapshot().document.nodes[0].visitTime, undefined);
+  assert.deepEqual(server.document, engine.getSnapshot().document);
+  assert.equal(engine.redo(), true);
+  await engine.save();
+  assert.equal(engine.getSnapshot().document.visitTimeVersion, 2);
+  assert.deepEqual(engine.getSnapshot().document.nodes[0].visitTime, relative);
+  assert.deepEqual(server.document, engine.getSnapshot().document);
 });
 
 test('a higher-revision source import replaces an in-flight old-source draft atomically', async () => {

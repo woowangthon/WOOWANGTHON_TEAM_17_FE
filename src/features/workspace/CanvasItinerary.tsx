@@ -6,7 +6,8 @@ import type { CanvasPlaceDetail, CanvasPlaceNode } from './canvasModel.ts';
 import type { CanvasTravelMode } from './canvasRoutes.ts';
 import { getPlaceDetail } from './canvasApi.ts';
 import { canvasItineraryChecks, canvasItineraryDays, canvasItineraryReviewDays, canvasItineraryReviewSummary, canvasPlaceSearchUrl, toCanvasMapData, type CanvasItineraryStop } from './canvasItineraryModel.ts';
-import { canvasItineraryCosts } from './canvasItineraryCosts.ts';
+import { canvasItineraryCostHeadline, canvasItineraryCosts } from './canvasItineraryCosts.ts';
+import { canvasStayMinutes, getCanvasVisitClocks } from './canvasVisitTime.ts';
 import { useCanvasEdgePreferences } from './useCanvasEdgePreferences.ts';
 import { useCanvasRoutes } from './useCanvasRoutes.ts';
 import { useCanvasSync } from './useCanvasSync.ts';
@@ -24,15 +25,12 @@ const dateLabel = (date: string | null) => {
   const parsed = new Date(`${date}T00:00:00+09:00`);
   return Number.isNaN(parsed.valueOf()) ? null : new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', timeZone: 'Asia/Seoul' }).format(parsed);
 };
-const timeLabel = (value: string | null | undefined) => {
-  if (!value) return '시간 미정';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? '시간 미정' : parsed.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Seoul' });
-};
-const visitTimeLabel = (start: string | null | undefined, end: string | null | undefined) => {
-  if (!start || timeLabel(start) === '시간 미정') return '예상 시간 미정';
-  const endLabel = end ? timeLabel(end) : '시간 미정';
-  return `예상 ${timeLabel(start)}${endLabel === '시간 미정' ? '' : `–${endLabel}`}`;
+const visitTimeLabel = (node: CanvasPlaceNode) => {
+  const { startTime, endTime } = getCanvasVisitClocks(node);
+  if (!startTime && !endTime) return '예상 시간 미정';
+  const prefix = node.visitTime ? '' : '예상 ';
+  if (!startTime) return `${prefix}종료 ${endTime}`;
+  return `${prefix}${startTime}${endTime ? `–${endTime}` : ''}`;
 };
 const feeValues = (place: CanvasPlaceDetail | null | undefined) => {
   const values = [place?.priceLabel, place?.feeText].filter((value): value is string => Boolean(value?.trim()));
@@ -45,8 +43,6 @@ const itineraryFeeLabel = (place: CanvasPlaceDetail | null | undefined, preview 
   return shortFee(values[0]) ? values[0] : '상세 요금 있음';
 };
 const minuteLabel = (minutes: number) => `${minutes}분`;
-const wonLabel = (amount: number) => `${new Intl.NumberFormat('ko-KR').format(amount)}원`;
-const costRangeLabel = (min: number, max: number, approximate: boolean) => `${approximate ? '약 ' : ''}${min === max ? wonLabel(min) : `${wonLabel(min)}~${wonLabel(max)}`}`;
 const durationLabel = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}시간${minutes % 60 ? ` ${minutes % 60}분` : ''}` : minuteLabel(minutes);
 const coverageParts = (knownMinutes: number, knownCount: number, totalCount: number, unit: string) => {
   if (totalCount === 0) return { primary: '없음', coverage: null };
@@ -86,12 +82,12 @@ function SelectedPlaceDetail({ selected, detailFailed, preview, feeNeedsSearch, 
   const hasAnyDetail = [...publicDetails, ...visitDetails, ...contactDetails].some(([, value]) => Boolean(value?.trim())) || Boolean(safeHomepage) || fees.length > 0;
   const hasOverview = Boolean(selected.place?.overviewText?.trim());
   const hasPhoto = Boolean(selected.place?.imageUrl && !failedImageUrls.has(selected.place.imageUrl));
-  const stay = selected.place?.estimatedStayMinutes;
+  const stay = canvasStayMinutes(selected.node, selected.place?.estimatedStayMinutes);
   const titleText = selected.place?.title?.trim() || (selected.place ? '장소명 없음' : preview ? '예시 장소 정보 없음' : detailFailed ? '장소 정보 다시 확인' : '장소 정보를 불러오는 중');
   const renderFacts = (items: readonly (readonly [string, string | null | undefined])[]) => items.filter(([, value]) => value?.trim()).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>);
   return <article className="canvas-itinerary-detail" aria-label={`${titleText} 장소 정보`}>
     <div className={`canvas-itinerary-place-hero${hasPhoto ? ' has-photo' : ''}`}>{hasPhoto && <img src={selected.place!.imageUrl!} alt="" onError={() => onImageError(selected.place!.imageUrl!)} />}<div><h2>{titleText}</h2>{renderFacts(publicDetails).length > 0 && <dl className="canvas-itinerary-fact-group canvas-itinerary-public-facts" aria-label="분류와 주소">{renderFacts(publicDetails)}</dl>}</div></div>
-    <dl className="canvas-itinerary-inspector-visit" aria-label="방문과 요금"><div><dt>방문 시간</dt><dd>{visitTimeLabel(selected.node.schedule?.startAt, selected.node.schedule?.endAt)}</dd></div><div><dt>머무는 시간</dt><dd>{typeof stay === 'number' && Number.isFinite(stay) && stay >= 0 ? `${stay}분` : '미정'}</dd></div><div><dt>요금</dt><dd>{feeLabel}{fees.length > 0 && feeNeedsSearch && feeSearchUrl && <a href={feeSearchUrl} target="_blank" rel="noopener noreferrer" aria-label={`${selected.place?.title} 요금 정보를 네이버에서 검색 (새 탭)`}>네이버 요금 검색</a>}</dd></div></dl>
+    <dl className="canvas-itinerary-inspector-visit" aria-label="방문과 요금"><div><dt>방문 시간</dt><dd>{visitTimeLabel(selected.node)}</dd></div><div><dt>머무는 시간</dt><dd>{typeof stay === 'number' && Number.isFinite(stay) && stay >= 0 ? `${stay}분` : '미정'}</dd></div><div><dt>요금</dt><dd>{feeLabel}{fees.length > 0 && feeNeedsSearch && feeSearchUrl && <a href={feeSearchUrl} target="_blank" rel="noopener noreferrer" aria-label={`${selected.place?.title} 요금 정보를 네이버에서 검색 (새 탭)`}>네이버 요금 검색</a>}</dd></div></dl>
     {showFeeDisclosure && <section className="canvas-itinerary-fact-group canvas-itinerary-fee-facts" aria-label="상세 요금">
       <button className="canvas-itinerary-detail-toggle" type="button" aria-expanded={feesExpanded} aria-controls={feesId} onClick={() => setFeesExpanded(value => !value)}>{feesExpanded ? '요금 안내 접기' : '요금 안내 펼치기'}</button><div className="canvas-itinerary-expanded-details" id={feesId} hidden={!feesExpanded}><dl aria-label="상세 요금">
         {priceLabel?.trim() && <div><dt>요금 안내</dt><dd>{priceLabel}</dd></div>}
@@ -207,11 +203,23 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
   const actionableReviewVisits = preview ? [] : reviewChecks.visits.filter(visit => visit.state === 'needs-review' || visit.state === 'loading');
   const checkHeadline = preview ? '예시 일정' : !summary.visitCount ? '일정 없음' : needsReviewCount ? `확인 필요 ${needsReviewCount}건` : loadingVisitCount ? `확인 중 ${loadingVisitCount}건` : '확인 완료';
   const checkCaption = preview ? '예시 · 실제 이동 정보 확인 전' : !summary.visitCount ? '' : [loadingVisitCount > 0 && `${loadingVisitCount}회 확인 중`, disconnectedCount > 0 && `별도 코스 ${disconnectedCount}건`, !needsReviewCount && !loadingVisitCount && !disconnectedCount && `${summary.visitCount}회 확인 완료`].filter(Boolean).join(' · ');
-  const costHeadline = costSummary.totalCount === 0 || costSummary.minKrw === null || costSummary.maxKrw === null
-    ? '—' : costRangeLabel(costSummary.minKrw, costSummary.maxKrw, false);
-  const costExceptionCount = costSummary.rows.filter(row => row.basis === 'unknown' || row.minKrw === null || row.maxKrw === null).length;
+  const costExceptions = costSummary.rows.filter(row => row.minKrw === null || row.maxKrw === null);
+  const costPendingCount = preview ? 0 : visibleDays.flatMap(day => day.stops)
+    .filter(stop => !stop.place && !failedDetails.has(stop.node.contentid)).length;
+  const costHeadline = canvasItineraryCostHeadline(costSummary, costPendingCount);
+  const ageTariffCount = costSummary.rows.filter(row => row.note === '등록된 연령별 요금 범위').length;
+  const freeCount = costSummary.rows.filter(row => row.basis === 'free').length;
+  const unavailableCostCount = costExceptions.length - costPendingCount;
+  const costDetails = [
+    costSummary.knownCount > 0 && (freeCount === costSummary.knownCount ? `무료 확인 ${freeCount}회` : `요금 확인 ${costSummary.knownCount}회`),
+    ageTariffCount > 0 && `등록된 연령별 요금 범위 ${ageTariffCount}회`,
+    costSummary.approximate && '근사 요금 포함',
+    unavailableCostCount > 0 && `요금 미확인 ${unavailableCostCount}회`,
+    costPendingCount > 0 && `조회 중 ${costPendingCount}회`,
+    '교통비 별도',
+  ].filter(Boolean).join(' · ');
   const costCoverageLabel = costSummary.totalCount === 0 ? '방문 없음' : costSummary.knownCount < costSummary.totalCount ? `${costSummary.knownCount}/${costSummary.totalCount}회 확인된 안내만 합산` : `${costSummary.totalCount}회 안내 기준`;
-  const costTriggerLabel = [preview ? '예시 비용 예외 보기' : '예상 비용 예외 보기', preview ? (expectedPeople === null ? '예시 인원 미정' : `예시 ${expectedPeople}명 기준`) : expectedPeople === null ? '예정 인원 미정' : `예정 ${expectedPeople}명 기준`, costCoverageLabel, costSummary.approximate && '범위 또는 근사 요금이 포함된 예상 금액', costExceptionCount > 0 ? `예외 ${costExceptionCount}회` : '예외 없음', '교통비와 추가 지출 제외'].filter(Boolean).join('. ');
+  const costTriggerLabel = [preview ? '예시 비용 예외 보기' : '예상 비용 예외 보기', preview ? (expectedPeople === null ? '예시 인원 미정' : `예시 ${expectedPeople}명 기준`) : expectedPeople === null ? '예정 인원 미정' : `예정 ${expectedPeople}명 기준`, costCoverageLabel, costDetails].join('. ');
   const cancelPopupClose = useCallback(() => { if (hoverCloseTimer.current !== null) { clearTimeout(hoverCloseTimer.current); hoverCloseTimer.current = null; } }, []);
   const cancelPopupFrames = useCallback(() => {
     if (popupFrame.current !== null) { cancelAnimationFrame(popupFrame.current); popupFrame.current = null; }
@@ -326,7 +334,7 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
           </li>;
         })}</ul>}</>}
         {overviewPanel === 'costs' && <>
-          {costSummary.totalCount === 0 ? <p>방문이 없어 합산할 항목이 없어요.</p> : costExceptionCount === 0 ? <p>합산에서 제외된 장소 요금은 없어요.</p> : <ul>{costSummary.rows.filter(row => row.basis === 'unknown' || row.minKrw === null || row.maxKrw === null).map(row => {
+          {costSummary.totalCount === 0 ? <p>방문이 없어 합산할 항목이 없어요.</p> : <><p>{costDetails}</p>{costExceptions.length > 0 && <ul>{costExceptions.map(row => {
             const day = visibleDays.find(item => item.id === row.dayId); const stop = day?.stops.find(item => item.node.id === row.nodeId); if (!day || !stop) return null;
             const fees = feeValues(stop.place); const feeSearchUrl = canvasPlaceSearchUrl(stop.place, 'fee'); const homepage = safeHomepageUrl(stop.place); const originalDayIndex = itineraryDays.findIndex(item => item.id === day.id);
             const exceptionReason = !stop.place ? (preview ? '예시 일정에 장소 요금 정보가 없어요.' : failedDetails.has(stop.node.contentid) ? '장소 정보를 불러오지 못해 요금을 확인할 수 없어요.' : '장소 정보를 확인하는 중이에요.') : fees.length === 0 ? row.reason ?? '요금 안내가 없어 합산할 수 없어요.' : row.reason ?? '요금의 적용 기준이 분명하지 않아 합산하지 않았어요.';
@@ -336,7 +344,7 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
               <small className="canvas-itinerary-cost-meta">{originalDayIndex + 1}일차{dateLabel(day.date) ? ` · ${dateLabel(day.date)}` : ''} · {stop.order}번째 방문</small>
               <div className="canvas-itinerary-cost-facts"><p className="canvas-itinerary-cost-exception">{exceptionReason}</p>{fees.map((fee, index) => <p key={`${fee}:${index}`}><span>{index === 0 ? '요금 원문' : '상세 요금'}</span>{fee}</p>)}{homepage && <p><span>공식 안내</span><a href={homepage} target="_blank" rel="noopener noreferrer">홈페이지</a></p>}</div>
             </li>;
-          })}</ul>}
+          })}</ul>}</>}
         </>}
       </section></div>
       <div className="canvas-itinerary-day-controls"><nav className="canvas-itinerary-day-tabs" aria-label="여행 날짜"><button className={`canvas-itinerary-day${effectiveDayId === null ? ' is-selected' : ''}`} type="button" aria-pressed={effectiveDayId === null} onClick={() => { setActiveDayId(null); if (!selectedId || !itineraryDays.some(day => day.stops.some(stop => stop.node.id === selectedId))) setSelectedId(itineraryDays[0]?.stops[0]?.node.id ?? null); }}>전체 일정</button>{itineraryDays.map((day, index) => <button className={`canvas-itinerary-day${day.id === effectiveDayId ? ' is-selected' : ''}`} key={day.id} type="button" aria-pressed={day.id === effectiveDayId} onClick={() => { setActiveDayId(day.id); if (!day.stops.some(stop => stop.node.id === selectedId)) setSelectedId(day.stops[0]?.node.id ?? null); }}><span>{index + 1}일차</span>{dateLabel(day.date) && <small>{dateLabel(day.date)}</small>}</button>)}</nav></div>
@@ -358,8 +366,8 @@ export default function CanvasItinerary({ tripId, preview, conditionsVersion, tr
             {effectiveDayId === null && <h2 className="canvas-itinerary-day-heading"><span>{dayIndex + 1}일차</span><small>{dateLabel(day.date) ?? '날짜 미정'} · {day.stops.length}회 방문</small></h2>}
             {day.stops.length === 0 ? <p className="canvas-itinerary-empty-day">연결된 여행 코스가 아직 없어요.</p> : <ol className="canvas-itinerary-stops" aria-label={`${dayIndex + 1}일차 방문 장소 목록`}>{day.chains.map((chain, chainIndex) => <li className="canvas-itinerary-chain" key={chain.id}>
               {chainIndex > 0 && <p className="canvas-itinerary-disconnected">연결되지 않은 코스</p>}
-              {chain.stops.map((stop, index) => { const next = chain.stops[index + 1]; const leg = next ? legSummary(stop.node.id, next.node.id) : null; const detailFailed = !stop.place && failedDetails.has(stop.node.contentid); const isSelected = stop.node.id === selected?.node.id; const stay = stop.place?.estimatedStayMinutes; return <div className={`canvas-itinerary-stop-wrap${leg ? ' has-leg' : ''}`} key={stop.node.id}>
-                <button ref={isSelected ? selectedStopRef : undefined} type="button" className={`canvas-itinerary-stop${isSelected ? ' is-selected' : ''}${stop.place?.imageUrl && !failedImageUrls.has(stop.place.imageUrl) ? ' has-thumb' : ''}`} aria-pressed={isSelected} onClick={() => { setSelectedId(stop.node.id); setSelectionFocusRequest(value => value + 1); }}><span className="canvas-itinerary-number" aria-label={`${stop.order}번째 방문`}>{stop.order}</span>{stop.place?.imageUrl && !failedImageUrls.has(stop.place.imageUrl) && <img className="canvas-itinerary-stop-thumb" src={stop.place.imageUrl} alt="" onError={() => setFailedImageUrls(current => new Set([...current, stop.place!.imageUrl!]))} />}<span className="canvas-itinerary-stop-copy"><span className="canvas-itinerary-stop-time">{visitTimeLabel(stop.node.schedule?.startAt, stop.node.schedule?.endAt)}</span><strong>{stop.place?.title ?? (preview ? '예시 장소 정보 없음' : detailFailed ? '장소 정보 다시 확인' : '장소 정보를 불러오는 중')}</strong><span className="canvas-itinerary-stop-meta"><span className="canvas-itinerary-stay"><span>머무는 시간</span><strong>{typeof stay === 'number' && Number.isFinite(stay) && stay >= 0 ? `${stay}분` : '미정'}</strong></span><small>{preview ? itineraryFeeLabel(stop.place, true) : detailFailed ? '장소 정보 다시 확인' : itineraryFeeLabel(stop.place)}</small></span></span></button>
+              {chain.stops.map((stop, index) => { const next = chain.stops[index + 1]; const leg = next ? legSummary(stop.node.id, next.node.id) : null; const detailFailed = !stop.place && failedDetails.has(stop.node.contentid); const isSelected = stop.node.id === selected?.node.id; const stay = canvasStayMinutes(stop.node, stop.place?.estimatedStayMinutes); return <div className={`canvas-itinerary-stop-wrap${leg ? ' has-leg' : ''}`} key={stop.node.id}>
+                <button ref={isSelected ? selectedStopRef : undefined} type="button" className={`canvas-itinerary-stop${isSelected ? ' is-selected' : ''}${stop.place?.imageUrl && !failedImageUrls.has(stop.place.imageUrl) ? ' has-thumb' : ''}`} aria-pressed={isSelected} onClick={() => { setSelectedId(stop.node.id); setSelectionFocusRequest(value => value + 1); }}><span className="canvas-itinerary-number" aria-label={`${stop.order}번째 방문`}>{stop.order}</span>{stop.place?.imageUrl && !failedImageUrls.has(stop.place.imageUrl) && <img className="canvas-itinerary-stop-thumb" src={stop.place.imageUrl} alt="" onError={() => setFailedImageUrls(current => new Set([...current, stop.place!.imageUrl!]))} />}<span className="canvas-itinerary-stop-copy"><span className="canvas-itinerary-stop-time">{visitTimeLabel(stop.node)}</span><strong>{stop.place?.title ?? (preview ? '예시 장소 정보 없음' : detailFailed ? '장소 정보 다시 확인' : '장소 정보를 불러오는 중')}</strong><span className="canvas-itinerary-stop-meta"><span className="canvas-itinerary-stay"><span>머무는 시간</span><strong>{typeof stay === 'number' && Number.isFinite(stay) && stay >= 0 ? `${stay}분` : '미정'}</strong></span><small>{preview ? itineraryFeeLabel(stop.place, true) : detailFailed ? '장소 정보 다시 확인' : itineraryFeeLabel(stop.place)}</small></span></span></button>
                 <div className="canvas-itinerary-mobile-actions"><button type="button" onClick={() => { setSelectedId(stop.node.id); selectedDetailRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }); selectedDetailRef.current?.focus({ preventScroll: true }); }}>장소 상세 보기</button><button type="button" onClick={() => { setSelectedId(stop.node.id); mapSectionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }); mapSectionRef.current?.focus({ preventScroll: true }); }}>지도 보기</button></div>
                 {leg && <p className="canvas-itinerary-leg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16m-5-5 5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg><span><small>다음 {next.place?.title ?? `${next.order}번째 방문 장소`}까지</small><strong>{leg.label}</strong></span></p>}
                 {detailFailed && <span className="canvas-itinerary-retry"><small>장소 정보를 불러오지 못했어요.</small><PreparationActionButton label="다시 시도" onClick={() => retryPlaceDetail(stop.node.contentid)} /></span>}

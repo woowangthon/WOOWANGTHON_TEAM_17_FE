@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { regionPhotos } from '../preparation/regionPhotos';
 import type { CanvasPlaceDetail, CanvasPlaceNode } from './canvasModel';
+import { canEditCanvasVisitTime, canvasStayMinutes, getCanvasVisitClocks } from './canvasVisitTime';
 
 type PlaceSummary = {
   contentid?: number;
@@ -40,26 +41,32 @@ function PlacePhoto({ place, className }: { place?: PlaceSummary; className: str
   return <PhotoSource key={JSON.stringify(sources)} sources={sources} className={className} />;
 }
 
-function stayMinutes(schedule?: CanvasPlaceNode['schedule'], estimate?: number | null) {
-  if (schedule?.startAt && schedule.endAt) {
-    const duration = Math.round((Date.parse(schedule.endAt) - Date.parse(schedule.startAt)) / 60000);
-    if (Number.isFinite(duration) && duration > 0) return duration;
-  }
-  return estimate ?? null;
-}
-
-export function CanvasPlaceCardContent({ place, visitLabel, candidate, schedule }: {
-  place?: CanvasPlaceDetail; visitLabel?: string; candidate: boolean; schedule?: CanvasPlaceNode['schedule'];
+export function CanvasPlaceCardContent({ place, node, onEditTime, timePanelId }: {
+  place?: CanvasPlaceDetail;
+  node: CanvasPlaceNode;
+  onEditTime?: (opener: HTMLButtonElement) => void;
+  timePanelId?: string;
 }) {
-  const minutes = stayMinutes(schedule, place?.estimatedStayMinutes);
-  const clock = visitLabel?.replace(/^예상 시각 /u, '').replace(/ KST$/u, '');
+  const { startTime, endTime } = getCanvasVisitClocks(node);
+  const clock = startTime && endTime ? `${startTime}–${endTime}` : startTime || (endTime && `종료 ${endTime}`);
+  const timeAction = clock ? '방문 시간 수정' : '방문 시간 설정';
+  const minutes = canvasStayMinutes(node, place?.estimatedStayMinutes);
   const price = priceText(place);
-  const categoryLabel = [placeCategory(place), candidate ? '후보' : ''].filter(Boolean).join(' · ');
+  const categoryLabel = [placeCategory(place), node.intent === 'candidate' ? '후보' : ''].filter(Boolean).join(' · ');
+  const clockIcon = <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.6"/><path d="M10 6v4l2.6 1.7"/></svg>;
   return <>
-    <div className="tw-stop-time" aria-label={`방문 시간 ${clock || '미정'}`}>
-      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.6"/><path d="M10 6v4l2.6 1.7"/></svg>
-      {clock || '시간 미정'}
-    </div>
+    {onEditTime && canEditCanvasVisitTime(node) ? <button type="button"
+      className="tw-stop-time tw-stop-time-edit nodrag nopan" aria-haspopup="dialog"
+      aria-expanded={Boolean(timePanelId)} aria-controls={timePanelId}
+      aria-label={[`${place?.title || '장소'} ${timeAction}`, clock].filter(Boolean).join(', ')} title={timeAction}
+      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation(); }}
+      onDoubleClick={event => event.stopPropagation()}
+      onClick={event => { event.stopPropagation(); onEditTime(event.currentTarget); }}>
+      {clockIcon}{clock || '시간 설정'}
+      <svg className="tw-time-pencil" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 12.8 8.8-8.7a1.7 1.7 0 0 1 2.4 2.4l-8.8 8.7-3.2.8.8-3.2ZM11.8 5.1l2.4 2.4"/></svg>
+    </button> : <div className="tw-stop-time" title={node.schedule?.locked ? '예약으로 고정된 방문 시간' : undefined}>
+      {clockIcon}{clock || '시간 미정'}
+    </div>}
     <div className="tw-stop-body">
       <div className="tw-stop-heading">
         {categoryLabel && <small>{categoryLabel}</small>}

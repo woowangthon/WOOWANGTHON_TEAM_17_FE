@@ -2,6 +2,7 @@ import type { Plan, RoutePoint } from '../generation/generationApi.ts';
 import type { CanvasDocument, CanvasPlaceDetail, CanvasPlaceNode } from './canvasModel.ts';
 import type { CanvasRoute, CanvasTravelMode } from './canvasRoutes.ts';
 import type { CanvasEdgeOverride } from './canvasEdgePreferences.ts';
+import { canvasStayMinutes, toCanvasKstUtc } from './canvasVisitTime.ts';
 
 export type CanvasItineraryStop = { node: CanvasPlaceNode; place: CanvasPlaceDetail | null; order: number };
 export type CanvasItineraryChain = { id: string; stops: CanvasItineraryStop[]; connected: boolean };
@@ -140,7 +141,7 @@ export function canvasItineraryReviewSummary(input: {
   const validManual = (minutes: number | null | undefined): minutes is number => typeof minutes === 'number' && Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
   for (const day of visibleDays) for (const stop of day.stops) {
     const place = stop.place;
-    const stay = place?.estimatedStayMinutes;
+    const stay = canvasStayMinutes(stop.node, place?.estimatedStayMinutes);
     if (typeof stay === 'number' && Number.isFinite(stay) && stay >= 0) { stayKnown += stay; stayCount += 1; }
     if (place && [place.priceLabel, place.feeText].some(value => typeof value === 'string' && value.trim().length > 0)) feeInfoCount += 1;
   }
@@ -212,11 +213,15 @@ export function toCanvasMapData(chains: CanvasItineraryChain[], document: Canvas
   nodes: Plan['document']['days'][number]['nodes']; edges: Plan['document']['days'][number]['edges'];
 } {
   const stops = chains.flatMap(chain => chain.stops);
-  const nodes = stops.map(({ node, place }) => ({ id: node.id, nodeKey: String(node.contentid), kind: 'PLACE' as const,
+  const dayDates = new Map(document.days.map(day => [day.id, day.date]));
+  const nodes = stops.map(({ node, place }) => { const visitTime = node.visitTime ?? node.schedule; const date = dayDates.get(node.dayId);
+    const startAt = visitTime && 'startTime' in visitTime ? (date ? toCanvasKstUtc(date, visitTime.startTime) : null) : visitTime?.startAt ?? null;
+    const endAt = visitTime && 'startTime' in visitTime ? (date ? toCanvasKstUtc(date, visitTime.endTime) : null) : visitTime?.endAt ?? null;
+    return ({ id: node.id, nodeKey: String(node.contentid), kind: 'PLACE' as const,
     contentid: node.contentid, title: place?.title ?? '장소 정보 확인 중', coordinate: place?.coordinate ?? null,
-    estimatedStartAt: node.schedule?.startAt ?? null, estimatedEndAt: node.schedule?.endAt ?? null,
+    estimatedStartAt: startAt, estimatedEndAt: endAt,
     estimatedCostKrw: null, feeLabel: place?.priceLabel ?? place?.feeText ?? '비용 미확인',
-    stayMinutes: place?.estimatedStayMinutes ?? null, locked: node.schedule?.locked ?? false }));
+    stayMinutes: canvasStayMinutes(node, place?.estimatedStayMinutes), locked: node.schedule?.locked ?? false }); });
   const ids = new Set(nodes.map(node => node.id));
   const nodeDays = new Map(stops.map(stop => [stop.node.id, stop.node.dayId]));
   const stopNodes = new Map(stops.map(stop => [stop.node.id, stop.node]));
