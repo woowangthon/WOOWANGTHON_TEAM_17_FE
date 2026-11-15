@@ -8,7 +8,7 @@ import CanvasCommentEditor from './CanvasCommentEditor';
 import { getPlaceDetail, recommendPlace, searchPlaces, type PlaceSearchResult } from './canvasApi';
 import { canConnectRoute, canvasClipboardCopy, connectDayFrames, copyCanvasNode, disconnectDayFrames, getDayLinks, mergeCanvasDocuments, moveDayFrame, replaceCanvasPlace, type CanvasColor, type CanvasCommentNode, type CanvasDocument, type CanvasNode, type CanvasPlaceDetail, type CanvasPlaceNode } from './canvasModel';
 import { canvasCommands, type CanvasCommandId } from './canvasCommands';
-import { retainRecommendationRequest, type RecommendationRequest } from './canvasRecommendation.ts';
+import { isDefinitiveRecommendationNoMatch, retainRecommendationRequest, type RecommendationRequest } from './canvasRecommendation.ts';
 import { useCanvasSync } from './useCanvasSync';
 import { useCanvasRoutes } from './useCanvasRoutes.ts';
 import type { CanvasTravelMode } from './canvasRoutes.ts';
@@ -238,6 +238,7 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const closeDrawer = () => { setDrawerOpen(false); drawerTrigger.current?.focus(); };
   const initialDiscovery=discoveryMemory.get(sourceScope); const [details,setDetails]=useState<Map<number,CanvasPlaceDetail>>(new Map()); const [dayId,setDayId]=useState(savedView?.dayId??''); const [addTargetDayId,setAddTargetDayId]=useState(savedView?.dayId??''); const [restoreViewport,setRestoreViewport]=useState<CanvasViewport|null>(null); const [initialFitPending,setInitialFitPending]=useState(false); const [drawerOpen,setDrawerOpen]=useState(()=>window.matchMedia('(min-width: 701px)').matches); const [tab,setTab]=useState<DiscoveryMemory['tab']>(initialDiscovery?.tab??'ai'); const [query,setQuery]=useState(initialDiscovery?.query??''); const [results,setResults]=useState<PlaceSearchResult[]>(initialDiscovery?.results??[]); const [prompt,setPrompt]=useState(initialDiscovery?.prompt??''); const [aiPlace,setAiPlace]=useState<CanvasPlaceDetail|null>(initialDiscovery?.aiPlace??null); const [aiAlternatives,setAiAlternatives]=useState<CanvasPlaceDetail[]>(initialDiscovery?.aiAlternatives??[]); const [busy,setBusy]=useState(false); const [recommendationPending,setRecommendationPending]=useState(Boolean(initialDiscovery?.pending)); const [feedback,setFeedback]=useState({text:'',isError:false}); const [searchMessage,setSearchMessage]=useState(''); const [selectedId,setSelectedId]=useState(''); const [editingCommentId,setEditingCommentId]=useState(''); const [selectedEdgeId,setSelectedEdgeId]=useState(''); const [selectedDayLinkId,setSelectedDayLinkId]=useState(''); const [replaceTargetId,setReplaceTargetId]=useState(''); const [dayLinksOn,setDayLinksOn]=useState(true); const [placeConnectionMode,setPlaceConnectionMode]=useState(false); const [placeConnectionStartId,setPlaceConnectionStartId]=useState(''); const [reconnectEdgeId,setReconnectEdgeId]=useState(''); const [measuredSizes,setMeasuredSizes]=useState<Map<string,{width:number;height:number}>>(new Map()); const [menu,setMenu]=useState<{x:number;y:number;nodeId?:string;dayId?:string;dayLinkId?:string;edgeId?:string}|null>(null); const [menuPosition,setMenuPosition]=useState({left:8,top:8}); const [hasClipboard,setHasClipboard]=useState(false);
+  const [recommendationNotice, setRecommendationNotice] = useState('');
   const message = feedback.text;
   const setMessage = useCallback((text: string) => setFeedback({ text, isError: false }), []);
   const reportProblem = useCallback((text: string) => setFeedback({ text, isError: true }), []);
@@ -618,7 +619,72 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
     }
   },[doc,placeConnectionMode,placeConnectionStartId,reconnectEdgeId]);
   const runSearch=async()=>{if(!isCurrentSource())return;abort.current?.abort();const controller=new AbortController();abort.current=controller;setBusy(true);setSearchMessage('');setResults([]);try{const found=await searchPlaces(tripId,query,controller.signal);if(controller.signal.aborted||!isCurrentSource())return;setResults(found);setSearchMessage(found.length?'':`“${query.trim()}” 검색 결과가 없어요.`);}catch(error){if(!controller.signal.aborted&&isCurrentSource())setSearchMessage(error instanceof Error?error.message:'장소 검색에 실패했어요.');}finally{if(abort.current===controller&&isCurrentSource()){abort.current=null;setBusy(false);}}};
-  const askAI=async()=>{if(!isCurrentSource()||busy||!prompt.trim()||!discoveryDayId||!doc||(pendingRecommendation.current&&!recommendationContextMatches))return;const exclude=doc.nodes.filter((n):n is CanvasPlaceNode=>n.kind==='place').map(n=>n.contentid);const hadPending=Boolean(pendingRecommendation.current);if(!hadPending){recommendationContext.current={dayId:discoveryDayId,replaceTargetId};setAiPlace(null);setAiAlternatives([]);}pendingRecommendation.current=retainRecommendationRequest(pendingRecommendation.current,prompt.trim(),discoveryDayId,exclude);if(!hadPending)setRecommendationPending(true);const request=pendingRecommendation.current;const requestContext={...recommendationContext.current};const controller=new AbortController();abort.current?.abort();abort.current=controller;setBusy(true);try{const result=await recommendPlace(tripId,request.prompt,request.dayId,request.exclude,request.key,controller.signal);if(controller.signal.aborted||!isCurrentSource())return;pendingRecommendation.current=null;setRecommendationPending(false);if(requestContext.dayId===currentTargetRef.current.dayId&&requestContext.replaceTargetId===currentTargetRef.current.replaceTargetId){setAiPlace(result.place);setAiAlternatives(result.alternatives);setTab('ai');setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');}else{setAiPlace(null);setAiAlternatives([]);reportProblem('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');}}catch(error){if(!controller.signal.aborted&&isCurrentSource())reportProblem(error instanceof Error?error.message:'추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');}finally{if(abort.current===controller&&isCurrentSource()){abort.current=null;setBusy(false);}}};
+  const askAI = async () => {
+    if (!isCurrentSource() || busy || !prompt.trim() || !discoveryDayId || !doc
+      || (pendingRecommendation.current && !recommendationContextMatches)) return;
+
+    const exclude = doc.nodes.filter((node): node is CanvasPlaceNode => node.kind === 'place')
+      .map(node => node.contentid);
+    const hadPending = Boolean(pendingRecommendation.current);
+    if (!hadPending) {
+      recommendationContext.current = { dayId: discoveryDayId, replaceTargetId };
+      setAiPlace(null);
+      setAiAlternatives([]);
+    }
+    pendingRecommendation.current = retainRecommendationRequest(
+      pendingRecommendation.current, prompt.trim(), discoveryDayId, exclude,
+    );
+    if (!hadPending) setRecommendationPending(true);
+    setRecommendationNotice('');
+
+    const request = pendingRecommendation.current;
+    const requestContext = { ...recommendationContext.current };
+    const controller = new AbortController();
+    abort.current?.abort();
+    abort.current = controller;
+    setBusy(true);
+
+    try {
+      const result = await recommendPlace(
+        tripId, request.prompt, request.dayId, request.exclude, request.key, controller.signal,
+      );
+      if (controller.signal.aborted || !isCurrentSource()) return;
+      pendingRecommendation.current = null;
+      setRecommendationPending(false);
+      if (requestContext.dayId === currentTargetRef.current.dayId
+        && requestContext.replaceTargetId === currentTargetRef.current.replaceTargetId) {
+        setAiPlace(result.place);
+        setAiAlternatives(result.alternatives);
+        setTab('ai');
+        setMessage('추천 장소를 확인했어요. 추가할 장소를 선택해 주세요.');
+      } else {
+        setAiPlace(null);
+        setAiAlternatives([]);
+        reportProblem('요청한 날짜나 교체 대상이 바뀌어 추천을 표시하지 않았어요. 현재 선택에 맞게 다시 요청해 주세요.');
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && isCurrentSource()) {
+        const requestContextIsCurrent = requestContext.dayId === currentTargetRef.current.dayId
+          && requestContext.replaceTargetId === currentTargetRef.current.replaceTargetId;
+        if (isDefinitiveRecommendationNoMatch(error)) {
+          pendingRecommendation.current = null;
+          setRecommendationPending(false);
+          setPrompt(request.prompt);
+          setRecommendationNotice(requestContextIsCurrent
+            ? '일치하는 장소를 찾지 못했어요. 검색어를 바꾸거나 장소 이름을 더 구체적으로 입력해 주세요.'
+            : '');
+        } else {
+          reportProblem(error instanceof Error ? error.message
+            : '추천 요청을 처리하지 못했어요. 같은 요청으로 다시 결과를 확인할 수 있어요.');
+        }
+      }
+    } finally {
+      if (abort.current === controller && isCurrentSource()) {
+        abort.current = null;
+        setBusy(false);
+      }
+    }
+  };
   useEffect(()=>()=>abort.current?.abort(),[]);
   useEffect(()=>{if(!message)return;const timeout=window.setTimeout(()=>setMessage(''),4200);return()=>window.clearTimeout(timeout);},[message]);
   useEffect(()=>{discoveryMemory.set(sourceScope,{tab,query,results,prompt,aiPlace,aiAlternatives,pending:pendingRecommendation.current,context:recommendationContext.current});},[sourceScope,tab,query,results,prompt,aiPlace,aiAlternatives,recommendationPending]);
@@ -887,7 +953,8 @@ function CanvasPreviewSource({ tripId, preview = false, startDate, endDate, cond
           {replaceTargetId&&<p className="tw-replace-target-note" role="status">현재 장소 · {replaceName}</p>}
           <div className="tw-discovery-tabs" role="tablist" aria-label="장소 찾기 방식"><button type="button" role="tab" aria-selected={tab==='ai'} onClick={()=>setTab('ai')}>AI 추천</button><button type="button" role="tab" aria-selected={tab==='search'} onClick={()=>setTab('search')}>직접 검색</button></div>
           {tab==='ai'?<>
-            <div className="tw-discovery-form"><label htmlFor="tw-place-prompt">{(doc?.days.findIndex(day => day.id === discoveryDayId) ?? -1) + 1 || 1}일차 장소 추천</label><textarea id="tw-place-prompt" value={recommendationPending?pendingRecommendation.current?.prompt??prompt:prompt} maxLength={1000} disabled={recommendationPending} onChange={event=>setPrompt(event.target.value)} placeholder="예: 아이와 쉬어갈 자연 명소"/><Button disabled={busy||!prompt.trim()||!discoveryDayId||(recommendationPending&&!recommendationContextMatches)} onClick={()=>void askAI()}>{busy?'추천 받는 중…':recommendationPending?'같은 요청으로 다시 확인':'추천 받기'}</Button></div>
+            <div className="tw-discovery-form"><label htmlFor="tw-place-prompt">{(doc?.days.findIndex(day => day.id === discoveryDayId) ?? -1) + 1 || 1}일차 장소 추천</label><textarea id="tw-place-prompt" aria-describedby={recommendationNotice ? 'tw-place-prompt-notice' : undefined} value={recommendationPending?pendingRecommendation.current?.prompt??prompt:prompt} maxLength={1000} disabled={recommendationPending} onChange={event=>{setPrompt(event.target.value);setRecommendationNotice('');}} placeholder="예: 아이와 쉬어갈 자연 명소"/><Button disabled={busy||!prompt.trim()||!discoveryDayId||(recommendationPending&&!recommendationContextMatches)} onClick={()=>void askAI()}>{busy?'추천 받는 중…':recommendationPending?'같은 요청으로 다시 확인':'추천 받기'}</Button></div>
+            {recommendationNotice&&<p id="tw-place-prompt-notice" className="tw-panel-empty" role="status">{recommendationNotice}</p>}
             {recommendationPending&&!recommendationContextMatches&&<div className="tw-panel-empty" role="status"><span>대기 중인 추천은 {recommendationContext.current.dayId ? `${(doc?.days.findIndex(day=>day.id===recommendationContext.current.dayId)??-1)+1}일차` : '이전 날짜'} 요청이에요.</span><Button variant="secondary" onClick={()=>{setAddTargetDayId(recommendationContext.current.dayId);setDayId(recommendationContext.current.dayId);setReplaceTargetId(recommendationContext.current.replaceTargetId);setMessage('요청 당시의 날짜와 교체 대상을 복원했어요.');}}>요청 맥락으로 돌아가기</Button></div>}
             {(recommendationContextMatches&&(aiPlace||aiAlternatives.length>0))&&<section className="tw-search" aria-label="추천 장소"><h3>추천 장소</h3>{[...(aiPlace?[aiPlace]:[]),...aiAlternatives].map(place=><CanvasPlaceCandidate key={place.contentid} place={place} onChoose={()=>void choosePlace(place.contentid,recommendationContext.current.dayId,recommendationContext.current.replaceTargetId)} actionLabel={recommendationContext.current.replaceTargetId?'이 장소로 교체':'이 날짜에 추가'} disabled={busy}/>)}</section>}
           </>:<div className="tw-search">
